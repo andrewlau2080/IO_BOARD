@@ -307,6 +307,14 @@ Current safe firmware behavior:
     full matrix scan storage.
   - `IO_BOARD/inc/rpi_protocol.h` and `IO_BOARD/src/rpi_protocol.c` define the
     Raspberry Pi binary frame codec and CRC16.
+  - Raspberry Pi RS485 physical transport is not implemented yet. The second
+    generation product needs a USART + RS485 DE/RE driver, frame assembler, and
+    command dispatcher so the Pi can query/select/scan IO points.
+  - Second generation should be treated as an RS485 slave scan device controlled
+    by Raspberry Pi, not as an autonomous local scanner.
+  - First generation replacement is a separate local workflow and will need an
+    SN74LS164-based 4051 mux driver instead of the current direct GPIO 4051
+    selection.
   - `io_scan_measure_selected_pair()` is a weak measurement hook; replace it
     with the final hardware sense implementation when the detection circuit is
     fixed.

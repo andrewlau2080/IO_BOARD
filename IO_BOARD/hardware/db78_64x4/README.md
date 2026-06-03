@@ -11,12 +11,23 @@ Firmware remains in the parent `IO_BOARD` project.
 This variant is the preferred Raspberry Pi + MCU direction. The Raspberry Pi
 drives LCDM/screen and higher-level UI. The AT32F455 remains the scan/IO device
 and communicates scan results through the shared communication/display port.
+For production, this communication port is an RS485 link. The Raspberry Pi is
+the bus master/host and queries the AT32 for scan actions and results.
 
 Recommended profile:
 
 ```c
 #define IO_COMM_MODE_RPI_HOST
 ```
+
+Required firmware blocks for this variant:
+
+| Block | Status | Notes |
+|---|---|---|
+| Binary protocol codec | Done | `inc/rpi_protocol.h`, `src/rpi_protocol.c` |
+| RS485 physical transport | Pending | USART RX/TX plus RS485 transceiver DE/RE control |
+| Command dispatcher | Pending | Calls `io_scan_select_*`, `io_scan_read_pair`, `io_scan_all`, row/status APIs |
+| Direct GPIO mux control | Framework done | Current 4051 address/enable logic remains valid for second-gen |
 
 Do not route LCDM as an AT32-driven display requirement for this variant unless
 a fallback standalone build is explicitly needed.

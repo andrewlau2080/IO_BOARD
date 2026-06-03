@@ -10,7 +10,21 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 | Board IO | `inc/io_board.h`, `src/io_board.c` | MCU pin init and low-level mux bank select |
 | Scan core | `inc/io_scan.h`, `src/io_scan.c` | Logical OUT/IN position validation, pair selection, full matrix scan |
 | Pi protocol | `inc/rpi_protocol.h`, `src/rpi_protocol.c` | Binary frame encode/decode, CRC16, command IDs |
+| Pi RS485 transport | pending | USART + RS485 DE/RE direction control, RX frame buffer, TX response buffer |
+| Pi command dispatcher | pending | Execute Raspberry Pi commands by calling scan/profile/row/pair APIs |
 | Hardware variants | `hardware/old_db50/`, `hardware/db78_64x4/` | Connector/BOM-specific specifications |
+
+## Product Control Split
+
+| Product path | Host/control model | IO mux control | Display/terminal role | Firmware impact |
+|---|---|---|---|---|
+| First-gen replacement | Single MCU local workflow | SN74LS164 shifts 4051 select/enable state | Local LED seven-segment plus learned IR print link | Needs a separate low-level mux driver and local test state machine |
+| Second-gen Raspberry Pi board | Raspberry Pi sends commands over RS485 | Existing direct GPIO 4051 mux control remains the default | Raspberry Pi drives LCD/screen and high-level UI | Needs RS485 transport and command dispatcher; AT32 acts as scan/IO slave |
+
+The second-gen product must not be treated as an autonomous scanner. The AT32
+waits for Raspberry Pi RS485 frames, executes requested scan operations, and
+returns results. Full self-test or automatic test sequencing belongs on the
+Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 
 ## Scan Data Model
 
@@ -50,6 +64,19 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 | Full matrix scan loop | framework done | Calls measurement hook for each pair |
 | Measurement circuit read | pending hardware decision | Implement by overriding `io_scan_measure_selected_pair()` |
 | Raspberry Pi frame codec | done | Encode/decode and CRC16 available |
-| Raspberry Pi command dispatcher | pending | Next step after UART/SPI physical port is finalized |
+| Raspberry Pi RS485 physical layer | pending | Need USART pin assignment and RS485 transceiver DE/RE pin |
+| Raspberry Pi command dispatcher | pending | Decode valid frames and call `io_scan_*` APIs |
 | LED seven-segment reuse of comm port | specified | Command `0x30` reserved |
 
+## RS485 Implementation Estimate
+
+| Block | Expected Flash | Expected RAM | Notes |
+|---|---:|---:|---|
+| USART/RS485 driver | 1-3 KB | 256-512 B | UART init, byte RX, TX, DE/RE direction timing |
+| Frame assembler/parser buffer | 1-2 KB | 512-1024 B | Uses existing `rpi_protocol_decode()` and max 249-byte frame |
+| Command dispatcher | 3-8 KB | 0.5-2 KB | Handles profile, read pair, scan status, row bitmap, errors |
+| Optional async full scan state | 2-6 KB | 2-3 KB | Needed if Pi starts scan then polls rows/status |
+
+Even with both product paths enabled, this remains small compared with the
+AT32F455VET7 capacity. The main risk is not memory size; it is keeping the
+first-gen local workflow and second-gen RS485 slave workflow cleanly separated.
