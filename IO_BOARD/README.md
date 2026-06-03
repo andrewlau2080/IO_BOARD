@@ -69,27 +69,33 @@ Physical/logical LED pattern:
 
 ## Tester Response IR Transmitter
 
-The current firmware is a standalone tester-side response transmitter test. It
-sends the tester response packet once after reset, then stays idle until the ICE
-or target is reset again. This is only for validating whether the printer side
-can receive the tester response before the final RX/TX state machine is joined.
+The current firmware is the first closed-loop tester/printer IR model. It waits
+for the printer-side polling packet on `PA6`, validates the polling prefix, then
+transmits the tester response packet from `PA7`.
 
 Current transmit behavior:
 
+- Input: `PA6` / `IR_RX`, LQFP100 physical pin 31.
 - Output: `PA7` / `IR_TX`, LQFP100 physical pin 32.
+- Trigger: first 12 MARK/SPACE segments must match
+  `LINE_COMM_CODE_PRINT_REQUEST`.
+- Timing: response starts about 24.786 ms after the detected printer polling
+  packet start, matching the old-machine analysis.
 - Packet: 3321 MARK/SPACE segments from `LINE_COMM_CODE_TESTER_RESPONSE`.
 - Source timing file:
   `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv`.
 - Packet duration: about 2.151 s.
 - Carrier half-period: 13 us, about 38.5 kHz.
-- Start behavior: wait 500 ms after reset, transmit once, then stop.
+- Loop behavior: after transmitting, hold IR TX off for 100 ms, then wait for
+  the next printer polling packet.
 - Scope check: `PA7` shows tester-response carrier bursts only during MARK
-  segments; `PH3` stays high during the about 2.151 s response packet and then
-  stays low.
+  segments; `PH3` stays high during the about 2.151 s response packet.
 - Watch variables: `g_tester_response_tx_counter`,
   `g_tester_response_segment_count`, `g_tester_response_code_us`,
-  `g_tester_response_ready`, `g_tester_response_sent`, and
-  `g_ir_carrier_half_us`.
+  `g_tester_response_ready`, `g_tester_response_sent`,
+  `g_printer_poll_rx_counter`, `g_printer_poll_match_counter`,
+  `g_printer_poll_reject_counter`, `g_printer_poll_rx_segment_count`,
+  `g_tester_response_waiting_for_poll`, and `g_ir_carrier_half_us`.
 
 Previous confirmed printer-side polling transmitter behavior:
 
@@ -98,8 +104,8 @@ Previous confirmed printer-side polling transmitter behavior:
   transmitter outputs the expected packet envelope, not a continuous carrier.
 
 The older IR learn/replay capture helpers remain in the project for protocol
-learning, but the main firmware no longer waits for incoming IR frames in this
-test build.
+learning. The main firmware now uses a fast prefix receiver for the printer
+polling trigger instead of waiting for the full polling frame to finish.
 
 ## Historical IR Learn/Replay Demo
 

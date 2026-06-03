@@ -23,10 +23,11 @@ Current implementation rule:
 - The tester-side response packet is generated at build time from
   `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv` and is
   exposed as `LINE_COMM_CODE_TESTER_RESPONSE`.
-- Current firmware test mode sends `LINE_COMM_CODE_TESTER_RESPONSE` once from
-  `PA7` after reset, then stays idle. This intentionally does not receive the
-  printer polling packet yet; RX/TX integration comes after printer-side receive
-  validation.
+- Current firmware model waits for the printer polling packet prefix on `PA6`.
+  When the first 12 segments match `LINE_COMM_CODE_PRINT_REQUEST`, it starts
+  the tester response at about 24.786 ms from the detected polling packet start.
+  It then transmits `LINE_COMM_CODE_TESTER_RESPONSE` once from `PA7` and
+  returns to waiting for the next printer polling packet.
 - Other old-link response/ack code slots remain empty until they are learned.
 - Keep local tester logic independent from the terminal protocol so scanning
   and UI work can continue before the old protocol is decoded.
@@ -63,18 +64,20 @@ Current printer polling transmitter settings:
 | Envelope debug pin | `PH3` / `DEBUG_OUT`, high during packet and low during inter-packet space |
 | Bench verification | Confirmed normal on 2026-06-03 |
 
-Current standalone tester response transmitter settings:
+Current closed-loop tester response settings:
 
 | Item | Value |
 |---|---:|
 | Source analysis file | `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv` |
+| Printer polling prefix required | First 12 segments of `LINE_COMM_CODE_PRINT_REQUEST` |
+| Response trigger delay | about 24.786 ms from polling packet start |
 | Segment count | 3321 |
 | Packet duration | about 2.151 s |
 | Carrier half period | 13 us |
 | Estimated carrier | about 38.5 kHz |
 | Firmware output pin | `PA7` / `IR_TX` |
 | Envelope debug pin | `PH3` / `DEBUG_OUT`, high during response packet |
-| Reset behavior | Wait 500 ms, transmit once, then idle |
+| Loop behavior | Receive prefix, transmit once, guard 100 ms, wait again |
 
 When the learned IR frame is available, fill the placeholder like this:
 

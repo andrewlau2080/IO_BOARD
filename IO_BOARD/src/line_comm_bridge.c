@@ -64,6 +64,49 @@ line_comm_status_t line_comm_get_code(line_comm_code_id_t code_id, const line_co
   return LINE_COMM_OK;
 }
 
+static uint8_t duration_matches(uint16_t measured_us, uint16_t expected_us)
+{
+  uint32_t diff_us;
+  uint32_t tolerance_us;
+
+  diff_us = (measured_us > expected_us) ?
+            ((uint32_t)measured_us - expected_us) :
+            ((uint32_t)expected_us - measured_us);
+  tolerance_us = ((uint32_t)expected_us * LINE_COMM_IR_MATCH_PERCENT_TOLERANCE) / 100U;
+  if(tolerance_us < LINE_COMM_IR_MATCH_ABS_TOLERANCE_US) {
+    tolerance_us = LINE_COMM_IR_MATCH_ABS_TOLERANCE_US;
+  }
+
+  return (diff_us <= tolerance_us) ? 1U : 0U;
+}
+
+uint8_t line_comm_prefix_matches(uint8_t start_level,
+                                 const uint16_t *durations_us,
+                                 uint16_t count,
+                                 const line_comm_ir_code_t *code,
+                                 uint16_t prefix_count)
+{
+  uint16_t i;
+
+  if(durations_us == 0 || code == 0 || code->durations_us == 0) {
+    return 0U;
+  }
+
+  if(start_level != code->start_level ||
+     count < prefix_count ||
+     code->count < prefix_count) {
+    return 0U;
+  }
+
+  for(i = 0U; i < prefix_count; i++) {
+    if(duration_matches(durations_us[i], code->durations_us[i]) == 0U) {
+      return 0U;
+    }
+  }
+
+  return 1U;
+}
+
 uint32_t line_comm_code_duration_us(const line_comm_ir_code_t *code)
 {
   uint32_t total_us = 0U;

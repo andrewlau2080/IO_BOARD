@@ -7,8 +7,12 @@
 #define LINE_COMM_STATION_COUNT       10U
 #define LINE_COMM_TERMINAL_ID         0xFEU
 #define LINE_COMM_PRINTER_POLL_PERIOD_US 203147UL
+#define LINE_COMM_PRINTER_POLL_PREFIX_SEGMENTS 12U
 #define LINE_COMM_TESTER_RESPONSE_CARRIER_HALF_US 13U
-#define LINE_COMM_TESTER_RESPONSE_START_DELAY_MS 500U
+#define LINE_COMM_TESTER_RESPONSE_TRIGGER_DELAY_US 24786UL
+#define LINE_COMM_TESTER_RESPONSE_POST_TX_GUARD_US 100000UL
+#define LINE_COMM_IR_MATCH_ABS_TOLERANCE_US 180U
+#define LINE_COMM_IR_MATCH_PERCENT_TOLERANCE 35U
 
 typedef enum {
   LINE_COMM_OK = 0,
@@ -45,6 +49,11 @@ extern const line_comm_ir_code_t g_line_comm_ir_codes[LINE_COMM_CODE_COUNT];
 
 uint8_t line_comm_code_available(line_comm_code_id_t code_id);
 line_comm_status_t line_comm_get_code(line_comm_code_id_t code_id, const line_comm_ir_code_t **out_code);
+uint8_t line_comm_prefix_matches(uint8_t start_level,
+                                 const uint16_t *durations_us,
+                                 uint16_t count,
+                                 const line_comm_ir_code_t *code,
+                                 uint16_t prefix_count);
 line_comm_status_t line_comm_make_print_request(uint8_t source_station,
                                                 uint16_t product_id,
                                                 uint16_t test_count,

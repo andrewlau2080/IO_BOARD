@@ -6,13 +6,23 @@
 
 volatile uint32_t g_tester_response_tx_counter;
 volatile uint32_t g_tester_response_code_us;
+volatile uint32_t g_printer_poll_rx_counter;
+volatile uint32_t g_printer_poll_match_counter;
+volatile uint32_t g_printer_poll_reject_counter;
+volatile uint32_t g_printer_poll_trigger_delay_us;
+volatile uint16_t g_printer_poll_rx_segment_count;
 volatile uint16_t g_tester_response_segment_count;
 volatile uint8_t g_tester_response_ready;
 volatile uint8_t g_tester_response_sent;
+volatile uint8_t g_tester_response_waiting_for_poll;
 
 int main(void)
 {
+  ir_raw_signal_t rx_prefix;
+  const line_comm_ir_code_t *poll_code = 0;
   const line_comm_ir_code_t *response_code = 0;
+  uint32_t poll_start_us = 0U;
+  uint16_t rx_count;
 
   system_clock_config();
   delay_init();
@@ -20,15 +30,46 @@ int main(void)
   ir_io_init();
   ir_set_carrier_half_us(LINE_COMM_TESTER_RESPONSE_CARRIER_HALF_US);
 
+  (void)line_comm_get_code(LINE_COMM_CODE_PRINT_REQUEST, &poll_code);
   if(line_comm_get_code(LINE_COMM_CODE_TESTER_RESPONSE, &response_code) == LINE_COMM_OK) {
     g_tester_response_ready = 1U;
     g_tester_response_segment_count = response_code->count;
     g_tester_response_code_us = line_comm_code_duration_us(response_code);
   }
 
-  delay_ms(LINE_COMM_TESTER_RESPONSE_START_DELAY_MS);
+  while(1)
+  {
+    if(poll_code == 0 || response_code == 0) {
+      delay_ms(100);
+      continue;
+    }
 
-  if(response_code != 0) {
+    g_tester_response_waiting_for_poll = 1U;
+    rx_count = ir_capture_prefix(&rx_prefix,
+                                 LINE_COMM_PRINTER_POLL_PREFIX_SEGMENTS,
+                                 0U,
+                                 &poll_start_us);
+    if(rx_count == 0U) {
+      continue;
+    }
+
+    g_printer_poll_rx_counter++;
+    g_printer_poll_rx_segment_count = rx_count;
+
+    if(line_comm_prefix_matches(rx_prefix.start_level,
+                                rx_prefix.duration_us,
+                                rx_prefix.count,
+                                poll_code,
+                                LINE_COMM_PRINTER_POLL_PREFIX_SEGMENTS) == 0U) {
+      g_printer_poll_reject_counter++;
+      continue;
+    }
+
+    g_printer_poll_match_counter++;
+    g_tester_response_waiting_for_poll = 0U;
+    g_printer_poll_trigger_delay_us = LINE_COMM_TESTER_RESPONSE_TRIGGER_DELAY_US;
+    ir_wait_until_us(poll_start_us, LINE_COMM_TESTER_RESPONSE_TRIGGER_DELAY_US);
+
     io_debug_write(1U);
     ir_transmit_timings(response_code->start_level,
                         response_code->durations_us,
@@ -36,13 +77,8 @@ int main(void)
                         1U,
                         0U);
     io_debug_write(0U);
-    ir_force_space_us(0U);
+    ir_force_space_us(LINE_COMM_TESTER_RESPONSE_POST_TX_GUARD_US);
     g_tester_response_tx_counter++;
     g_tester_response_sent = 1U;
-  }
-
-  while(1)
-  {
-    delay_ms(100);
   }
 }

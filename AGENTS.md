@@ -310,11 +310,18 @@ Current safe firmware behavior:
   - `io_scan_measure_selected_pair()` is a weak measurement hook; replace it
     with the final hardware sense implementation when the detection circuit is
     fixed.
-- Current test application is standalone tester-side IR response transmit:
+- Current test application is closed-loop tester-side IR receive/transmit:
+  - `PA6` = `IR_RX`, LQFP100 physical pin 31, input pull-up for demodulated IR
+    receiver output.
   - `PA7` = `IR_TX`, LQFP100 physical pin 32, carrier burst output for an IR LED
     driver.
-  - It transmits `LINE_COMM_CODE_TESTER_RESPONSE` once after reset, then stays
-    idle until the ICE/target is reset again.
+  - It waits for the first 12 MARK/SPACE segments of
+    `LINE_COMM_CODE_PRINT_REQUEST` from the printer side.
+  - After a valid printer polling prefix, it starts the tester response at about
+    24.786 ms from the detected polling packet start, matching the old-machine
+    timing model.
+  - It transmits `LINE_COMM_CODE_TESTER_RESPONSE` once, then guards IR TX low
+    for 100 ms and waits for the next polling packet.
   - The tester response timing table is generated during CMake build from
     `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv`.
   - `LINE_COMM_CODE_TESTER_RESPONSE` has 3321 MARK/SPACE segments and lasts
@@ -324,9 +331,10 @@ Current safe firmware behavior:
     packet and low after completion.
   - Watch `g_tester_response_tx_counter`, `g_tester_response_segment_count`,
     `g_tester_response_code_us`, `g_tester_response_ready`,
-    `g_tester_response_sent`, and `g_ir_carrier_half_us`.
-  - This test deliberately does not receive the printer polling packet yet;
-    integrate RX trigger detection after validating printer-side reception.
+    `g_tester_response_sent`, `g_printer_poll_rx_counter`,
+    `g_printer_poll_match_counter`, `g_printer_poll_reject_counter`,
+    `g_printer_poll_rx_segment_count`, `g_tester_response_waiting_for_poll`,
+    and `g_ir_carrier_half_us`.
   - Previous printer-side polling test:
     `LINE_COMM_CODE_PRINT_REQUEST` continuously transmitted the printer
     polling/trigger packet from `TestV1.0`.

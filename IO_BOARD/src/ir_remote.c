@@ -55,6 +55,11 @@ static uint32_t ir_micros(void)
   return DWT->CYCCNT / g_cycles_per_us;
 }
 
+uint32_t ir_time_us(void)
+{
+  return ir_micros();
+}
+
 static uint32_t ir_elapsed_us(uint32_t start_us)
 {
   return ir_micros() - start_us;
@@ -65,6 +70,11 @@ static void ir_wait_until_elapsed_us(uint32_t start_us, uint32_t duration_us)
   while(ir_elapsed_us(start_us) < duration_us) {
     __asm volatile("nop");
   }
+}
+
+void ir_wait_until_us(uint32_t start_us, uint32_t duration_us)
+{
+  ir_wait_until_elapsed_us(start_us, duration_us);
 }
 
 static uint8_t ir_rx_level(void)
@@ -237,6 +247,70 @@ uint16_t ir_capture_once(ir_raw_signal_t *signal, uint32_t start_timeout_ms)
   g_ir_new_frame_flag = 1U;
   g_ir_frame_counter++;
   ir_debug_frame_ready();
+  return signal->count;
+}
+
+uint16_t ir_capture_prefix(ir_raw_signal_t *signal,
+                           uint16_t required_segments,
+                           uint32_t start_timeout_ms,
+                           uint32_t *frame_start_us)
+{
+  uint8_t level;
+  uint8_t current_level;
+  uint32_t wait_start_us;
+  uint32_t segment_start_us;
+  uint32_t duration_us;
+
+  if(signal == 0 || required_segments == 0U || required_segments > IR_CAPTURE_MAX_EDGES) {
+    return 0U;
+  }
+
+  signal->start_level = IR_MARK_LEVEL;
+  signal->count = 0U;
+
+  wait_start_us = ir_micros();
+  while(ir_rx_level() == IR_IDLE_LEVEL) {
+    if(start_timeout_ms != 0U &&
+       ir_elapsed_us(wait_start_us) >= (start_timeout_ms * 1000U)) {
+      return 0U;
+    }
+  }
+
+  level = ir_rx_level();
+  signal->start_level = level;
+  segment_start_us = ir_micros();
+  if(frame_start_us != 0) {
+    *frame_start_us = segment_start_us;
+  }
+
+  while(signal->count < required_segments) {
+    current_level = ir_rx_level();
+
+    if(current_level != level) {
+      duration_us = ir_elapsed_us(segment_start_us);
+      if(duration_us > 0xFFFFU) {
+        duration_us = 0xFFFFU;
+      }
+
+      signal->duration_us[signal->count++] = (uint16_t)duration_us;
+      level = current_level;
+      segment_start_us = ir_micros();
+      continue;
+    }
+
+    if(level == IR_IDLE_LEVEL && ir_elapsed_us(segment_start_us) >= IR_GAP_TIMEOUT_US) {
+      break;
+    }
+  }
+
+  g_saved_signal = *signal;
+  g_ir_code_start_level = signal->start_level;
+  g_ir_code_count = signal->count;
+
+  for(uint16_t i = 0; i < IR_CAPTURE_MAX_EDGES; i++) {
+    g_ir_code_table_us[i] = (i < signal->count) ? signal->duration_us[i] : 0U;
+  }
+
   return signal->count;
 }
 

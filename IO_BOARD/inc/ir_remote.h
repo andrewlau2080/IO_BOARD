@@ -33,9 +33,15 @@ extern volatile uint32_t g_ir_carrier_half_us;
 
 void ir_io_init(void);
 void ir_set_carrier_half_us(uint32_t half_period_us);
+uint32_t ir_time_us(void);
+void ir_wait_until_us(uint32_t start_us, uint32_t duration_us);
 void ir_poll_rx_status(void);
 void ir_debug_frame_ready(void);
 void ir_force_space_us(uint32_t duration_us);
+uint16_t ir_capture_prefix(ir_raw_signal_t *signal,
+                           uint16_t required_segments,
+                           uint32_t start_timeout_ms,
+                           uint32_t *frame_start_us);
 uint16_t ir_capture_once(ir_raw_signal_t *signal, uint32_t start_timeout_ms);
 void ir_print_signal(const ir_raw_signal_t *signal);
 void ir_transmit_signal(const ir_raw_signal_t *signal, uint8_t repeat_count);
