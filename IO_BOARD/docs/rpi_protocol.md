@@ -99,3 +99,65 @@ printer driving.
 The old first-gen learned communication link is modeled separately in
 `line_comm_bridge`. When that protocol is decoded, it can be bridged into these
 same terminal print commands.
+
+## tester_v2 Legacy RS485 Compatibility
+
+The current Raspberry Pi / Qt application in
+`/Users/andrewlau/qtprj/tester_v2` uses the verified old simple protocol, not
+the newer `0x55 0xAA` frame above. The AT32 firmware now includes a compatibility
+slave in `inc/rpi_rs485_legacy.h` and `src/rpi_rs485_legacy.c`.
+
+Physical settings:
+
+| Item | Value |
+|---|---|
+| UART | `USART1` |
+| Pins | `PA9` = TX, `PA10` = RX |
+| Baud | `115200` |
+| Format | 8 data bits, no parity, 1 stop bit |
+| RS485 direction | No GPIO direction pin by default; set `RPI_RS485_USE_DIR_PIN=1` and define the DE/RE pin when the final transceiver schematic requires it |
+
+Request format from Raspberry Pi / Qt:
+
+| Byte | Meaning |
+|---:|---|
+| 0 | `0x9E` |
+| 1 | command |
+| 2 | `para0` |
+| 3 | `para1` |
+| 4 | `para2` |
+| 5 | `para3` |
+| 6 | `0xCC` |
+
+Response format from AT32:
+
+| Byte | Meaning |
+|---:|---|
+| 0 | `0x9E` |
+| 1 | `command | 0x80` |
+| 2 | status, `0x00` = OK |
+| 4 | active IO count |
+| 5 | normal `READ`: next A, or `0xFF` when finished; `READ_FORCE`: bitmap byte 0 |
+| 6 | normal `READ`: next B, or `0xFF` when finished; `READ_FORCE`: bitmap byte 1 |
+| 7 | normal `READ`: pass count |
+| 8 | normal `READ`: error count |
+| 5 ... 20 | `READ_FORCE` bitmap, bit 0 = port 1 |
+| 21 | `0xCC` |
+
+Supported command IDs:
+
+| Command | Name | Current AT32 behavior |
+|---:|---|---|
+| `0x10` | `SIMPLE_START` | Starts the compatibility test model and replies with a summary |
+| `0x11` | `SIMPLE_STOP` | Stops the compatibility test model |
+| `0x12` | `SIMPLE_READ` | Returns `IONumMax`, finished marker `0xFF/0xFF`, pass count, and error count |
+| `0x13` | `SIMPLE_WRITE` | Acknowledged for compatibility |
+| `0x14` | `SIMPLE_START_FORCE` | Starts force/detail mode and returns bitmap |
+| `0x15` | `SIMPLE_READ_FORCE` | Returns 16-byte OK bitmap for the active IO count |
+| `0x16` | `SIMPLE_KEY_READ` | Acknowledged with zero payload |
+| `0x17` | `SIMPLE_KEYMAP_READ` | Acknowledged with zero payload |
+
+The current compatibility build is intended to verify the Raspberry Pi/Qt
+RS485 link and UI parsing before the final IO measurement circuit is fixed. It
+uses the DB78 128-point profile by default and reports all active points as OK.
+The hardware scan hook remains `io_scan_measure_selected_pair()`.

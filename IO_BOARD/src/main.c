@@ -3,7 +3,16 @@
 #include "io_board.h"
 #include "ir_remote.h"
 #include "line_comm_bridge.h"
+#include "rpi_rs485_legacy.h"
 
+#define IO_APP_MODE_IR_PRINT_BRIDGE  1
+#define IO_APP_MODE_RPI_RS485_LEGACY 2
+
+#ifndef IO_APP_MODE
+#define IO_APP_MODE IO_APP_MODE_RPI_RS485_LEGACY
+#endif
+
+#if IO_APP_MODE == IO_APP_MODE_IR_PRINT_BRIDGE
 volatile uint32_t g_tester_response_tx_counter;
 volatile uint32_t g_tester_response_code_us;
 volatile uint32_t g_printer_poll_rx_counter;
@@ -15,9 +24,11 @@ volatile uint16_t g_tester_response_segment_count;
 volatile uint8_t g_tester_response_ready;
 volatile uint8_t g_tester_response_sent;
 volatile uint8_t g_tester_response_waiting_for_poll;
+#endif
 
 int main(void)
 {
+#if IO_APP_MODE == IO_APP_MODE_IR_PRINT_BRIDGE
   ir_raw_signal_t rx_prefix;
   const line_comm_ir_code_t *poll_code = 0;
   const line_comm_ir_code_t *response_code = 0;
@@ -81,4 +92,17 @@ int main(void)
     g_tester_response_tx_counter++;
     g_tester_response_sent = 1U;
   }
+#elif IO_APP_MODE == IO_APP_MODE_RPI_RS485_LEGACY
+  system_clock_config();
+  delay_init();
+  io_board_init();
+  rpi_rs485_legacy_init();
+
+  while(1)
+  {
+    rpi_rs485_legacy_service();
+  }
+#else
+#error "Unsupported IO_APP_MODE"
+#endif
 }

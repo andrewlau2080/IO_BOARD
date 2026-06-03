@@ -307,9 +307,20 @@ Current safe firmware behavior:
     full matrix scan storage.
   - `IO_BOARD/inc/rpi_protocol.h` and `IO_BOARD/src/rpi_protocol.c` define the
     Raspberry Pi binary frame codec and CRC16.
-  - Raspberry Pi RS485 physical transport is not implemented yet. The second
-    generation product needs a USART + RS485 DE/RE driver, frame assembler, and
-    command dispatcher so the Pi can query/select/scan IO points.
+  - `IO_BOARD/inc/rpi_rs485.h` and `IO_BOARD/src/rpi_rs485.c` implement the
+    Raspberry Pi/Qt USART1 transport: `PA9` TX, `PA10` RX, 115200 8N1.
+  - `IO_BOARD/inc/rpi_rs485_legacy.h` and `IO_BOARD/src/rpi_rs485_legacy.c`
+    implement the current `/Users/andrewlau/qtprj/tester_v2` old simple
+    protocol: 7-byte request `9E cmd p0 p1 p2 p3 CC`, 22-byte response
+    `9E (cmd|80) status ... CC`.
+  - The current default firmware app mode is `RPI_RS485_LEGACY`. It uses the
+    DB78 128-point profile and reports all active points OK for the first
+    Raspberry Pi/Qt RS485 link and UI parsing test. Real hardware measurement
+    still depends on `io_scan_measure_selected_pair()`.
+  - RS485 DE/RE direction GPIO is optional and disabled by default because the
+    current pin plan only shows `PA9/PA10` as main communication TX/RX. Define
+    `RPI_RS485_USE_DIR_PIN=1` plus the final direction pin macros when the
+    transceiver schematic requires MCU-controlled direction.
   - Second generation should be treated as an RS485 slave scan device controlled
     by Raspberry Pi, not as an autonomous local scanner.
   - First generation replacement is a separate local workflow and will need an
@@ -318,7 +329,14 @@ Current safe firmware behavior:
   - `io_scan_measure_selected_pair()` is a weak measurement hook; replace it
     with the final hardware sense implementation when the detection circuit is
     fixed.
-- Current test application is closed-loop tester-side IR receive/transmit:
+- Build mode selection:
+  - Default:
+    `cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake`
+    builds `RPI_RS485_LEGACY`.
+  - To rebuild the old IR bridge mode:
+    `cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DIO_APP_MODE=IR_PRINT_BRIDGE`
+- Previous closed-loop tester-side IR receive/transmit application is still
+  available through `IO_APP_MODE=IR_PRINT_BRIDGE`:
   - `PA6` = `IR_RX`, LQFP100 physical pin 31, input pull-up for demodulated IR
     receiver output.
   - `PA7` = `IR_TX`, LQFP100 physical pin 32, carrier burst output for an IR LED

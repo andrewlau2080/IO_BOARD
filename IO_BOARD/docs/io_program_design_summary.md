@@ -10,8 +10,8 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 | Board IO | `inc/io_board.h`, `src/io_board.c` | MCU pin init and low-level mux bank select |
 | Scan core | `inc/io_scan.h`, `src/io_scan.c` | Logical OUT/IN position validation, pair selection, full matrix scan |
 | Pi protocol | `inc/rpi_protocol.h`, `src/rpi_protocol.c` | Binary frame encode/decode, CRC16, command IDs |
-| Pi RS485 transport | pending | USART + RS485 DE/RE direction control, RX frame buffer, TX response buffer |
-| Pi command dispatcher | pending | Execute Raspberry Pi commands by calling scan/profile/row/pair APIs |
+| Pi RS485 transport | `inc/rpi_rs485.h`, `src/rpi_rs485.c` | USART1 PA9/PA10, 115200 8N1 polling RX and blocking TX |
+| tester_v2 legacy dispatcher | `inc/rpi_rs485_legacy.h`, `src/rpi_rs485_legacy.c` | Compatible 7-byte request and 22-byte response protocol for the current Qt/Raspberry Pi application |
 | Hardware variants | `hardware/old_db50/`, `hardware/db78_64x4/` | Connector/BOM-specific specifications |
 
 ## Product Control Split
@@ -64,8 +64,9 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 | Full matrix scan loop | framework done | Calls measurement hook for each pair |
 | Measurement circuit read | pending hardware decision | Implement by overriding `io_scan_measure_selected_pair()` |
 | Raspberry Pi frame codec | done | Encode/decode and CRC16 available |
-| Raspberry Pi RS485 physical layer | pending | Need USART pin assignment and RS485 transceiver DE/RE pin |
-| Raspberry Pi command dispatcher | pending | Decode valid frames and call `io_scan_*` APIs |
+| Raspberry Pi RS485 physical layer | done for legacy test | USART1 `PA9/PA10`, 115200 8N1; DE/RE GPIO is optional and disabled until final schematic confirms a direction pin |
+| tester_v2 simple command dispatcher | done for link/UI test | Handles `0x10` ... `0x17`; currently reports active DB78 profile points as OK until the real measurement hook is implemented |
+| New `55 AA` Raspberry Pi command dispatcher | pending | Keep for future richer scan/profile/row/pair API after the current Qt simple protocol test path is stable |
 | LED seven-segment reuse of comm port | specified | Command `0x30` reserved |
 
 ## RS485 Implementation Estimate
