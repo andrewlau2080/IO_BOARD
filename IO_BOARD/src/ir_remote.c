@@ -16,7 +16,7 @@
 #define IR_MARK_LEVEL              0U
 #define IR_GAP_TIMEOUT_US          30000U
 #define IR_MIN_FRAME_US            4000U
-#define IR_CARRIER_HALF_US         12U
+#define IR_DEFAULT_CARRIER_HALF_US 12U
 
 volatile uint8_t g_ir_rx_level;
 volatile uint8_t g_ir_rx_last_level;
@@ -36,6 +36,7 @@ volatile uint16_t g_ir_tx_segment_count;
 volatile uint32_t g_ir_tx_duration_us;
 volatile uint32_t g_ir_tx_packet_us;
 volatile uint32_t g_ir_tx_gap_us;
+volatile uint32_t g_ir_carrier_half_us = IR_DEFAULT_CARRIER_HALF_US;
 
 static uint32_t g_cycles_per_us;
 static ir_raw_signal_t g_saved_signal;
@@ -80,14 +81,15 @@ static void ir_mark_us(uint32_t duration_us)
 {
   uint32_t start_us = ir_micros();
   uint32_t edge_us = start_us;
+  uint32_t half_us = g_ir_carrier_half_us;
 
   while(ir_elapsed_us(start_us) < duration_us) {
     ir_tx_write(1U);
-    ir_wait_until_elapsed_us(edge_us, IR_CARRIER_HALF_US);
-    edge_us += IR_CARRIER_HALF_US;
+    ir_wait_until_elapsed_us(edge_us, half_us);
+    edge_us += half_us;
     ir_tx_write(0U);
-    ir_wait_until_elapsed_us(edge_us, IR_CARRIER_HALF_US);
-    edge_us += IR_CARRIER_HALF_US;
+    ir_wait_until_elapsed_us(edge_us, half_us);
+    edge_us += half_us;
   }
 
   ir_tx_write(0U);
@@ -107,6 +109,17 @@ void ir_force_space_us(uint32_t duration_us)
   g_ir_tx_duration_us = duration_us;
   g_ir_tx_gap_us = duration_us;
   ir_space_us(duration_us);
+}
+
+void ir_set_carrier_half_us(uint32_t half_period_us)
+{
+  if(half_period_us < 8U) {
+    half_period_us = 8U;
+  } else if(half_period_us > 25U) {
+    half_period_us = 25U;
+  }
+
+  g_ir_carrier_half_us = half_period_us;
 }
 
 void ir_io_init(void)

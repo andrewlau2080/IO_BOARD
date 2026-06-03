@@ -310,20 +310,29 @@ Current safe firmware behavior:
   - `io_scan_measure_selected_pair()` is a weak measurement hook; replace it
     with the final hardware sense implementation when the detection circuit is
     fixed.
-- Current test application is printer-side IR polling transmit:
+- Current test application is standalone tester-side IR response transmit:
   - `PA7` = `IR_TX`, LQFP100 physical pin 32, carrier burst output for an IR LED
     driver.
-  - It continuously transmits `LINE_COMM_CODE_PRINT_REQUEST`, the printer
+  - It transmits `LINE_COMM_CODE_TESTER_RESPONSE` once after reset, then stays
+    idle until the ICE/target is reset again.
+  - The tester response timing table is generated during CMake build from
+    `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv`.
+  - `LINE_COMM_CODE_TESTER_RESPONSE` has 3321 MARK/SPACE segments and lasts
+    about 2.151 s.
+  - The standalone test uses 13 us carrier half-period, about 38.5 kHz.
+  - `PH3 DEBUG_OUT` is a packet envelope debug pin: high during the response
+    packet and low after completion.
+  - Watch `g_tester_response_tx_counter`, `g_tester_response_segment_count`,
+    `g_tester_response_code_us`, `g_tester_response_ready`,
+    `g_tester_response_sent`, and `g_ir_carrier_half_us`.
+  - This test deliberately does not receive the printer polling packet yet;
+    integrate RX trigger detection after validating printer-side reception.
+  - Previous printer-side polling test:
+    `LINE_COMM_CODE_PRINT_REQUEST` continuously transmitted the printer
     polling/trigger packet from `TestV1.0`.
   - Verified on 2026-06-03 with oscilloscope: printer-side polling IR transmit
     is normal. `PA7` outputs packeted MARK carrier bursts and SPACE gaps, not a
     continuous carrier.
-  - `g_printer_poll_tx_counter` increments after every transmitted packet.
-  - `g_printer_poll_segment_count` should be 71.
-  - `g_printer_poll_code_us` is about 36695 and `g_printer_poll_gap_us` is about
-    166452, giving about 203.147 ms repeat period.
-  - `PH3 DEBUG_OUT` is a packet envelope debug pin: high for the about 36.7 ms
-    packet and low for the about 166.4 ms inter-packet space.
 
 Do not use AT-START onboard LED assumptions for this IO board. Pins used as
 AT-START LEDs are assigned to IO board mux enable signals.

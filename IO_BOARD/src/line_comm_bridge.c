@@ -1,5 +1,7 @@
 #include "line_comm_bridge.h"
 
+#include "generated_line_comm_codes.h"
+
 static const uint16_t print_request_code_us[] = {
   /*
    * Printer-side polling/trigger frame from TestV1.0 analysis:
@@ -31,6 +33,7 @@ static const uint16_t print_done_code_us[] = {
 
 const line_comm_ir_code_t g_line_comm_ir_codes[LINE_COMM_CODE_COUNT] = {
   {0U, (uint16_t)(sizeof(print_request_code_us) / sizeof(print_request_code_us[0])), print_request_code_us},
+  {0U, LINE_COMM_TESTER_RESPONSE_COUNT, g_line_comm_tester_response_code_us},
   {0U, 0U, print_ack_code_us},
   {0U, 0U, print_busy_code_us},
   {0U, 0U, print_done_code_us},

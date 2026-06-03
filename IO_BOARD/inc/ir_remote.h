@@ -29,8 +29,10 @@ extern volatile uint16_t g_ir_tx_segment_count;
 extern volatile uint32_t g_ir_tx_duration_us;
 extern volatile uint32_t g_ir_tx_packet_us;
 extern volatile uint32_t g_ir_tx_gap_us;
+extern volatile uint32_t g_ir_carrier_half_us;
 
 void ir_io_init(void);
+void ir_set_carrier_half_us(uint32_t half_period_us);
 void ir_poll_rx_status(void);
 void ir_debug_frame_ready(void);
 void ir_force_space_us(uint32_t duration_us);

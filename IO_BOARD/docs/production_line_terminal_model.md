@@ -16,12 +16,17 @@ Current implementation rule:
   `TestV1.0/analysis_outputs/useful_printer_trigger_tx_envelope.csv`.
 - `src/line_comm_bridge.c` now contains this 71-segment packet as
   `LINE_COMM_CODE_PRINT_REQUEST`.
-- The current firmware main loop continuously transmits this printer-side
-  polling packet from `PA7` as a test signal for the tester side.
 - Verified on 2026-06-03: oscilloscope testing confirmed the printer-side
   polling transmitter outputs the intended packet envelope. The previous
   continuous-carrier symptom was fixed by using DWT-based microsecond timing
   for MARK/SPACE generation and by forcing the inter-packet SPACE low.
+- The tester-side response packet is generated at build time from
+  `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv` and is
+  exposed as `LINE_COMM_CODE_TESTER_RESPONSE`.
+- Current firmware test mode sends `LINE_COMM_CODE_TESTER_RESPONSE` once from
+  `PA7` after reset, then stays idle. This intentionally does not receive the
+  printer polling packet yet; RX/TX integration comes after printer-side receive
+  validation.
 - Other old-link response/ack code slots remain empty until they are learned.
 - Keep local tester logic independent from the terminal protocol so scanning
   and UI work can continue before the old protocol is decoded.
@@ -38,6 +43,7 @@ Current reserved old-link code slots:
 | Code ID | Purpose | Current status |
 |---|---|---|
 | `LINE_COMM_CODE_PRINT_REQUEST` | Printer polling/trigger packet for tester side | Filled, 71 MARK/SPACE segments |
+| `LINE_COMM_CODE_TESTER_RESPONSE` | Tester response packet after printer trigger | Filled, 3321 MARK/SPACE segments generated from CSV |
 | `LINE_COMM_CODE_PRINT_ACK` | Terminal accepts request | Empty timing table |
 | `LINE_COMM_CODE_PRINT_BUSY` | Terminal is busy | Empty timing table |
 | `LINE_COMM_CODE_PRINT_DONE` | Print job completed | Empty timing table |
@@ -56,6 +62,19 @@ Current printer polling transmitter settings:
 | Firmware output pin | `PA7` / `IR_TX` |
 | Envelope debug pin | `PH3` / `DEBUG_OUT`, high during packet and low during inter-packet space |
 | Bench verification | Confirmed normal on 2026-06-03 |
+
+Current standalone tester response transmitter settings:
+
+| Item | Value |
+|---|---:|
+| Source analysis file | `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv` |
+| Segment count | 3321 |
+| Packet duration | about 2.151 s |
+| Carrier half period | 13 us |
+| Estimated carrier | about 38.5 kHz |
+| Firmware output pin | `PA7` / `IR_TX` |
+| Envelope debug pin | `PH3` / `DEBUG_OUT`, high during response packet |
+| Reset behavior | Wait 500 ms, transmit once, then idle |
 
 When the learned IR frame is available, fill the placeholder like this:
 

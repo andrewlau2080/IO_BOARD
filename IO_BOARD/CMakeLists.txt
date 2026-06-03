@@ -8,10 +8,29 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 set(AT32_BSP_DIR "${CMAKE_CURRENT_LIST_DIR}/../.vendor/AT32F45x_Firmware_Library_V2.0.1" CACHE PATH "AT32F45x firmware library path")
 set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/AT32F455xE_FLASH.ld")
+set(LINE_COMM_TESTER_RESPONSE_CSV
+  "${CMAKE_CURRENT_LIST_DIR}/../TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv")
+set(LINE_COMM_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(LINE_COMM_GENERATED_C "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.c")
+set(LINE_COMM_GENERATED_H "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.h")
 
 if(NOT EXISTS "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/at32f45x.h")
   message(FATAL_ERROR "AT32 BSP not found at ${AT32_BSP_DIR}")
 endif()
+
+add_custom_command(
+  OUTPUT "${LINE_COMM_GENERATED_C}" "${LINE_COMM_GENERATED_H}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${LINE_COMM_GENERATED_DIR}"
+  COMMAND ${CMAKE_COMMAND}
+          -DINPUT_CSV=${LINE_COMM_TESTER_RESPONSE_CSV}
+          -DOUTPUT_C=${LINE_COMM_GENERATED_C}
+          -DOUTPUT_H=${LINE_COMM_GENERATED_H}
+          -P "${CMAKE_CURRENT_LIST_DIR}/cmake/generate_ir_code.cmake"
+  DEPENDS
+    "${LINE_COMM_TESTER_RESPONSE_CSV}"
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/generate_ir_code.cmake"
+  VERBATIM
+)
 
 set(AT32_DRIVER_SOURCES
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_adc.c"
@@ -39,6 +58,7 @@ add_executable(${PROJECT_NAME}
   src/syscalls.c
   src/at32f45x_clock.c
   src/at32f45x_int.c
+  "${LINE_COMM_GENERATED_C}"
   "${AT32_BSP_DIR}/project/at32f45x_board/at32f45x_board.c"
   "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/system_at32f45x.c"
   "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/startup/gcc/startup_at32f45x.s"
@@ -49,6 +69,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".elf")
 
 target_include_directories(${PROJECT_NAME} PRIVATE
   inc
+  "${LINE_COMM_GENERATED_DIR}"
   "${AT32_BSP_DIR}/project/at32f45x_board"
   "${AT32_BSP_DIR}/libraries/drivers/inc"
   "${AT32_BSP_DIR}/libraries/cmsis/cm4/core_support"

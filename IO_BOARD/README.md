@@ -67,27 +67,35 @@ Physical/logical LED pattern:
 - `PH3 DEBUG_OUT` toggles on every pattern update as the physical target-side
   heartbeat.
 
-## Printer Polling IR Transmitter
+## Tester Response IR Transmitter
 
-The current firmware uses the IR hardware as a printer-terminal polling
-transmitter. It continuously sends the printer-side polling/trigger packet
-decoded in `TestV1.0/analysis_outputs/useful_printer_trigger_tx_envelope.csv`.
+The current firmware is a standalone tester-side response transmitter test. It
+sends the tester response packet once after reset, then stays idle until the ICE
+or target is reset again. This is only for validating whether the printer side
+can receive the tester response before the final RX/TX state machine is joined.
 
 Current transmit behavior:
 
 - Output: `PA7` / `IR_TX`, LQFP100 physical pin 32.
+- Packet: 3321 MARK/SPACE segments from `LINE_COMM_CODE_TESTER_RESPONSE`.
+- Source timing file:
+  `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv`.
+- Packet duration: about 2.151 s.
+- Carrier half-period: 13 us, about 38.5 kHz.
+- Start behavior: wait 500 ms after reset, transmit once, then stop.
+- Scope check: `PA7` shows tester-response carrier bursts only during MARK
+  segments; `PH3` stays high during the about 2.151 s response packet and then
+  stays low.
+- Watch variables: `g_tester_response_tx_counter`,
+  `g_tester_response_segment_count`, `g_tester_response_code_us`,
+  `g_tester_response_ready`, `g_tester_response_sent`, and
+  `g_ir_carrier_half_us`.
+
+Previous confirmed printer-side polling transmitter behavior:
+
 - Packet: 71 MARK/SPACE segments from `LINE_COMM_CODE_PRINT_REQUEST`.
-- Packet duration: about 36.695 ms.
-- Repeat period: about 203.147 ms.
-- Carrier half-period: 12 us, about 41.7 kHz.
 - Verification status: confirmed on 2026-06-03. The printer-side polling IR
   transmitter outputs the expected packet envelope, not a continuous carrier.
-- Scope check: `PA7` shows carrier bursts only during MARK segments; `PH3`
-  stays high for the about 36.7 ms packet and low during the about 166.4 ms
-  inter-packet space.
-- Watch variables: `g_printer_poll_tx_counter`,
-  `g_printer_poll_segment_count`, `g_printer_poll_code_us`,
-  `g_printer_poll_gap_us`, `g_printer_poll_ready`.
 
 The older IR learn/replay capture helpers remain in the project for protocol
 learning, but the main firmware no longer waits for incoming IR frames in this
