@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+
+<flash_board>
+  <pass>
+    <loader>$TOOLKIT_DIR$\config\flashloader\ArteryTek\AT32F456\AT32F456ZET7\FlashAT32F456ZET7.flash</loader>
+    <flash_base>0x08000000</flash_base>
+    <range>CODE 0x08000000 0x801FFFF</range>
+  </pass>
+    <pass>
+        <loader>$TOOLKIT_DIR$\config\flashloader\ArteryTek\AT32F456\AT32F456_BOOTMEM_AP\FlashAT32F456_BOOTMEM_AP.flash</loader>
+        <range>CODE 0x1fff8000 0x1fffefff</range>
+    </pass>
+</flash_board>
+
+

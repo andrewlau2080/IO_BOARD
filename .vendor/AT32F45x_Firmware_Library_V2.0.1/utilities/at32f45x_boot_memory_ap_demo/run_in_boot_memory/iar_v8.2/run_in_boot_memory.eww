@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workspace>
+    <project>
+        <path>$WS_DIR$\run_in_boot_memory.ewp</path>
+    </project>
+    <batchBuild>
+        <batchDefinition>
+            <name>all</name>
+            <member>
+                <project>run_in_boot_memory</project>
+                <configuration>at_start_at32f455</configuration>
+            </member>
+            <member>
+                <project>run_in_boot_memory</project>
+                <configuration>at_start_at32f456</configuration>
+            </member>
+            <member>
+                <project>run_in_boot_memory</project>
+                <configuration>at_start_at32f457</configuration>
+            </member>
+        </batchDefinition>
+    </batchBuild>
+</workspace>

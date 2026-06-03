@@ -1,0 +1,153 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "configure",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-S",
+        ".",
+        "-B",
+        "build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build"
+      ],
+      "group": "build",
+      "dependsOn": "configure",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "sync-to-ubuntu",
+      "type": "shell",
+      "command": "rsync",
+      "args": [
+        "-az",
+        "--delete",
+        "--exclude=.tools",
+        "--exclude=IO_BOARD/build",
+        "${workspaceFolder}/../",
+        "andrew@10.211.55.4:/home/andrew/ARTERY/"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "build-ubuntu",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "andrew@10.211.55.4",
+        "cd /home/andrew/ARTERY/IO_BOARD && cmake --build build"
+      ],
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "prepare-debug-ubuntu",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "sync-to-ubuntu",
+        "build-ubuntu"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "debug-server-ubuntu-openocd",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "andrew@10.211.55.4",
+        "cd /home/andrew/ARTERY/IO_BOARD && /home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/bin/openocd -s /home/andrew/ARTERY/IO_BOARD -s /home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/openocd/scripts -c 'bindto 0.0.0.0' -f openocd/atlink-cmsis-dap.cfg -c 'gdb_memory_map disable' -c 'gdb_flash_program disable'"
+      ],
+      "dependsOn": "prepare-debug-ubuntu",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "openocd",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*Listening on port 6666.*",
+          "endsPattern": ".*Listening on port 3333 for gdb connections.*"
+        }
+      }
+    },
+    {
+      "label": "debug-server-local-openocd",
+      "type": "shell",
+      "command": "/home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/bin/openocd",
+      "args": [
+        "-s",
+        "/home/andrew/ARTERY/IO_BOARD",
+        "-s",
+        "/home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/openocd/scripts",
+        "-c",
+        "bindto 0.0.0.0",
+        "-f",
+        "openocd/atlink-cmsis-dap.cfg",
+        "-c",
+        "gdb_memory_map disable",
+        "-c",
+        "gdb_flash_program disable"
+      ],
+      "dependsOn": "build",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "openocd",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*Listening on port 6666.*",
+          "endsPattern": ".*Listening on port 3333 for gdb connections.*"
+        }
+      }
+    },
+    {
+      "label": "flash-ubuntu-pyocd",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "andrew@10.211.55.4",
+        "cd /home/andrew/ARTERY/IO_BOARD && . /home/andrew/ARTERY/.tools/pyocd-venv/bin/activate && pyocd flash --pack /home/andrew/ARTERY/.tools/packs/ArteryTek.AT32F45x_DFP.2.0.1.pack -t at32f455vet7 -f 1000000 --erase sector build/io_board_at32f455.elf && pyocd reset --pack /home/andrew/ARTERY/.tools/packs/ArteryTek.AT32F45x_DFP.2.0.1.pack -t at32f455vet7 -f 1000000"
+      ],
+      "dependsOn": "prepare-debug-ubuntu",
+      "problemMatcher": []
+    },
+    {
+      "label": "monitor-ubuntu-uart",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "andrew@10.211.55.4",
+        "stty -F /dev/ttyACM0 115200 raw -echo -echoe -echok -echoctl -echoke && cat /dev/ttyACM0"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "swd-check-ubuntu-openocd",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "andrew@10.211.55.4",
+        "cd /home/andrew/ARTERY/IO_BOARD && /home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/bin/openocd -s /home/andrew/ARTERY/IO_BOARD -s /home/andrew/ARTERY/.tools/xpack-openocd-0.12.0-7/openocd/scripts -f openocd/atlink-cmsis-dap.cfg -c 'init; targets; reset halt; shutdown'"
+      ],
+      "dependsOn": "build",
+      "problemMatcher": []
+    }
+  ]
+}

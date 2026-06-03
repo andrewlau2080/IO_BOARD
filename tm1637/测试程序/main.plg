@@ -1,0 +1,213 @@
+<html>
+<body>
+<pre>
+<h1>礦ision Build Log</h1>
+<h2>Project:</h2>
+E:\产品资料\ywt\产品资料\06、数显模块\01、六位数显tm1637\测试程序\main.uvproj
+Project File Date:  07/04/2016
+
+<h2>Output:</h2>
+Build target 'Target 1'
+compiling main.c...
+compiling STC15W_EEPROM.c...
+compiling tm1637.c...
+linking...
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPERASESECTOR?STC15W_EEPROM
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPPROGRAMBYTE?STC15W_EEPROM
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPREADBYTE?STC15W_EEPROM
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_TM1637_SET?TM1637
+*** WARNING L1: UNRESOLVED EXTERNAL SYMBOL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 0111H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 0192H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 019CH
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 01A7H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 01B2H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 01C2H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 01C6H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 0053H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 006EH
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 0078H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 007FH
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 0086H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 00E1H
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 00EEH
+*** WARNING L2: REFERENCE MADE TO UNRESOLVED EXTERNAL
+    SYMBOL:  _TM1650_SET
+    MODULE:  main.obj (MAIN)
+    ADDRESS: 00F4H
+Program Size: data=24.2 xdata=0 code=1010
+creating hex file from "main"...
+"main" - 0 Error(s), 20 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+MIAN\MAIN.C(52): warning C206: 'TM1637_Set': missing function-prototype
+MIAN\MAIN.C(52): error C267: 'TM1637_Set': requires ANSI-style prototype
+compiling STC15W_EEPROM.c...
+compiling tm1637.c...
+Target not created
+Build target 'Target 1'
+compiling main.c...
+MIAN\MAIN.C(99): warning C206: 'TM1650_Set': missing function-prototype
+MIAN\MAIN.C(99): error C267: 'TM1650_Set': requires ANSI-style prototype
+compiling STC15W_EEPROM.c...
+compiling tm1637.c...
+Target not created
+Build target 'Target 1'
+compiling main.c...
+MIAN\MAIN.C(126): warning C206: 'TM1650_Set': missing function-prototype
+MIAN\MAIN.C(126): error C267: 'TM1650_Set': requires ANSI-style prototype
+compiling STC15W_EEPROM.c...
+compiling tm1637.c...
+Target not created
+Build target 'Target 1'
+compiling main.c...
+compiling STC15W_EEPROM.c...
+compiling tm1637.c...
+linking...
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPERASESECTOR?STC15W_EEPROM
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPPROGRAMBYTE?STC15W_EEPROM
+*** WARNING L16: UNCALLED SEGMENT, IGNORED FOR OVERLAY PROCESS
+    SEGMENT: ?PR?_IAPREADBYTE?STC15W_EEPROM
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=25.2 xdata=0 code=1010
+creating hex file from "main"...
+"main" - 0 Error(s), 4 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+mian\main.c(3): warning C318: can't open file 'hadder\\STC15W_EEPROM.h'
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 2 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+mian\main.c(3): warning C318: can't open file 'hadder\\STC15W_EEPROM.h'
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 2 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 1 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 1 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 1 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+Program Size: data=23.2 xdata=0 code=781
+creating hex file from "main"...
+"main" - 0 Error(s), 0 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 1 Warning(s).
+Build target 'Target 1'
+compiling main.c...
+compiling tm1637.c...
+linking...
+*** WARNING L15: MULTIPLE CALL TO SEGMENT
+    SEGMENT: ?PR?_I2CWRITEBYTE?TM1637
+    CALLER1: ?PR?TIMER0?MAIN
+    CALLER2: ?C_C51STARTUP
+Program Size: data=24.2 xdata=0 code=932
+creating hex file from "main"...
+"main" - 0 Error(s), 1 Warning(s).

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <title>IO BOARD 项目模型与变更状态跟踪表</title>
+  <style>
+    body {
+      font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #111827;
+      line-height: 1.3;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 10px;
+      text-align: center;
+    }
+    h2 {
+      font-size: 17px;
+      margin: 18px 0 6px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 6px 0 14px;
+      font-size: 10.5px;
+    }
+    th, td {
+      border: 1px solid #6b7280;
+      padding: 5px 6px;
+      vertical-align: top;
+    }
+    th {
+      background: #dbeafe;
+      font-weight: bold;
+      text-align: center;
+    }
+    .section th {
+      background: #cbd5e1;
+      font-size: 12px;
+      text-align: left;
+    }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 10px;
+    }
+    .ok { color: #047857; font-weight: bold; }
+    .pending { color: #b45309; font-weight: bold; }
+    .hold { color: #6b7280; font-weight: bold; }
+    .risk { color: #b91c1c; font-weight: bold; }
+    .center { text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>IO BOARD 项目模型与变更状态跟踪表</h1>
+
+  <table>
+    <tbody>
+      <tr>
+        <th>整理日期</th>
+        <td>2026-05-28</td>
+        <th>项目目录</th>
+        <td><code>/Users/andrewlau/qtprj/ARTERY</code></td>
+      </tr>
+      <tr>
+        <th>主工程</th>
+        <td><code>IO_BOARD</code></td>
+        <th>目标 MCU</th>
+        <td>AT32F455VET7 / LQFP100</td>
+      </tr>
+      <tr>
+        <th>当前主程序</th>
+        <td>TM1637 六位七段数码管应用模拟版</td>
+        <th>当前重点</th>
+        <td>先建模型，加速扫描、显示、旧机通讯、打印终端后续整合</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>1. 模型总览对比表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:9%">序号</th>
+        <th style="width:14%">模块/模型</th>
+        <th style="width:10%">状态</th>
+        <th style="width:20%">已完成内容</th>
+        <th style="width:17%">关键文件</th>
+        <th style="width:14%">风险/未定项</th>
+        <th style="width:16%">下一步</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="center">1</td>
+        <td>开发环境与调试链路</td>
+        <td class="ok">可用</td>
+        <td>Mac/Ubuntu CMake 构建；Ubuntu pyOCD 烧录；VS Code/OpenOCD 调试路径已记录。</td>
+        <td><code>AGENTS.md</code><br><code>IO_BOARD/README.md</code></td>
+        <td>烧录前需确认 ICE USB 已接入 Ubuntu VM。</td>
+        <td>继续保持 Mac 与 Ubuntu 同步。</td>
+      </tr>
+      <tr>
+        <td class="center">2</td>
+        <td>硬件分型</td>
+        <td class="ok">已建档</td>
+        <td>旧 DB50 与 DB78 64x4 两个硬件分型已拆目录；程序仍共用根工程。</td>
+        <td><code>IO_BOARD/hardware/old_db50/</code><br><code>IO_BOARD/hardware/db78_64x4/</code></td>
+        <td>PCB 和 BOM 仍需按最终方案细化。</td>
+        <td>继续补原理图、BOM、布局规则。</td>
+      </tr>
+      <tr>
+        <td class="center">3</td>
+        <td>IO 扫描模型</td>
+        <td class="ok">框架完成</td>
+        <td>OUT/IN 位置码；profile；mux bank；扫描矩阵；单点/全点扫描 API。</td>
+        <td><code>inc/io_scan.h</code><br><code>src/io_scan.c</code><br><code>docs/io_scan_mapping.md</code></td>
+        <td class="risk">真实检测读取函数尚未实现。</td>
+        <td>实现 <code>io_scan_measure_selected_pair()</code> 并接入硬件检测。</td>
+      </tr>
+      <tr>
+        <td class="center">4</td>
+        <td>树莓派/终端通讯协议</td>
+        <td class="ok">框架完成</td>
+        <td>二进制帧、CRC16、扫描命令、LED 七段命令、打印终端命令预留。</td>
+        <td><code>inc/rpi_protocol.h</code><br><code>src/rpi_protocol.c</code><br><code>docs/rpi_protocol.md</code></td>
+        <td>物理层 UART/RS485/CAN 尚未定稿。</td>
+        <td>实现命令分发器和真实串口收发。</td>
+      </tr>
+      <tr>
+        <td class="center">5</td>
+        <td>TM1637 显示与按键</td>
+        <td class="ok">已烧录测试</td>
+        <td>J8 上 PA9=CLK、PA10=DIO；六位显示；四键读取。</td>
+        <td><code>inc/tm1637_display.h</code><br><code>src/tm1637_display.c</code><br><code>docs/led7seg_module_selection.md</code></td>
+        <td>最终面板按键顺序、亮度、电源电压还需实物确认。</td>
+        <td>按最终面板丝印调整键值映射和显示内容。</td>
+      </tr>
+      <tr>
+        <td class="center">6</td>
+        <td>单 MCU 应用显示模拟</td>
+        <td class="ok">可运行</td>
+        <td>自检：A01b01 到 A92b92 后 StPASS；自动测试：A01b01 到 A92b92 后 AUPASS；重启/复位键有效。</td>
+        <td><code>src/main.c</code></td>
+        <td>当前只是显示模拟，没有真实 IO 判断。</td>
+        <td>接入扫描结果，错误时停留并显示 NG/SC/OP。</td>
+      </tr>
+      <tr>
+        <td class="center">7</td>
+        <td>红外学习/回放工具</td>
+        <td class="hold">工具性质</td>
+        <td>PA6 接收、PA7 发射；记录 timing 表；生成 HTML/SVG 波形。</td>
+        <td><code>inc/ir_remote.h</code><br><code>src/ir_remote.c</code><br><code>debug/ir_render.py</code></td>
+        <td>不是最终主程序；后续主要用于学习旧机码。</td>
+        <td>抓旧一代机与打印终端通讯码。</td>
+      </tr>
+      <tr>
+        <td class="center">8</td>
+        <td>旧一代机/终端通讯占位</td>
+        <td class="pending">空槽已建</td>
+        <td>预留 PRINT_REQUEST、ACK、BUSY、DONE 四组 learned timing 码位。</td>
+        <td><code>inc/line_comm_bridge.h</code><br><code>src/line_comm_bridge.c</code></td>
+        <td class="risk">旧机协议还未解码，码表为空。</td>
+        <td>IR 学习后把 timing 数组直接填入空槽。</td>
+      </tr>
+      <tr>
+        <td class="center">9</td>
+        <td>打印任务数据模型</td>
+        <td class="ok">模型完成</td>
+        <td>定义 title、item、content、code、quantity、copies、pass 等字段；支持 ASCII 标签格式化。</td>
+        <td><code>inc/print_job_model.h</code><br><code>src/print_job_model.c</code></td>
+        <td>中文/字体/条码最终由终端侧处理。</td>
+        <td>对接终端 UI 和打印队列。</td>
+      </tr>
+      <tr>
+        <td class="center">10</td>
+        <td>打印终端 UI 模型</td>
+        <td class="ok">HTML 原型完成</td>
+        <td>10 台测试机选择；抬头、款项、内容、代码、数量、PASS/NG、份数；标签预览和队列。</td>
+        <td><code>terminal/print_terminal_mockup.html</code><br><code>docs/production_line_terminal_model.md</code></td>
+        <td>打印机型号、标签纸尺寸、输入键盘方式未定。</td>
+        <td>按实际打印机和标签尺寸修改原型。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2. 当前固件运行行为表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>项目</th>
+        <th>当前定义</th>
+        <th>显示例子</th>
+        <th>说明</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>显示硬件</td>
+        <td>六位 TM1637，地址 <code>0xC0</code> 到 <code>0xC5</code></td>
+        <td><code>A01b01</code></td>
+        <td>左三位为 A 端，右三位为 B 端。</td>
+      </tr>
+      <tr>
+        <td>接线</td>
+        <td>J8 USART1 引脚当 GPIO 使用</td>
+        <td>PA9=CLK，PA10=DIO</td>
+        <td>TM1637 不是 UART，只借用 J8 两根线。</td>
+      </tr>
+      <tr>
+        <td>按键 1</td>
+        <td>自检</td>
+        <td><code>A01b01</code> ... <code>A92b92</code> ... <code>StPASS</code></td>
+        <td>当前不检测 IO，只模拟显示流程。</td>
+      </tr>
+      <tr>
+        <td>按键 2</td>
+        <td>自动测试</td>
+        <td><code>A01b01</code> ... <code>A92b92</code> ... <code>AUPASS</code></td>
+        <td>当前不检测 IO，只模拟显示流程。</td>
+      </tr>
+      <tr>
+        <td>按键 3</td>
+        <td>重新开始</td>
+        <td>重跑上一次模式</td>
+        <td>上一次是自检就重跑自检，上一次是自动测试就重跑自动测试。</td>
+      </tr>
+      <tr>
+        <td>按键 4</td>
+        <td>复位重来</td>
+        <td><code>000000</code></td>
+        <td>停止当前流程并清屏到零。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. 硬件方案对比表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>方案</th>
+        <th>连接器</th>
+        <th>有效点数</th>
+        <th>显示/上位机</th>
+        <th>当前文档</th>
+        <th>当前状态</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>旧 DB50 单 MCU 版</td>
+        <td>4 个 DB50；每个上/下对应 24 组；第 25 组 NC</td>
+        <td>96 OUT + 96 IN</td>
+        <td>本地 TM1637/LED 七段显示；后续可加蜂鸣器/按键</td>
+        <td><code>hardware/old_db50/README.md</code><br><code>hardware/old_db50/BOM.md</code></td>
+        <td class="ok">规格/BOM 基线已建</td>
+      </tr>
+      <tr>
+        <td>DB78 64x4 版</td>
+        <td>2 个 OUT DB78 + 2 个 IN DB78；每个用 64 PIN</td>
+        <td>128 OUT + 128 IN</td>
+        <td>树莓派/LCDM/上位系统</td>
+        <td><code>hardware/db78_64x4/README.md</code><br><code>hardware/db78_64x4/BOM.md</code></td>
+        <td class="ok">规格/BOM 基线已建</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>4. 通讯与打印终端对比表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>通道/对象</th>
+        <th>用途</th>
+        <th>当前实现</th>
+        <th>未完成点</th>
+        <th>建议路线</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>旧一代机协议</td>
+        <td>测试机到打印终端的旧通讯</td>
+        <td>已建 <code>line_comm_bridge</code> 空槽</td>
+        <td>未抓到真实码表</td>
+        <td>用 IR 学习程序抓码后填入 timing 数组。</td>
+      </tr>
+      <tr>
+        <td>树莓派/终端协议</td>
+        <td>新系统扫描、状态、打印请求</td>
+        <td>已定义二进制帧和命令号</td>
+        <td>未实现物理收发和命令分发</td>
+        <td>样机优先 UART；长线/多机再考虑 RS485/CAN。</td>
+      </tr>
+      <tr>
+        <td>打印机适配</td>
+        <td>支持市面打印机</td>
+        <td>终端模型已建</td>
+        <td>不应由 AT32 直接适配所有打印机</td>
+        <td>树莓派/Linux + CUPS/IPP/厂家驱动。</td>
+      </tr>
+      <tr>
+        <td>标签输入 UI</td>
+        <td>抬头、款项、内容、代码、数量、份数</td>
+        <td>HTML mockup 已建</td>
+        <td>按键输入程序独立开发</td>
+        <td>先定字段和标签版面，再接真实输入和打印。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>5. 构建/同步/烧录状态表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>环境</th>
+        <th>命令/路径</th>
+        <th>最近状态</th>
+        <th>备注</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>macOS</td>
+        <td><code>cd IO_BOARD &amp;&amp; cmake --build build</code></td>
+        <td class="ok">通过</td>
+        <td>使用本机 xPack ARM GCC。</td>
+      </tr>
+      <tr>
+        <td>Ubuntu VM</td>
+        <td><code>/home/andrew/ARTERY/IO_BOARD</code></td>
+        <td class="ok">通过</td>
+        <td>已同步源码、文档、终端 mockup。</td>
+      </tr>
+      <tr>
+        <td>烧录</td>
+        <td>Ubuntu pyOCD + AT-Link/ICE</td>
+        <td class="ok">最近已烧录 TM1637 应用模拟版</td>
+        <td>本次文档重排未重新烧录。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>6. 待办优先级表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>优先级</th>
+        <th>任务</th>
+        <th>依赖</th>
+        <th>完成标准</th>
+        <th>负责人/位置</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="risk">高</td>
+        <td>接入真实 IO 检测</td>
+        <td>检测电路/阈值确认</td>
+        <td>自检/自动测试能在错误点停留并显示故障类型。</td>
+        <td><code>io_scan_measure_selected_pair()</code></td>
+      </tr>
+      <tr>
+        <td class="risk">高</td>
+        <td>旧机通讯码学习</td>
+        <td>拿到旧测试机/打印端实物</td>
+        <td>PRINT_REQUEST/ACK/BUSY/DONE 四组码表填入并可发射/接收。</td>
+        <td><code>line_comm_bridge.c</code></td>
+      </tr>
+      <tr>
+        <td class="pending">中</td>
+        <td>打印终端 UI 定稿</td>
+        <td>打印机、标签纸、输入方式</td>
+        <td>标签字段和版面确认，可进入实际终端程序。</td>
+        <td><code>terminal/print_terminal_mockup.html</code></td>
+      </tr>
+      <tr>
+        <td class="pending">中</td>
+        <td>树莓派/终端程序选型</td>
+        <td>终端硬件确定</td>
+        <td>确定 Web/Qt/Python 等技术路线。</td>
+        <td>终端应用目录后续新增</td>
+      </tr>
+      <tr>
+        <td class="pending">中</td>
+        <td>硬件原理图/PCB</td>
+        <td>旧 DB50 或 DB78 方案优先级</td>
+        <td>完成原理图、BOM、PCB 初版。</td>
+        <td><code>IO_BOARD/hardware/</code></td>
+      </tr>
+      <tr>
+        <td>低</td>
+        <td>文档持续维护</td>
+        <td>每次阶段变更</td>
+        <td>本 Word 表格版本保持更新。</td>
+        <td><code>project_tracking_report_*.docx</code></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

@@ -1,0 +1,97 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug AT32F455 via Ubuntu OpenOCD",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/home/andrew/ARTERY/IO_BOARD/build/io_board_at32f455.elf",
+      "cwd": "/home/andrew/ARTERY/IO_BOARD",
+      "MIMode": "gdb",
+      "miDebuggerServerAddress": "localhost:3333",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "pipeTransport": {
+        "pipeProgram": "ssh",
+        "pipeArgs": [
+          "andrew@10.211.55.4"
+        ],
+        "debuggerPath": "/usr/bin/gdb",
+        "pipeCwd": "${workspaceFolder}"
+      },
+      "preLaunchTask": "debug-server-ubuntu-openocd",
+      "sourceFileMap": {
+        "/home/andrew/ARTERY/IO_BOARD": "${workspaceFolder}",
+        "/home/andrew/ARTERY/.vendor": "${workspaceFolder}/../.vendor"
+      },
+      "setupCommands": [
+        {
+          "text": "set architecture arm"
+        },
+        {
+          "text": "set breakpoint auto-hw on"
+        },
+        {
+          "text": "set remote hardware-breakpoint-limit 6"
+        },
+        {
+          "text": "set remote hardware-watchpoint-limit 4"
+        },
+        {
+          "text": "mem 0x08000000 0x08080000 ro 32"
+        },
+        {
+          "text": "mem 0x20000000 0x20040000 rw 32"
+        },
+        {
+          "text": "monitor reset halt"
+        }
+      ],
+      "postRemoteConnectCommands": [
+        {
+          "text": "monitor reset halt"
+        }
+      ],
+      "stopAtEntry": false
+    },
+    {
+      "name": "Debug AT32F455 on Ubuntu Local OpenOCD",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/io_board_at32f455.elf",
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "miDebuggerServerAddress": "localhost:3333",
+      "preLaunchTask": "debug-server-local-openocd",
+      "setupCommands": [
+        {
+          "text": "set architecture arm"
+        },
+        {
+          "text": "set breakpoint auto-hw on"
+        },
+        {
+          "text": "set remote hardware-breakpoint-limit 6"
+        },
+        {
+          "text": "set remote hardware-watchpoint-limit 4"
+        },
+        {
+          "text": "mem 0x08000000 0x08080000 ro 32"
+        },
+        {
+          "text": "mem 0x20000000 0x20040000 rw 32"
+        },
+        {
+          "text": "monitor reset halt"
+        }
+      ],
+      "postRemoteConnectCommands": [
+        {
+          "text": "monitor reset halt"
+        }
+      ],
+      "stopAtEntry": false
+    }
+  ]
+}

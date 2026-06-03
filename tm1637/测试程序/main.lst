@@ -1,0 +1,188 @@
+C51 COMPILER V9.00   MAIN                                                                  08/04/2016 18:47:30 PAGE 1   
+
+
+C51 COMPILER V9.00, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.obj
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE mian\main.c OPTIMIZE(9,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\main.lst) O
+                    -BJECT(main.obj)
+
+line level    source
+
+   1          #include"hadder\\STC15W.h"
+   2          #include"hadder\\tm1637.h"
+   3          
+   4          #define uchar unsigned char
+   5          #define uint unsigned int
+   6          
+   7          uchar code CODE[19] = {0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x77,0x7C,0x39,0x5E,0x79,0x71,0x7
+             -6,0x38,0x73};         //0--18
+   8          
+   9          sbit OUT1= P3^7; //
+  10          sbit OUT2 = P3^6;  //
+  11          sbit IN1 = P5^5;
+  12          sbit beep=P5^4;
+  13          /************************************************************************* 
+  14                            数据定义
+  15          *************************************************************************/
+  16          uchar time1,time2;
+  17          
+  18          uchar update_dis;
+  19          uchar key_timeto;
+  20          uchar mode;
+  21          
+  22          bit write=0;
+  23          bit flag;
+  24           uchar i=1;
+  25          
+  26          /********************************************************************
+  27                定时器t0、t1都使用模式0十六位自动重装。初始化函数
+  28          *********************************************************************/
+  29          void Timer0Init(void)           //10ms
+  30          {
+  31   1          AUXR &= 0x7F;               //定时器时钟12T模式
+  32   1              TMOD &= 0xF0;           //设置定时器模式
+  33   1              TL0 = 0xF0;             //设置定时初值
+  34   1              TH0 = 0xD8;             //设置定时初值
+  35   1              TF0 = 0;                //清除TF0标志
+  36   1              TR0 = 1;                //定时器0开始计时
+  37   1              ET0 = 1;
+  38   1              EA = 1;
+  39   1      }
+  40          
+  41          /********************************************************************
+  42                                     主函数
+  43          *********************************************************************/
+  44          void main()
+  45          {       
+  46   1              
+  47   1              uchar key,key_L;
+  48   1              Timer0Init();
+  49   1              beep=1;
+  50   1              OUT1=1;
+  51   1              OUT2=1;
+  52   1        TM1637_Set(0xc0,CODE[0]);
+  53   1        TM1637_Set(0xc1,CODE[0]);
+C51 COMPILER V9.00   MAIN                                                                  08/04/2016 18:47:30 PAGE 2   
+
+  54   1        TM1637_Set(0xc2,CODE[0]);             
+  55   1        TM1637_Set(0xc3,CODE[0]);
+  56   1        TM1637_Set(0xc4,CODE[0]);             
+  57   1        TM1637_Set(0xc5,CODE[0]);
+  58   1              while(1)
+  59   1              {       
+  60   2      
+  61   2      
+  62   2                  if(key_timeto)
+  63   2                      {
+  64   3                              key_timeto = 0;
+  65   3                              key_L = key;
+  66   3                               CLK=1;
+  67   3                           DIO=1;
+  68   3                              key =read_key();
+  69   3                              if((key == 0xf3)&&(key_L == 0xf3))        //此键值和数据手册上对应
+  70   3                              {       
+  71   4                                      time2=1;        
+  72   4                                      
+  73   4                              }
+  74   3                              //第二个按键按下
+  75   3                         else if((key == 0xf4)&&(key_L != 0xf4))
+  76   3                              {       
+  77   4                                      
+  78   4                              time2=2;
+  79   4                              }
+  80   3                              //第三个按键按下
+  81   3                        else   if((key == 0xf5)&&(key_L != 0xf5))
+  82   3                              {       
+  83   4                                      
+  84   4                                  time2=3;
+  85   4                              }
+  86   3      
+  87   3                      else    if((key == 0xf0)&&(key_L == 0xf0))        //此键值和数据手册上对应
+  88   3                              {       
+  89   4                                    time2=4;  
+  90   4                                      
+  91   4                              }
+  92   3                      }
+  93   2                      if(update_dis)
+  94   2                      {
+  95   3                                 update_dis = 0;
+  96   3      
+  97   3                                  TM1637_Set(0xc0,CODE[0]);
+  98   3                                      TM1637_Set(0xc1,CODE[0]);
+  99   3                                  TM1637_Set(0xc2,CODE[0]);           
+ 100   3                                      TM1637_Set(0xc3,CODE[0]);
+ 101   3                                      TM1637_Set(0xc4,CODE[time2/10]);                
+ 102   3                                      TM1637_Set(0xc5,CODE[time2%10]);        
+ 103   3      
+ 104   3      
+ 105   3                      }
+ 106   2              }
+ 107   1      }
+ 108          /********************************************************************
+ 109                                      定时器t0的中断处理
+ 110          *********************************************************************/
+ 111          void timer0() interrupt 1                                                                                                                  //中断
+ 112          {                                                                                                                                                               
+ 113   1         static uint  cnt,cnt1;
+ 114   1         
+ 115   1         
+C51 COMPILER V9.00   MAIN                                                                  08/04/2016 18:47:30 PAGE 3   
+
+ 116   1        if(flag==0)
+ 117   1        {
+ 118   2          cnt1++;
+ 119   2          if(cnt1>=50)
+ 120   2          {
+ 121   3           cnt1=0;
+ 122   3               if(i<9)
+ 123   3               {
+ 124   4                TM1637_Set(0xc0,CODE[i]);
+ 125   4                TM1637_Set(0xc1,CODE[i]);
+ 126   4            TM1637_Set(0xc2,CODE[i]);         
+ 127   4                TM1637_Set(0xc3,CODE[i]);
+ 128   4                TM1637_Set(0xc4,CODE[i]);             
+ 129   4                TM1637_Set(0xc5,CODE[i]);
+ 130   4               }
+ 131   3               else 
+ 132   3               {
+ 133   4                TM1637_Set(0xc0,0xff);
+ 134   4                TM1637_Set(0xc1,0xff);
+ 135   4            TM1637_Set(0xc2,0xff);            
+ 136   4                TM1637_Set(0xc3,0xff);
+ 137   4                TM1637_Set(0xc4,0xff);                
+ 138   4                TM1637_Set(0xc5,0xff);
+ 139   4               }
+ 140   3               i++;
+ 141   3               if(i>10)
+ 142   3               {
+ 143   4                i=0;
+ 144   4                flag=1;
+ 145   4                }
+ 146   3           }
+ 147   2         }
+ 148   1      
+ 149   1       if(flag)
+ 150   1       {  
+ 151   2         cnt++;
+ 152   2         if(++cnt>=4)
+ 153   2         {
+ 154   3               cnt=0;
+ 155   3               key_timeto = 1;
+ 156   3               update_dis = 1;
+ 157   3         }
+ 158   2        }
+ 159   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    470    ----
+   CONSTANT SIZE    =     19    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     10       2
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      2    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

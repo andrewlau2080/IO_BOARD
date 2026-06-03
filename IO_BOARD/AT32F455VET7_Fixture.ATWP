@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Root>
+    <WorkBenchVersion>
+        <Version>V1.1.09</Version>
+    </WorkBenchVersion>
+    <MCUInfo>
+        <MCUSerials>AT32F455</MCUSerials>
+        <MCUName>AT32F455VET7</MCUName>
+        <MCUPackage>LQFP100</MCUPackage>
+    </MCUInfo>
+    <ADC-Common>
+        <Mode>
+            <ModeSub name="Activated" value="TRUE"/>
+        </Mode>
+        <Parameters>
+            <ParametersSub name="ClockPrescaler" value="ADC_HCLK_DIV_8"/>
+            <ParametersSub name="Clock" value="24000000"/>
+        </Parameters>
+    </ADC-Common>
+    <ADC1>
+        <Mode>
+            <ModeSub name="IN0" value="TRUE"/>
+            <ModeSub name="IN1" value="TRUE"/>
+        </Mode>
+    </ADC1>
+    <ADC2>
+        <Mode>
+            <ModeSub name="IN2" value="TRUE"/>
+            <ModeSub name="IN3" value="TRUE"/>
+        </Mode>
+    </ADC2>
+    <CAN1>
+        <Mode>
+            <ModeSub name="CAN_Activate" value="TRUE"/>
+        </Mode>
+        <Parameters>
+            <ParametersSub name="Nominal_Sample_Point" value="75.0"/>
+            <ParametersSub name="Nominal_BTS1" value="144"/>
+            <ParametersSub name="Nominal_BTS2" value="48"/>
+            <ParametersSub name="Nominal_RSAW" value="48"/>
+        </Parameters>
+    </CAN1>
+    <CRM>
+        <Mode>
+            <ModeSub name="HEXT" value="HEXT-External-Oscillator"/>
+            <ModeSub name="LEXT" value="LEXT-External-Oscillator"/>
+        </Mode>
+        <Parameters>
+            <ParametersSub name="HEXT" value="HEXT_CRYSTAL"/>
+            <ParametersSub name="LEXT" value="LEXT_CRYSTAL"/>
+        </Parameters>
+    </CRM>
+    <DAC>
+        <Mode>
+            <ModeSub name="DAC_OUT1" value="TRUE"/>
+            <ModeSub name="DAC_OUT2" value="TRUE"/>
+        </Mode>
+        <Parameters>
+            <ParametersSub name="Trigger_Source_OUT1" value="DAC_SOFTWARE_TRIGGER"/>
+            <ParametersSub name="Trigger_Source_OUT2" value="DAC_SOFTWARE_TRIGGER"/>
+        </Parameters>
+    </DAC>
+    <DEBUG>
+        <Mode>
+            <ModeSub name="SWD" value="TRUE"/>
+            <ModeSub name="SWO" value="FALSE"/>
+        </Mode>
+    </DEBUG>
+    <SPI1>
+        <Mode>
+            <ModeSub name="Mode" value="TX_Only_Simplex_Unidirect_Master"/>
+        </Mode>
+        <Parameters>
+            <ParametersSub name="TransmissionMode" value="SPI_TRANSMIT_FULL_DUPLEX"/>
+            <ParametersSub name="Mode" value="SPI_MODE_MASTER"/>
+            <ParametersSub name="FirstBit" value="SPI_FIRST_BIT_MSB"/>
+            <ParametersSub name="ClkDivision" value="SPI_MCLK_DIV_32"/>
+            <ParametersSub name="ClockFrequency" value="6000000"/>
+        </Parameters>
+    </SPI1>
+    <SYSTEM>
+        <Mode>
+            <ModeSub name="Time_Base" value="SysTick"/>
+        </Mode>
+    </SYSTEM>
+    <NVIC>
+        <SysTick_Handler>1;15;0;0;0</SysTick_Handler>
+        <FLASH_IRQHandler>0;0;0;0;0</FLASH_IRQHandler>
+        <CRM_IRQHandler>0;0;0;0;0</CRM_IRQHandler>
+        <ADC1_2_IRQHandler>0;0;0;0;0</ADC1_2_IRQHandler>
+        <CAN1_TX_IRQHandler>0;0;0;0;0</CAN1_TX_IRQHandler>
+        <CAN1_RX_IRQHandler>0;0;0;0;0</CAN1_RX_IRQHandler>
+        <CAN1_STAT_IRQHandler>0;0;0;0;0</CAN1_STAT_IRQHandler>
+        <CAN1_ERR_IRQHandler>0;0;0;0;0</CAN1_ERR_IRQHandler>
+        <SPI1_IRQHandler>0;0;0;0;0</SPI1_IRQHandler>
+        <TMR6_DAC_GLOBAL_IRQHandler>0;0;0;0;0</TMR6_DAC_GLOBAL_IRQHandler>
+        <FPU_IRQHandler>0;0;0;0;0</FPU_IRQHandler>
+    </NVIC>
+    <GPIO>
+        <Signal SignalName="GPIO_Output" PinName="PE2">
+            <Parameters name="Label" value="IN_AMUX_EN2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE3">
+            <Parameters name="Label" value="IN_AMUX_EN3"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE4">
+            <Parameters name="Label" value="IN_AMUX_EN4"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE5">
+            <Parameters name="Label" value="IN_AMUX_EN5"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE6">
+            <Parameters name="Label" value="IN_AMUX_EN6"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC0">
+            <Parameters name="Label" value="IN_AMUX_A0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC1">
+            <Parameters name="Label" value="IN_AMUX_B1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC2">
+            <Parameters name="Label" value="IN_AMUX_C2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC4">
+            <Parameters name="Label" value="BTN_CANCEL"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC5">
+            <Parameters name="Label" value="BTN_ENTER"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB0">
+            <Parameters name="Label" value="IN_BMUX_A0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB1">
+            <Parameters name="Label" value="IN_BMUX_B1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB2/BOOT1">
+            <Parameters name="Label" value="IN_BMUX_C2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE7">
+            <Parameters name="Label" value="IN_AMUX_EN7"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE8">
+            <Parameters name="Label" value="IN_BMUX_EN0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE9">
+            <Parameters name="Label" value="IN_BMUX_EN1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE10">
+            <Parameters name="Label" value="IN_BMUX_EN2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE11">
+            <Parameters name="Label" value="IN_BMUX_EN3"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE12">
+            <Parameters name="Label" value="IN_BMUX_EN4"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE13">
+            <Parameters name="Label" value="IN_BMUX_EN5"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE14">
+            <Parameters name="Label" value="IN_BMUX_EN6"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE15">
+            <Parameters name="Label" value="IN_BMUX_EN7"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB10">
+            <Parameters name="Label" value="OUT_BMUX_A0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB11">
+            <Parameters name="Label" value="OUT_BMUX_B1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PH3">
+            <Parameters name="Label" value="DEBUG_OUT"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB12">
+            <Parameters name="Label" value="OUT_BMUX_C2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD8">
+            <Parameters name="Label" value="OUT_BMUX_EN0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD9">
+            <Parameters name="Label" value="OUT_BMUX_EN1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD10">
+            <Parameters name="Label" value="OUT_BMUX_EN2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD11">
+            <Parameters name="Label" value="OUT_BMUX_EN3"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD12">
+            <Parameters name="Label" value="OUT_BMUX_EN4"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD13">
+            <Parameters name="Label" value="OUT_BMUX_EN5"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD14">
+            <Parameters name="Label" value="OUT_BMUX_EN6"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD15">
+            <Parameters name="Label" value="OUT_BMUX_EN7"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC6">
+            <Parameters name="Label" value="BTN_RIGHT"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC7">
+            <Parameters name="Label" value="BTN_LEFT"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC8">
+            <Parameters name="Label" value="BTN_DOWN"/>
+        </Signal>
+        <Signal SignalName="GPIO_Input" PinName="PC9">
+            <Parameters name="Label" value="BTN_UP"/>
+        </Signal>
+        <Signal SignalName="USART1_TX" PinName="PA9">
+            <Parameters name="Label" value="CTRL_USART1_TX"/>
+        </Signal>
+        <Signal SignalName="USART1_RX" PinName="PA10">
+            <Parameters name="Label" value="CTRL_USART1_RX"/>
+        </Signal>
+        <Signal SignalName="CAN1_RX" PinName="PA11">
+            <Parameters name="Label" value="CTRL_CAN1_RX"/>
+        </Signal>
+        <Signal SignalName="CAN1_TX" PinName="PA12">
+            <Parameters name="Label" value="CTRL_CAN1_TX"/>
+        </Signal>
+        <Signal SignalName="USART7_RX" PinName="PH2">
+            <Parameters name="Label" value="DBG_USART7_RX"/>
+        </Signal>
+        <Signal SignalName="USART7_TX" PinName="PA15">
+            <Parameters name="Label" value="DBG_USART7_TX"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC10">
+            <Parameters name="Label" value="OUT_AMUX_A0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC11">
+            <Parameters name="Label" value="OUT_AMUX_B1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PC12">
+            <Parameters name="Label" value="OUT_AMUX_C2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD0">
+            <Parameters name="Label" value="OUT_AMUX_EN0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD1">
+            <Parameters name="Label" value="OUT_AMUX_EN1"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD2">
+            <Parameters name="Label" value="OUT_AMUX_EN2"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD3">
+            <Parameters name="Label" value="OUT_AMUX_EN3"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD4">
+            <Parameters name="Label" value="OUT_AMUX_EN4"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD5">
+            <Parameters name="Label" value="OUT_AMUX_EN5"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD6">
+            <Parameters name="Label" value="OUT_AMUX_EN6"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PD7">
+            <Parameters name="Label" value="OUT_AMUX_EN7"/>
+        </Signal>
+        <Signal SignalName="SPI1_SCK" PinName="PB3">
+            <Parameters name="Label" value="LCM_SPI_SCK"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB4">
+            <Parameters name="Label" value="LCM_RESET"/>
+        </Signal>
+        <Signal SignalName="SPI1_MOSI" PinName="PB5">
+            <Parameters name="Label" value="LCM_SPI_MOSI"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB6">
+            <Parameters name="Label" value="LCM_CMD"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB7">
+            <Parameters name="Label" value="LCM_CS"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PB8">
+            <Parameters name="Label" value="LCM_BL_LED"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE0">
+            <Parameters name="Label" value="IN_AMUX_EN0"/>
+        </Signal>
+        <Signal SignalName="GPIO_Output" PinName="PE1">
+            <Parameters name="Label" value="IN_AMUX_EN1"/>
+        </Signal>
+    </GPIO>
+    <ClockConfiguration>
+        <rtcsel>0</rtcsel>
+        <rtcdiv>2</rtcdiv>
+        <hext>8.000000</hext>
+        <sclkhextdiv>1</sclkhextdiv>
+        <sclkhickdiv>1</sclkhickdiv>
+        <pllrcs>1</pllrcs>
+        <pllms>1</pllms>
+        <pllns>144</pllns>
+        <pllfp>6</pllfp>
+        <sclkselect>1</sclkselect>
+        <ahbdiv>1</ahbdiv>
+        <apb1div>1</apb1div>
+        <apb2div>1</apb2div>
+        <apb3div>4</apb3div>
+        <pllfu>16</pllfu>
+        <hicktosclk>0</hicktosclk>
+        <hicktousb>1</hicktousb>
+        <clkout>5</clkout>
+        <clkoutdiv1>1</clkoutdiv1>
+        <clkoutdiv2>1</clkoutdiv2>
+        <can1clocksel>2</can1clocksel>
+        <can2clocksel>2</can2clocksel>
+        <can3clocksel>2</can3clocksel>
+        <i2sf5clocksel>0</i2sf5clocksel>
+        <systicsel>8</systicsel>
+    </ClockConfiguration>
+    <PINInfo>
+        <PinSub pinname="PE2" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE3" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE4" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE5" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE6" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC14" signalname="CRM_LEXT_IN" signaltype="2"/>
+        <PinSub pinname="PC15" signalname="CRM_LEXT_OUT" signaltype="2"/>
+        <PinSub pinname="PH0" signalname="CRM_HEXT_IN" signaltype="2"/>
+        <PinSub pinname="PH1" signalname="CRM_HEXT_OUT" signaltype="2"/>
+        <PinSub pinname="PC0" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC1" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC2" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PA0" signalname="ADC1_IN0" signaltype="2"/>
+        <PinSub pinname="PA1" signalname="ADC1_IN1" signaltype="3"/>
+        <PinSub pinname="PA2" signalname="ADC2_IN2" signaltype="2"/>
+        <PinSub pinname="PA3" signalname="ADC2_IN3" signaltype="3"/>
+        <PinSub pinname="PA4" signalname="DAC_OUT1" signaltype="2"/>
+        <PinSub pinname="PA5" signalname="DAC_OUT2" signaltype="2"/>
+        <PinSub pinname="PC4" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PC5" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PB0" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB1" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB2/BOOT1" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE7" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE8" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE9" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE10" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE11" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE12" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE13" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE14" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE15" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB10" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB11" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PH3" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB12" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD8" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD9" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD10" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD11" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD12" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD13" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD14" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD15" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC6" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PC7" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PC8" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PC9" signalname="GPIO_Input" signaltype="3"/>
+        <PinSub pinname="PA9" signalname="USART1_TX" signaltype="1"/>
+        <PinSub pinname="PA10" signalname="USART1_RX" signaltype="1"/>
+        <PinSub pinname="PA11" signalname="CAN1_RX" signaltype="3"/>
+        <PinSub pinname="PA12" signalname="CAN1_TX" signaltype="3"/>
+        <PinSub pinname="PA13" signalname="DEBUG_SWDIO" signaltype="2"/>
+        <PinSub pinname="PH2" signalname="USART7_RX" signaltype="1"/>
+        <PinSub pinname="PA14" signalname="DEBUG_SWCLK" signaltype="2"/>
+        <PinSub pinname="PA15" signalname="USART7_TX" signaltype="1"/>
+        <PinSub pinname="PC10" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC11" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PC12" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD0" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD1" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD2" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD3" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD4" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD5" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD6" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PD7" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB3" signalname="SPI1_SCK" signaltype="2"/>
+        <PinSub pinname="PB4" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB5" signalname="SPI1_MOSI" signaltype="2"/>
+        <PinSub pinname="PB6" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB7" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PB8" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE0" signalname="GPIO_Output" signaltype="3"/>
+        <PinSub pinname="PE1" signalname="GPIO_Output" signaltype="3"/>
+    </PINInfo>
+    <ProjectInfomation>
+        <ProjectName>AT32F455VET7_Fixture</ProjectName>
+        <ProjectLocation>/home/bardeen/Desktop</ProjectLocation>
+        <ToolchainIDE>AT32_IDE</ToolchainIDE>
+        <ARMCompiler>0</ARMCompiler>
+        <KeepUserCode>true</KeepUserCode>
+        <NotUsedPinAnalog>false</NotUsedPinAnalog>
+        <CodeSplitIP>true</CodeSplitIP>
+        <AddNecessaryFileFlag>true</AddNecessaryFileFlag>
+        <MinHeapSize>0x200</MinHeapSize>
+        <MinStackSize>0x400</MinStackSize>
+        <UseFirmware>true</UseFirmware>
+        <PackageVersion></PackageVersion>
+    </ProjectInfomation>
+</Root>

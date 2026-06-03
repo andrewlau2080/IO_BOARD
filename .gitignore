@@ -1,0 +1,21 @@
+.DS_Store
+*.swp
+*.swo
+
+# Local build outputs
+build/
+IO_BOARD/build/
+cmake-build-*/
+
+# Local toolchains and downloaded debug tools
+.tools
+.tools/
+IO_BOARD/.tools/
+*.zip
+
+# Editor state
+.vscode/*.log
+
+# Python/cache files from analysis scripts
+__pycache__/
+*.pyc

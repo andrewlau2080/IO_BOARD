@@ -1,0 +1,6 @@
+step,actor,signal,relative_start_ms,duration_ms,note
+1,打印机,trigger_poll_tx,0.000,36.693,触发测试机响应的轮询包，包络同 printer_poll_tx_envelope.csv
+2,测试机,rx_trigger_poll,0.215,36.693,测试机 RX 约延迟 0.215 ms 看到同一轮询包
+3,测试机,tester_response_tx,24.786,2151.005,测试机响应长包，完整包络见 useful_tester_response_tx_envelope.csv
+4,打印机,resume_or_ack_tx,2036.779,36.693,打印机暂停约 2 s 后恢复发同一 71 段包，可作为清除 print_pending 的确认
+5,测试机,response_tx_end,2175.791,0.000,测试机响应结束；之后等待确认/复位下一轮

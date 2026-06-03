@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print Terminal Mockup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, "Helvetica Neue", sans-serif;
+      background: #f4f6f8;
+      color: #17202a;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(420px, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+    section {
+      background: #ffffff;
+      border: 1px solid #d7dde3;
+      border-radius: 8px;
+      padding: 18px;
+    }
+    h1, h2 {
+      margin: 0 0 16px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      margin: 12px 0 6px;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      box-sizing: border-box;
+      font: inherit;
+      border: 1px solid #b9c3ce;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #ffffff;
+    }
+    textarea {
+      min-height: 74px;
+      resize: vertical;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    button {
+      cursor: pointer;
+      background: #1f6feb;
+      border-color: #1f6feb;
+      color: white;
+      font-weight: 700;
+    }
+    button.secondary {
+      background: #eef2f6;
+      color: #17202a;
+      border-color: #b9c3ce;
+    }
+    .label-preview {
+      width: min(100%, 560px);
+      min-height: 320px;
+      border: 2px solid #17202a;
+      background: #fffdf5;
+      padding: 24px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+    }
+    .label-title {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: 0;
+      border-bottom: 2px solid #17202a;
+      padding-bottom: 10px;
+    }
+    .label-body {
+      display: grid;
+      gap: 10px;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+    .label-code {
+      border-top: 2px solid #17202a;
+      padding-top: 12px;
+      font-family: "Courier New", monospace;
+      font-size: 24px;
+      word-break: break-all;
+    }
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .queue {
+      margin-top: 18px;
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+    }
+    .queue th, .queue td {
+      border-bottom: 1px solid #d7dde3;
+      text-align: left;
+      padding: 8px;
+    }
+    .status-pass { color: #0b7a3b; }
+    .status-ng { color: #b42318; }
+    @media (max-width: 900px) {
+      body { padding: 12px; }
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>打印终端模型</h1>
+      <div class="row">
+        <div>
+          <label for="station">测试机编号</label>
+          <select id="station">
+            <option>Station 01</option><option>Station 02</option><option>Station 03</option>
+            <option>Station 04</option><option>Station 05</option><option>Station 06</option>
+            <option>Station 07</option><option>Station 08</option><option>Station 09</option>
+            <option>Station 10</option>
+          </select>
+        </div>
+        <div>
+          <label for="result">测试结果</label>
+          <select id="result">
+            <option>PASS</option>
+            <option>NG</option>
+          </select>
+        </div>
+      </div>
+      <label for="title">抬头</label>
+      <input id="title" value="HARNESS TEST">
+      <label for="item">款项 / 型号</label>
+      <input id="item" value="MODEL-A">
+      <label for="content">内容</label>
+      <textarea id="content">LINE 01 / SHIFT A / OPERATOR 001</textarea>
+      <label for="code">英文数字代码 / 条码内容</label>
+      <input id="code" value="A1B1-000001">
+      <div class="row">
+        <div>
+          <label for="qty">数量</label>
+          <input id="qty" type="number" min="1" value="1">
+        </div>
+        <div>
+          <label for="copies">份数</label>
+          <input id="copies" type="number" min="1" value="1">
+        </div>
+      </div>
+      <div class="buttons">
+        <button id="preview">更新预览</button>
+        <button id="enqueue" class="secondary">加入打印队列</button>
+      </div>
+    </section>
+    <section>
+      <h1>标签预览</h1>
+      <div class="label-preview">
+        <div class="label-title" id="p_title">HARNESS TEST</div>
+        <div class="label-body">
+          <div><strong>ITEM:</strong> <span id="p_item">MODEL-A</span></div>
+          <div><strong>CONTENT:</strong> <span id="p_content">LINE 01 / SHIFT A / OPERATOR 001</span></div>
+          <div class="meta">
+            <span><strong>QTY:</strong> <span id="p_qty">1</span></span>
+            <span><strong>RESULT:</strong> <span id="p_result" class="status-pass">PASS</span></span>
+          </div>
+          <div><strong>SOURCE:</strong> <span id="p_station">Station 01</span></div>
+        </div>
+        <div class="label-code" id="p_code">A1B1-000001</div>
+      </div>
+      <h2>打印队列</h2>
+      <table class="queue">
+        <thead><tr><th>来源</th><th>款项</th><th>代码</th><th>结果</th><th>份数</th></tr></thead>
+        <tbody id="queue"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const ids = ["station", "result", "title", "item", "content", "code", "qty", "copies"];
+    const $ = id => document.getElementById(id);
+    function updatePreview() {
+      $("p_station").textContent = $("station").value;
+      $("p_title").textContent = $("title").value || " ";
+      $("p_item").textContent = $("item").value || " ";
+      $("p_content").textContent = $("content").value || " ";
+      $("p_code").textContent = $("code").value || " ";
+      $("p_qty").textContent = $("qty").value || "1";
+      $("p_result").textContent = $("result").value;
+      $("p_result").className = $("result").value === "PASS" ? "status-pass" : "status-ng";
+    }
+    function enqueue() {
+      updatePreview();
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${$("station").value}</td><td>${$("item").value}</td><td>${$("code").value}</td><td>${$("result").value}</td><td>${$("copies").value}</td>`;
+      $("queue").prepend(tr);
+    }
+    ids.forEach(id => $(id).addEventListener("input", updatePreview));
+    $("preview").addEventListener("click", updatePreview);
+    $("enqueue").addEventListener("click", enqueue);
+    updatePreview();
+  </script>
+</body>
+</html>

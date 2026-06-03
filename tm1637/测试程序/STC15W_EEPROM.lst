@@ -1,0 +1,88 @@
+C51 COMPILER V9.00   STC15W_EEPROM                                                         08/04/2016 18:41:45 PAGE 1   
+
+
+C51 COMPILER V9.00, COMPILATION OF MODULE STC15W_EEPROM
+OBJECT MODULE PLACED IN STC15W_EEPROM.obj
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE eeprom\STC15W_EEPROM.c OPTIMIZE(9,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\
+                    -STC15W_EEPROM.lst) OBJECT(STC15W_EEPROM.obj)
+
+line level    source
+
+   1          #include"hadder\\STC15W_EEPROM.h"
+   2          #include"hadder\\STC15W.h"
+   3          #include "intrins.h"
+   4          /*----------------------------
+   5          扇区擦除
+   6          ----------------------------*/
+   7          void IapEraseSector(uint addr)
+   8          {
+   9   1          IAP_CONTR = ENABLE_IAP;         //使能IAP
+  10   1          IAP_CMD = CMD_ERASE;            //设置IAP命令
+  11   1          IAP_ADDRL = addr;               //设置IAP低地址
+  12   1          IAP_ADDRH = addr >> 8;          //设置IAP高地址
+  13   1          IAP_TRIG = 0x5a;                //写触发命令(0x5a)
+  14   1          IAP_TRIG = 0xa5;                //写触发命令(0xa5)
+  15   1          _nop_(); 
+  16   1              _nop_();                       //等待ISP/IAP/EEPROM操作完成
+  17   1          IapIdle();
+  18   1      }
+  19          
+  20          /*----------------------------
+  21          写一字节数据到ISP/IAP/EEPROM区域
+  22          ----------------------------*/
+  23          void IapProgramByte(uint addr, uchar dat)
+  24          {
+  25   1          IAP_CONTR = ENABLE_IAP;         //使能IAP
+  26   1          IAP_CMD = CMD_PROGRAM;          //设置IAP命令
+  27   1          IAP_ADDRL = addr;               //设置IAP低地址
+  28   1          IAP_ADDRH = addr >> 8;          //设置IAP高地址
+  29   1          IAP_DATA = dat;                 //写ISP/IAP/EEPROM数据
+  30   1          IAP_TRIG = 0x5a;                //写触发命令(0x5a)
+  31   1          IAP_TRIG = 0xa5;                //写触发命令(0xa5)
+  32   1          _nop_();  
+  33   1              _nop_();                      //等待ISP/IAP/EEPROM操作完成
+  34   1          IapIdle();
+  35   1      }
+  36          
+  37          uchar IapReadByte(uint addr)
+  38          {
+  39   1          uchar dat;                       //数据缓冲区
+  40   1      
+  41   1          IAP_CONTR = ENABLE_IAP;         //使能IAP
+  42   1          IAP_CMD = CMD_READ;             //设置IAP命令
+  43   1          IAP_ADDRL = addr;               //设置IAP低地址
+  44   1          IAP_ADDRH = addr >> 8;          //设置IAP高地址
+  45   1          IAP_TRIG = 0x5a;                //写触发命令(0x5a)
+  46   1          IAP_TRIG = 0xa5;                //写触发命令(0xa5)
+  47   1          _nop_();                        //等待ISP/IAP/EEPROM操作完成
+  48   1              _nop_();
+  49   1          dat = IAP_DATA;                 //读ISP/IAP/EEPROM数据
+  50   1          IapIdle();                      //关闭IAP功能
+  51   1      
+  52   1          return dat;                     //返回
+  53   1      }
+  54          
+C51 COMPILER V9.00   STC15W_EEPROM                                                         08/04/2016 18:41:45 PAGE 2   
+
+  55          void IapIdle()
+  56          {
+  57   1          IAP_CONTR = 0;                  //关闭IAP功能
+  58   1          IAP_CMD = 0;                    //清除命令寄存器
+  59   1          IAP_TRIG = 0;                   //清除触发寄存器
+  60   1          IAP_ADDRH = 0x80;               //将地址设置到非IAP区域
+  61   1          IAP_ADDRL = 0;
+  62   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     78    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       1
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

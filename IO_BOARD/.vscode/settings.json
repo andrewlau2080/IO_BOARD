@@ -1,0 +1,7 @@
+{
+  "cmake.configureArgs": [
+    "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/cmake/arm-none-eabi.cmake"
+  ],
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
+}
