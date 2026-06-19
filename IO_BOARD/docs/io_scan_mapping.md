@@ -69,14 +69,19 @@ signals:
 | A half | `OUT/IN001` ... `OUT/IN048` | `DAC_OUT1` / `PA4` | `ADC1_IN0` / `PA0` | `IO_MUX_OUT_A`, `IO_MUX_IN_A` |
 | B half | `OUT/IN049` ... `OUT/IN096` | `DAC_OUT2` / `PA5` | `ADC2_IN2` / `PA2` | `IO_MUX_OUT_B`, `IO_MUX_IN_B` |
 
-The CD4051 channel order visible in `1thsch.pdf` is routed as:
+The first-gen schematic is specified so each CD4051 uses the natural channel
+order:
 
 ```text
-6, 4, 7, 5, 2, 1, 0, 3
+CD4051 channel 0 -> DACA/DACB IN0 or OUT0
+CD4051 channel 1 -> DACA/DACB IN1 or OUT1
+...
+CD4051 channel 7 -> DACA/DACB IN7 or OUT7
 ```
 
-The firmware applies this order only to `first_gen_1th_96x96`. The DB78 and
-legacy DB50 profiles keep their existing 64-channel bank mapping.
+The firmware therefore uses natural zero-based mux indexes for
+`first_gen_1th_96x96`. The A/B split is still 48+48 points, but there is no
+per-8-channel remap table.
 
 ## Legacy DB50 Connector Mapping
 

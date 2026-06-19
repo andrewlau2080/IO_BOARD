@@ -75,7 +75,6 @@ uint8_t io_scan_position_valid(uint16_t pos_code)
 
 uint8_t io_scan_position_to_bank_index(uint16_t pos_code, io_mux_bank_t *bank, uint8_t *index)
 {
-  static const uint8_t first_gen_4051_channel_map[8] = {6U, 4U, 7U, 5U, 2U, 1U, 0U, 3U};
   uint8_t point;
   uint8_t zero_based;
   uint8_t bank_zero_based;
@@ -94,7 +93,7 @@ uint8_t io_scan_position_to_bank_index(uint16_t pos_code, io_mux_bank_t *bank, u
     } else {
       *bank = (zero_based < 48U) ? IO_MUX_OUT_A : IO_MUX_OUT_B;
     }
-    *index = (uint8_t)((bank_zero_based & 0xF8U) | first_gen_4051_channel_map[bank_zero_based & 0x07U]);
+    *index = bank_zero_based;
   } else {
     if(IO_POS_IS_IN(pos_code)) {
       *bank = (zero_based < 64U) ? IO_MUX_IN_A : IO_MUX_IN_B;
