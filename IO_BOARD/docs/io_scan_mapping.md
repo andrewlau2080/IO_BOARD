@@ -39,6 +39,7 @@ Examples:
 |---:|---|---:|---:|---|
 | `0` | `old_db50_96x96` | `OUT001` ... `OUT096` | `IN001` ... `IN096` | Legacy-compatible DB50 |
 | `1` | `db78_64x4_128x128` | `OUT001` ... `OUT128` | `IN001` ... `IN128` | DB78 separated IN/OUT |
+| `2` | `first_gen_1th_96x96` | `OUT001` ... `OUT096` | `IN001` ... `IN096` | `1thsch.pdf` first-gen local CD4051 board |
 
 For `old_db50_96x96`, points `OUT097` ... `OUT128` and `IN097` ... `IN128`
 are reserved and must be treated as invalid by the firmware protocol.
@@ -54,8 +55,28 @@ are reserved and must be treated as invalid by the firmware protocol.
 
 During a pair read, firmware selects one OUT mux channel and one IN mux channel,
 waits for the settle delay, then calls `io_scan_measure_selected_pair()`.
-That function is currently a weak stub and must be replaced by the final
-measurement circuit implementation.
+That function is a weak stub in common builds. Product-specific measurement
+code can replace it with a strong implementation.
+
+## First-Gen `1thsch.pdf` Mapping
+
+The first-gen local board is not Raspberry Pi based and does not use 74LS164 in
+this schematic. It uses direct AT32 GPIO control of CD4051 address and enable
+signals:
+
+| Circuit half | Logical range | OUT excitation | IN sense | Firmware mux bank |
+|---|---|---|---|---|
+| A half | `OUT/IN001` ... `OUT/IN048` | `DAC_OUT1` / `PA4` | `ADC1_IN0` / `PA0` | `IO_MUX_OUT_A`, `IO_MUX_IN_A` |
+| B half | `OUT/IN049` ... `OUT/IN096` | `DAC_OUT2` / `PA5` | `ADC2_IN2` / `PA2` | `IO_MUX_OUT_B`, `IO_MUX_IN_B` |
+
+The CD4051 channel order visible in `1thsch.pdf` is routed as:
+
+```text
+6, 4, 7, 5, 2, 1, 0, 3
+```
+
+The firmware applies this order only to `first_gen_1th_96x96`. The DB78 and
+legacy DB50 profiles keep their existing 64-channel bank mapping.
 
 ## Legacy DB50 Connector Mapping
 
@@ -93,4 +114,3 @@ Pin formula for DB78 used pins 1-64:
 | `JOUT2` | `OUT point = 64 + pin` |
 | `JIN1` | `IN point = pin` |
 | `JIN2` | `IN point = 64 + pin` |
-

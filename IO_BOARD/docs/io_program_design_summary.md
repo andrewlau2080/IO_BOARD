@@ -18,7 +18,7 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 
 | Product path | Host/control model | IO mux control | Display/terminal role | Firmware impact |
 |---|---|---|---|---|
-| First-gen replacement | Single MCU local workflow | SN74LS164 shifts 4051 select/enable state | Local LED seven-segment plus learned IR print link | Needs a separate low-level mux driver and local test state machine |
+| First-gen replacement | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines per `1thsch.pdf`; no 74LS164 in this version | Local LED seven-segment plus local scan status | Uses `FIRST_GEN_4051_LOCAL`, DAC excitation, ADC sense, and a separate 48+48 A/B scan profile |
 | Second-gen Raspberry Pi board | Raspberry Pi sends commands over RS485 | Existing direct GPIO 4051 mux control remains the default | Raspberry Pi drives LCD/screen and high-level UI | Needs RS485 transport and command dispatcher; AT32 acts as scan/IO slave |
 
 The second-gen product must not be treated as an autonomous scanner. The AT32
@@ -45,6 +45,7 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 |---|---:|---:|---:|---|
 | `old_db50_96x96` | 96 | 96 | 9,216 | Four DB50 connectors, row pin 25 NC |
 | `db78_64x4_128x128` | 128 | 128 | 16,384 | Two OUT DB78 plus two IN DB78 |
+| `first_gen_1th_96x96` | 96 | 96 | 9,216 | `1thsch.pdf`: A half 48 points and B half 48 points, direct CD4051 GPIO control |
 
 ## Position Code Summary
 
@@ -62,7 +63,7 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 | Logical point coding | done | Shared by protocol and firmware |
 | Mux bank selection | done | Uses existing four 64-channel mux banks |
 | Full matrix scan loop | framework done | Calls measurement hook for each pair |
-| Measurement circuit read | pending hardware decision | Implement by overriding `io_scan_measure_selected_pair()` |
+| Measurement circuit read | done for first-gen local mode | `src/first_gen_4051_scan.c` overrides `io_scan_measure_selected_pair()` in `FIRST_GEN_4051_LOCAL`; default non-measurement builds still keep the weak placeholder |
 | Raspberry Pi frame codec | done | Encode/decode and CRC16 available |
 | Raspberry Pi RS485 physical layer | done for legacy test | USART1 `PA9/PA10`, 115200 8N1; DE/RE GPIO is optional and disabled until final schematic confirms a direction pin |
 | tester_v2 simple command dispatcher | done for link/UI test | Handles `0x10` ... `0x17`; currently reports active DB78 profile points as OK until the real measurement hook is implemented |

@@ -13,6 +13,7 @@ volatile uint32_t g_scan_connected_counter;
 static const io_scan_profile_t scan_profiles[] = {
   {IO_SCAN_PROFILE_OLD_DB50, "old_db50_96x96", 96U, 96U},
   {IO_SCAN_PROFILE_DB78_64X4, "db78_64x4_128x128", 128U, 128U},
+  {IO_SCAN_PROFILE_FIRST_GEN_1TH, "first_gen_1th_96x96", 96U, 96U},
 };
 
 static const io_scan_profile_t *active_profile = &scan_profiles[0];
@@ -74,8 +75,10 @@ uint8_t io_scan_position_valid(uint16_t pos_code)
 
 uint8_t io_scan_position_to_bank_index(uint16_t pos_code, io_mux_bank_t *bank, uint8_t *index)
 {
+  static const uint8_t first_gen_4051_channel_map[8] = {6U, 4U, 7U, 5U, 2U, 1U, 0U, 3U};
   uint8_t point;
   uint8_t zero_based;
+  uint8_t bank_zero_based;
 
   if(!io_scan_position_valid(pos_code) || bank == 0 || index == 0) {
     return 0U;
@@ -84,12 +87,22 @@ uint8_t io_scan_position_to_bank_index(uint16_t pos_code, io_mux_bank_t *bank, u
   point = IO_POS_INDEX_1_BASED(pos_code);
   zero_based = (uint8_t)(point - 1U);
 
-  if(IO_POS_IS_IN(pos_code)) {
-    *bank = (zero_based < 64U) ? IO_MUX_IN_A : IO_MUX_IN_B;
+  if(active_profile != 0 && active_profile->id == IO_SCAN_PROFILE_FIRST_GEN_1TH) {
+    bank_zero_based = (zero_based < 48U) ? zero_based : (uint8_t)(zero_based - 48U);
+    if(IO_POS_IS_IN(pos_code)) {
+      *bank = (zero_based < 48U) ? IO_MUX_IN_A : IO_MUX_IN_B;
+    } else {
+      *bank = (zero_based < 48U) ? IO_MUX_OUT_A : IO_MUX_OUT_B;
+    }
+    *index = (uint8_t)((bank_zero_based & 0xF8U) | first_gen_4051_channel_map[bank_zero_based & 0x07U]);
   } else {
-    *bank = (zero_based < 64U) ? IO_MUX_OUT_A : IO_MUX_OUT_B;
+    if(IO_POS_IS_IN(pos_code)) {
+      *bank = (zero_based < 64U) ? IO_MUX_IN_A : IO_MUX_IN_B;
+    } else {
+      *bank = (zero_based < 64U) ? IO_MUX_OUT_A : IO_MUX_OUT_B;
+    }
+    *index = (uint8_t)(zero_based & 0x3FU);
   }
-  *index = (uint8_t)(zero_based & 0x3FU);
 
   return 1U;
 }

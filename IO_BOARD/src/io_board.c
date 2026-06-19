@@ -140,15 +140,19 @@ void io_mux_select(io_mux_bank_t bank, uint8_t index)
 
   switch(bank) {
   case IO_MUX_IN_A:
+    mux_disable_group(in_b_en);
     mux_group_select(in_a_addr, in_a_en, index);
     break;
   case IO_MUX_IN_B:
+    mux_disable_group(in_a_en);
     mux_group_select(in_b_addr, in_b_en, index);
     break;
   case IO_MUX_OUT_A:
+    mux_disable_group(out_b_en);
     mux_group_select(out_a_addr, out_a_en, index);
     break;
   case IO_MUX_OUT_B:
+    mux_disable_group(out_a_en);
     mux_group_select(out_b_addr, out_b_en, index);
     break;
   default:

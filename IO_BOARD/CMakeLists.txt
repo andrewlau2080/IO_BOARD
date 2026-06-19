@@ -13,7 +13,7 @@ set(LINE_COMM_TESTER_RESPONSE_CSV
 set(LINE_COMM_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(LINE_COMM_GENERATED_C "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.c")
 set(LINE_COMM_GENERATED_H "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.h")
-set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY or IR_PRINT_BRIDGE")
+set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY, IR_PRINT_BRIDGE, or FIRST_GEN_4051_LOCAL")
 
 if(NOT EXISTS "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/at32f45x.h")
   message(FATAL_ERROR "AT32 BSP not found at ${AT32_BSP_DIR}")
@@ -48,6 +48,7 @@ set(AT32_DRIVER_SOURCES
 
 add_executable(${PROJECT_NAME}
   src/main.c
+  src/first_gen_4051_scan.c
   src/io_board.c
   src/io_scan.c
   src/line_comm_bridge.c
@@ -89,6 +90,8 @@ if(IO_APP_MODE STREQUAL "RPI_RS485_LEGACY")
   target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=2)
 elseif(IO_APP_MODE STREQUAL "IR_PRINT_BRIDGE")
   target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=1)
+elseif(IO_APP_MODE STREQUAL "FIRST_GEN_4051_LOCAL")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=3)
 else()
   message(FATAL_ERROR "Unsupported IO_APP_MODE=${IO_APP_MODE}")
 endif()

@@ -1,12 +1,14 @@
 #include "at32f45x_board.h"
 #include "at32f45x_clock.h"
+#include "first_gen_4051_scan.h"
 #include "io_board.h"
 #include "ir_remote.h"
 #include "line_comm_bridge.h"
 #include "rpi_rs485_legacy.h"
 
-#define IO_APP_MODE_IR_PRINT_BRIDGE  1
-#define IO_APP_MODE_RPI_RS485_LEGACY 2
+#define IO_APP_MODE_IR_PRINT_BRIDGE       1
+#define IO_APP_MODE_RPI_RS485_LEGACY      2
+#define IO_APP_MODE_FIRST_GEN_4051_LOCAL  3
 
 #ifndef IO_APP_MODE
 #define IO_APP_MODE IO_APP_MODE_RPI_RS485_LEGACY
@@ -101,6 +103,16 @@ int main(void)
   while(1)
   {
     rpi_rs485_legacy_service();
+  }
+#elif IO_APP_MODE == IO_APP_MODE_FIRST_GEN_4051_LOCAL
+  system_clock_config();
+  delay_init();
+  io_board_init();
+  first_gen_4051_scan_init();
+
+  while(1)
+  {
+    first_gen_4051_scan_service();
   }
 #else
 #error "Unsupported IO_APP_MODE"

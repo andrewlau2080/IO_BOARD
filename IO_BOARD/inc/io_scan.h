@@ -17,7 +17,8 @@
 
 typedef enum {
   IO_SCAN_PROFILE_OLD_DB50 = 0,
-  IO_SCAN_PROFILE_DB78_64X4 = 1
+  IO_SCAN_PROFILE_DB78_64X4 = 1,
+  IO_SCAN_PROFILE_FIRST_GEN_1TH = 2
 } io_scan_profile_id_t;
 
 typedef enum {

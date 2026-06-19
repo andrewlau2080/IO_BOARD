@@ -5,6 +5,7 @@
 # Local build outputs
 build/
 IO_BOARD/build/
+IO_BOARD/build-first-gen/
 cmake-build-*/
 
 # Local toolchains and downloaded debug tools
