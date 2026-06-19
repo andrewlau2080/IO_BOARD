@@ -11,13 +11,19 @@ extern volatile uint16_t g_first_gen_adc_threshold;
 extern volatile uint16_t g_first_gen_dac_code;
 extern volatile uint16_t g_first_gen_first_fail_out;
 extern volatile uint16_t g_first_gen_first_fail_in;
+extern volatile uint16_t g_first_gen_current_out;
+extern volatile uint16_t g_first_gen_current_problem_in;
 extern volatile uint32_t g_first_gen_scan_counter;
 extern volatile uint32_t g_first_gen_missing_counter;
 extern volatile uint32_t g_first_gen_unexpected_counter;
+extern volatile uint32_t g_first_gen_learn_counter;
+extern volatile uint8_t g_first_gen_recipe_valid;
+extern volatile uint8_t g_first_gen_learn_status;
 extern volatile uint8_t g_first_gen_last_pass;
 
 void first_gen_4051_scan_init(void);
 void first_gen_4051_scan_service(void);
 uint8_t first_gen_4051_scan_once(void);
+uint8_t first_gen_4051_learn_current_harness(void);
 
 #endif

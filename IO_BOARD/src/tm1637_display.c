@@ -230,6 +230,8 @@ uint8_t tm1637_display_encode_char(char ch)
   case 'o': return 0x5CU;
   case 'P':
   case 'p': return 0x73U;
+  case 'R':
+  case 'r': return 0x50U;
   case 'S':
   case 's': return 0x6DU;
   case 'T':
