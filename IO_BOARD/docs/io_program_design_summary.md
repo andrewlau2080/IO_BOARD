@@ -18,7 +18,7 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 
 | Product path | Host/control model | IO mux control | Display/terminal role | Firmware impact |
 |---|---|---|---|---|
-| First-gen replacement | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines per `1thsch.pdf`; no 74LS164 in this version | Local LED seven-segment plus local scan status | Uses `FIRST_GEN_4051_LOCAL`, DAC excitation, ADC sense, and a separate 48+48 A/B scan profile |
+| First-gen replacement | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines per `1thsch.pdf`; no 74LS164 in this version | Local LED seven-segment shows current OUT and problem IN; learned IR print link is the next integration step | Uses `FIRST_GEN_4051_LOCAL`, DAC excitation, ADC sense, self-learned Flash matrix, and a separate 48+48 A/B scan profile |
 | Second-gen Raspberry Pi board | Raspberry Pi sends commands over RS485 | Existing direct GPIO 4051 mux control remains the default | Raspberry Pi drives LCD/screen and high-level UI | Needs RS485 transport and command dispatcher; AT32 acts as scan/IO slave |
 
 The second-gen product must not be treated as an autonomous scanner. The AT32
@@ -64,11 +64,23 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 | Mux bank selection | done | Uses existing four 64-channel mux banks |
 | Full matrix scan loop | framework done | Calls measurement hook for each pair |
 | Measurement circuit read | done for first-gen local mode | `src/first_gen_4051_scan.c` overrides `io_scan_measure_selected_pair()` in `FIRST_GEN_4051_LOCAL`; default non-measurement builds still keep the weak placeholder |
+| First-gen self-learn standard | done for first-gen local mode | Known-good harness matrix is learned by `ENTER` or TM1637 `SET`, then saved to the reserved last Flash sector |
+| First-gen local display flow | done for first-gen local mode | Left display field follows current OUT; right display field shows problem IN; normal rows advance quickly and problem rows stay until cleared |
 | Raspberry Pi frame codec | done | Encode/decode and CRC16 available |
 | Raspberry Pi RS485 physical layer | done for legacy test | USART1 `PA9/PA10`, 115200 8N1; DE/RE GPIO is optional and disabled until final schematic confirms a direction pin |
 | tester_v2 simple command dispatcher | done for link/UI test | Handles `0x10` ... `0x17`; currently reports active DB78 profile points as OK until the real measurement hook is implemented |
 | New `55 AA` Raspberry Pi command dispatcher | pending | Keep for future richer scan/profile/row/pair API after the current Qt simple protocol test path is stable |
 | LED seven-segment reuse of comm port | specified | Command `0x30` reserved |
+| Learned IR print link after scan | next | Use previous learned IR receive/transmit code to send print response only after learned-matrix test PASS |
+
+## Next Development Step
+
+| Priority | Item | Expected result |
+|---:|---|---|
+| 1 | Connect first-gen scan PASS state to learned IR print flow | PASS scan sets print-ready; NG or unresolved point blocks print response |
+| 2 | Reuse learned printer polling receive path | Detect printer/terminal polling prefix before responding |
+| 3 | Reuse learned tester response transmit path | Send learned response code at the expected delay after polling detection |
+| 4 | Record runtime counters | Track scan pass count, print request match count, response sent count, and reject/error count |
 
 ## RS485 Implementation Estimate
 

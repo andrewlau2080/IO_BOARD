@@ -3,6 +3,16 @@
 This document models the next two development blocks before the old first-gen
 tester communication protocol is fully decoded.
 
+## Current First-Gen Scan Dependency
+
+| Item | Current status |
+|---|---|
+| Local scan mode | `FIRST_GEN_4051_LOCAL` implemented |
+| Standard definition | AT32 self-learns a known-good 96 x 96 matrix and saves it in Flash |
+| Display behavior | Left three digits show current OUT; right three digits show the current problem IN |
+| Print gating rule | Print response must only be enabled after the learned-matrix scan reaches PASS |
+| Block condition | If the display is stopped on a problem OUT/IN point, the tester must not send a print-ready response |
+
 ## 1. Production Line Communication Placeholder
 
 The production line has up to 10 tester stations. Each tester normally runs its
@@ -163,20 +173,35 @@ before choosing the final UI technology.
 ## 5. Future Runtime Flow
 
 ```text
-1. Tester completes local board logic.
-2. Fixture reaches print terminal sensor position.
-3. Tester sends PRINT_REQUEST.
-4. Terminal receives request and loads the current label template.
-5. Operator can edit title/item/content/code through terminal key input.
-6. Terminal prints through CUPS.
-7. Terminal sends PRINT_DONE or PRINT_BUSY/ERROR to tester.
+1. Tester learns a known-good harness matrix and stores it in Flash.
+2. Operator runs normal test; tester scans row by row.
+3. If a problem is found, tester display stays on current OUT/problem IN and print is blocked.
+4. After all rows pass, tester enters print-ready state.
+5. Fixture reaches print terminal sensor position.
+6. Tester receives the learned printer polling prefix.
+7. Tester sends the learned tester response code.
+8. Terminal receives request and loads the current label template.
+9. Operator can edit title/item/content/code through terminal key input.
+10. Terminal prints through CUPS.
+11. Terminal sends PRINT_DONE or PRINT_BUSY/ERROR to tester when that return code is decoded.
 ```
 
-## 6. Open Decisions
+## 6. Next Firmware Integration Plan
+
+| Step | Firmware block | Action |
+|---:|---|---|
+| 1 | First-gen scanner | Expose a stable `test_pass_and_ready_to_print` state after full learned-matrix PASS |
+| 2 | IR receiver | Reuse the current polling-prefix capture logic on `PA6` |
+| 3 | IR transmitter | Reuse `LINE_COMM_CODE_TESTER_RESPONSE` transmission on `PA7` |
+| 4 | State control | Only transmit response when print-ready is true; clear or hold state after response according to bench test |
+| 5 | Debug counters | Record polling match, response sent, print blocked, and bad-prefix counters |
+| 6 | Bench test | Verify timing with oscilloscope and confirm terminal/printer receives the response |
+
+## 7. Open Decisions
 
 | Decision | Current placeholder |
 |---|---|
-| Old first-gen protocol waveform | Empty arrays in `line_comm_bridge.c` |
+| Old first-gen protocol waveform | Polling and tester response are available; ACK/BUSY/DONE still require learned timing data |
 | Print terminal hardware | Raspberry Pi/Linux terminal recommended |
 | Exact printer class | CUPS first; direct ESC/POS/TSPL/ZPL only after printer is fixed |
 | Label size | Mockup default; final size to be updated after printer/label media selection |

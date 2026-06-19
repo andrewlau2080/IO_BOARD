@@ -11,6 +11,7 @@
 | Firmware mode | `FIRST_GEN_4051_LOCAL` |
 | Scan profile | `first_gen_1th_96x96` |
 | Standard storage | Self-learned matrix saved in the last Flash sector |
+| Current status | Implemented and build-verified; GitHub commit `8a5d187` |
 
 ## Circuit Mapping
 
@@ -63,6 +64,28 @@ next OUT point.
 
 If no valid standard is stored, the display shows `LEArn` and normal PASS/NG
 testing is blocked until learning succeeds.
+
+## Completed Behavior Record
+
+| Item | Current behavior |
+|---|---|
+| Standard creation | Connect a known-good harness, press `ENTER` or TM1637 `SET`, then save the scanned 96 x 96 matrix to Flash |
+| Multi-branch support | One-to-two and one-to-many branches are accepted when they exist in the learned standard matrix |
+| Normal scan display | Left three digits show current OUT point; right three digits show the first problem IN point |
+| Normal point behavior | Display advances quickly to the next OUT point |
+| Problem point behavior | Firmware stays on the current OUT/IN pair and keeps rechecking the same row |
+| Continue condition | After the current problem is cleared, the same row passes and firmware continues scanning the next OUT point |
+| No learned standard | Display shows `LEArn`; normal PASS/NG comparison is blocked |
+
+## Next Step: Learned IR Print Link
+
+| Step | Purpose | Planned firmware work |
+|---:|---|---|
+| 1 | Use local scan result as the print trigger | After a full learned-matrix scan passes, set a local print-ready state |
+| 2 | Reuse learned IR receive code | Listen for the printer/terminal polling prefix on the IR receive pin |
+| 3 | Reuse learned IR transmit code | Send the learned tester response code after the polling packet is detected |
+| 4 | Carry result data | Start with PASS/NG and current station/test result; extend later if old protocol supports more fields |
+| 5 | Failure handling | Do not send print response while the scan is stopped on an unresolved problem point |
 
 ## Build
 
