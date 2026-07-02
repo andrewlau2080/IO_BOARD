@@ -6,6 +6,7 @@
 build/
 IO_BOARD/build/
 IO_BOARD/build-first-gen/
+IO_BOARD/build-*/
 cmake-build-*/
 
 # Local toolchains and downloaded debug tools

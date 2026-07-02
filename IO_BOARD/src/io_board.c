@@ -33,12 +33,12 @@ static const io_pin_t out_a_en[8] = {
 
 static const io_pin_t out_b_addr[3] = {PIN_B(10), PIN_B(11), PIN_B(12)};
 static const io_pin_t out_b_en[8] = {
-  PIN_D(8), PIN_D(9), PIN_D(10), PIN_D(11),
-  PIN_D(12), PIN_D(13), PIN_D(14), PIN_D(15)
+  PIN_D(9), PIN_D(10), PIN_D(11), PIN_D(12),
+  PIN_D(13), PIN_D(14), PIN_D(15), PIN_C(6)
 };
 
 static const io_pin_t buttons[6] = {
-  PIN_C(4), PIN_C(5), PIN_C(6), PIN_C(7), PIN_C(8), PIN_C(9)
+  PIN_C(4), PIN_C(5), PIN_C(7), PIN_C(8), PIN_C(9), PIN_A(8)
 };
 
 static const io_pin_t debug_out = PIN_H(3);

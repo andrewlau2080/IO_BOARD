@@ -11,6 +11,13 @@
 #define TM1637_KEY_PLUS       0xF5U
 #define TM1637_KEY_MINUS      0xF0U
 
+extern volatile uint32_t g_tm1637_write_byte_counter;
+extern volatile uint32_t g_tm1637_write_ack_counter;
+extern volatile uint32_t g_tm1637_write_nack_counter;
+extern volatile uint32_t g_tm1637_key_read_counter;
+extern volatile uint8_t g_tm1637_last_write_ack;
+extern volatile uint8_t g_tm1637_last_key_raw;
+
 void tm1637_display_init(void);
 void tm1637_display_set_brightness(uint8_t brightness, uint8_t enabled);
 void tm1637_display_clear(void);

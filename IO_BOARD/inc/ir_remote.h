@@ -36,8 +36,13 @@ void ir_set_carrier_half_us(uint32_t half_period_us);
 uint32_t ir_time_us(void);
 void ir_wait_until_us(uint32_t start_us, uint32_t duration_us);
 void ir_poll_rx_status(void);
+uint8_t ir_ack_edge_seen(void);
 void ir_debug_frame_ready(void);
 void ir_force_space_us(uint32_t duration_us);
+void ir_force_mark_no_carrier_us(uint32_t duration_us);
+void ir_send_test_burst(uint16_t burst_us, uint8_t repeat_count);
+void ir_pwm_start(void);
+void ir_pwm_stop(void);
 uint16_t ir_capture_prefix(ir_raw_signal_t *signal,
                            uint16_t required_segments,
                            uint32_t start_timeout_ms,

@@ -13,7 +13,9 @@ set(LINE_COMM_TESTER_RESPONSE_CSV
 set(LINE_COMM_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(LINE_COMM_GENERATED_C "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.c")
 set(LINE_COMM_GENERATED_H "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.h")
-set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY, IR_PRINT_BRIDGE, or FIRST_GEN_4051_LOCAL")
+set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY, IR_PRINT_BRIDGE, FIRST_GEN_4051_LOCAL, TM1637_DEMO, PA4_GPIO_DIAG, PA4_DAC_DIAG, MUX_A_DIAG, PRINT_TERMINAL, or UNIFIED")
+set(UNIFIED_DEFAULT_PRODUCT_MODE "FIRST_GEN_4051_LOCAL" CACHE STRING "Default product when IO_APP_MODE=UNIFIED: FIRST_GEN_4051_LOCAL, PRINT_TERMINAL, or RPI_RS485_LEGACY")
+set(PRINT_DRIVER_BACKEND "MOCK" CACHE STRING "Print backend: MOCK or ZPL_RS485")
 
 if(NOT EXISTS "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/at32f45x.h")
   message(FATAL_ERROR "AT32 BSP not found at ${AT32_BSP_DIR}")
@@ -43,20 +45,67 @@ set(AT32_DRIVER_SOURCES
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_misc.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_pwc.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_spi.c"
+  "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_tmr.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_usart.c"
 )
+
+if(IO_APP_MODE STREQUAL "RPI_RS485_LEGACY")
+  set(IO_APP_MODE_VALUE 2)
+elseif(IO_APP_MODE STREQUAL "IR_PRINT_BRIDGE")
+  set(IO_APP_MODE_VALUE 1)
+elseif(IO_APP_MODE STREQUAL "FIRST_GEN_4051_LOCAL")
+  set(IO_APP_MODE_VALUE 3)
+elseif(IO_APP_MODE STREQUAL "TM1637_DEMO")
+  set(IO_APP_MODE_VALUE 4)
+elseif(IO_APP_MODE STREQUAL "PA4_GPIO_DIAG")
+  set(IO_APP_MODE_VALUE 5)
+elseif(IO_APP_MODE STREQUAL "PA4_DAC_DIAG")
+  set(IO_APP_MODE_VALUE 6)
+elseif(IO_APP_MODE STREQUAL "MUX_A_DIAG")
+  set(IO_APP_MODE_VALUE 7)
+elseif(IO_APP_MODE STREQUAL "PRINT_TERMINAL")
+  set(IO_APP_MODE_VALUE 8)
+elseif(IO_APP_MODE STREQUAL "UNIFIED")
+  set(IO_APP_MODE_VALUE 9)
+else()
+  message(FATAL_ERROR "Unsupported IO_APP_MODE=${IO_APP_MODE}")
+endif()
+
+if(UNIFIED_DEFAULT_PRODUCT_MODE STREQUAL "RPI_RS485_LEGACY")
+  set(UNIFIED_DEFAULT_PRODUCT_MODE_VALUE 2)
+elseif(UNIFIED_DEFAULT_PRODUCT_MODE STREQUAL "FIRST_GEN_4051_LOCAL")
+  set(UNIFIED_DEFAULT_PRODUCT_MODE_VALUE 3)
+elseif(UNIFIED_DEFAULT_PRODUCT_MODE STREQUAL "PRINT_TERMINAL")
+  set(UNIFIED_DEFAULT_PRODUCT_MODE_VALUE 8)
+else()
+  message(FATAL_ERROR "Unsupported UNIFIED_DEFAULT_PRODUCT_MODE=${UNIFIED_DEFAULT_PRODUCT_MODE}")
+endif()
+
+if(PRINT_DRIVER_BACKEND STREQUAL "MOCK")
+  set(PRINT_DRIVER_BACKEND_ZPL_RS485_VALUE 0)
+elseif(PRINT_DRIVER_BACKEND STREQUAL "ZPL_RS485")
+  set(PRINT_DRIVER_BACKEND_ZPL_RS485_VALUE 1)
+else()
+  message(FATAL_ERROR "Unsupported PRINT_DRIVER_BACKEND=${PRINT_DRIVER_BACKEND}")
+endif()
 
 add_executable(${PROJECT_NAME}
   src/main.c
   src/first_gen_4051_scan.c
   src/io_board.c
   src/io_scan.c
+  src/lcdm_tjc.c
   src/line_comm_bridge.c
+  src/line_comm_transport.c
+  src/print_driver.c
   src/print_job_model.c
+  src/print_rs485.c
+  src/print_terminal.c
   src/rpi_protocol.c
   src/rpi_rs485.c
   src/rpi_rs485_legacy.c
   src/tm1637_display.c
+  src/tm1637_demo.c
   src/ir_remote.c
   src/ir_learned_code.c
   src/syscalls.c
@@ -84,17 +133,10 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   AT32F455VET7
   USE_STDPERIPH_DRIVER
   AT_START_F455_V1
+  IO_APP_MODE=${IO_APP_MODE_VALUE}
+  UNIFIED_DEFAULT_PRODUCT_MODE=${UNIFIED_DEFAULT_PRODUCT_MODE_VALUE}
+  PRINT_DRIVER_BACKEND_ZPL_RS485=${PRINT_DRIVER_BACKEND_ZPL_RS485_VALUE}
 )
-
-if(IO_APP_MODE STREQUAL "RPI_RS485_LEGACY")
-  target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=2)
-elseif(IO_APP_MODE STREQUAL "IR_PRINT_BRIDGE")
-  target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=1)
-elseif(IO_APP_MODE STREQUAL "FIRST_GEN_4051_LOCAL")
-  target_compile_definitions(${PROJECT_NAME} PRIVATE IO_APP_MODE=3)
-else()
-  message(FATAL_ERROR "Unsupported IO_APP_MODE=${IO_APP_MODE}")
-endif()
 
 set(CPU_FLAGS
   -mcpu=cortex-m4

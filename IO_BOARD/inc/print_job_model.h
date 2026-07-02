@@ -20,12 +20,14 @@ typedef struct {
   char item[PRINT_FIELD_ITEM_LEN];
   char content[PRINT_FIELD_CONTENT_LEN];
   char code[PRINT_FIELD_CODE_LEN];
+  uint8_t station_id;
   uint16_t quantity;
   uint8_t copies;
   uint8_t pass;
 } print_job_t;
 
 void print_job_init_default(print_job_t *job);
+print_job_status_t print_job_set_station(print_job_t *job, uint8_t station_id);
 print_job_status_t print_job_set_title(print_job_t *job, const char *text);
 print_job_status_t print_job_set_item(print_job_t *job, const char *text);
 print_job_status_t print_job_set_content(print_job_t *job, const char *text);

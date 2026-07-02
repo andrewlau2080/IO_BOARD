@@ -30,9 +30,20 @@ void print_job_init_default(print_job_t *job)
   (void)copy_field(job->item, PRINT_FIELD_ITEM_LEN, "MODEL");
   (void)copy_field(job->content, PRINT_FIELD_CONTENT_LEN, "CONTENT");
   (void)copy_field(job->code, PRINT_FIELD_CODE_LEN, "CODE000001");
+  job->station_id = 1U;
   job->quantity = 1U;
   job->copies = 1U;
   job->pass = 1U;
+}
+
+print_job_status_t print_job_set_station(print_job_t *job, uint8_t station_id)
+{
+  if(job == 0 || station_id == 0U || station_id > 10U) {
+    return PRINT_JOB_BAD_ARGUMENT;
+  }
+
+  job->station_id = station_id;
+  return PRINT_JOB_OK;
 }
 
 print_job_status_t print_job_set_title(print_job_t *job, const char *text)
@@ -67,7 +78,8 @@ print_job_status_t print_job_format_ascii_label(const print_job_t *job,
 
   written = snprintf(out_text,
                      out_capacity,
-                     "TITLE:%s\nITEM:%s\nCONTENT:%s\nCODE:%s\nQTY:%u\nRESULT:%s\n",
+                     "STATION:%02u\nTITLE:%s\nITEM:%s\nCONTENT:%s\nCODE:%s\nQTY:%u\nRESULT:%s\n",
+                     (unsigned int)job->station_id,
                      job->title,
                      job->item,
                      job->content,

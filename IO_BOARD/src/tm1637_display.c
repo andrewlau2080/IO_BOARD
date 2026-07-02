@@ -4,9 +4,9 @@
 #include "at32f45x_gpio.h"
 
 #define TM1637_CLK_GPIO             GPIOA
-#define TM1637_CLK_PIN              GPIO_PINS_9   /* J8 USART1_TX reused as GPIO CLK */
+#define TM1637_CLK_PIN              GPIO_PINS_9   /* LEDM_CLK / LEDM_TX net */
 #define TM1637_DIO_GPIO             GPIOA
-#define TM1637_DIO_PIN              GPIO_PINS_10  /* J8 USART1_RX reused as GPIO DIO */
+#define TM1637_DIO_PIN              GPIO_PINS_10  /* LEDM_DIO / LEDM_RX net */
 #define TM1637_GPIO_CLOCK           CRM_GPIOA_PERIPH_CLOCK
 
 #define TM1637_CMD_DATA_FIXED       0x44U
@@ -14,6 +14,13 @@
 #define TM1637_CMD_ADDR_BASE        0xC0U
 #define TM1637_CMD_DISPLAY_BASE     0x80U
 #define TM1637_DELAY_US             3U
+
+volatile uint32_t g_tm1637_write_byte_counter;
+volatile uint32_t g_tm1637_write_ack_counter;
+volatile uint32_t g_tm1637_write_nack_counter;
+volatile uint32_t g_tm1637_key_read_counter;
+volatile uint8_t g_tm1637_last_write_ack;
+volatile uint8_t g_tm1637_last_key_raw = TM1637_KEY_NONE;
 
 static uint8_t display_control = 0x8CU;
 
@@ -80,6 +87,14 @@ static uint8_t tm_write_byte(uint8_t value)
   ack = (dio_read() == 0U) ? 1U : 0U;
   clk_write(0U);
 
+  g_tm1637_write_byte_counter++;
+  g_tm1637_last_write_ack = ack;
+  if(ack != 0U) {
+    g_tm1637_write_ack_counter++;
+  } else {
+    g_tm1637_write_nack_counter++;
+  }
+
   return ack;
 }
 
@@ -119,6 +134,8 @@ uint8_t tm1637_key_read_raw(void)
   dio_write(1U);
   tm_stop();
 
+  g_tm1637_key_read_counter++;
+  g_tm1637_last_key_raw = key;
   return key;
 }
 
@@ -222,6 +239,8 @@ uint8_t tm1637_display_encode_char(char ch)
   case 'g': return 0x3DU;
   case 'H':
   case 'h': return 0x76U;
+  case 'I':
+  case 'i': return 0x06U;
   case 'L':
   case 'l': return 0x38U;
   case 'N':
@@ -238,6 +257,8 @@ uint8_t tm1637_display_encode_char(char ch)
   case 't': return 0x78U;
   case 'U':
   case 'u': return 0x3EU;
+  case 'W':
+  case 'w': return 0x3EU;
   case '-': return 0x40U;
   case '_': return 0x08U;
   case ' ':

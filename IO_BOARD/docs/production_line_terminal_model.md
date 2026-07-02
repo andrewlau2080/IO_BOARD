@@ -186,16 +186,37 @@ before choosing the final UI technology.
 11. Terminal sends PRINT_DONE or PRINT_BUSY/ERROR to tester when that return code is decoded.
 ```
 
-## 6. Next Firmware Integration Plan
+## 6. Firmware Integration Status
 
-| Step | Firmware block | Action |
+| Step | Firmware block | Status |
 |---:|---|---|
-| 1 | First-gen scanner | Expose a stable `test_pass_and_ready_to_print` state after full learned-matrix PASS |
-| 2 | IR receiver | Reuse the current polling-prefix capture logic on `PA6` |
-| 3 | IR transmitter | Reuse `LINE_COMM_CODE_TESTER_RESPONSE` transmission on `PA7` |
-| 4 | State control | Only transmit response when print-ready is true; clear or hold state after response according to bench test |
-| 5 | Debug counters | Record polling match, response sent, print blocked, and bad-prefix counters |
-| 6 | Bench test | Verify timing with oscilloscope and confirm terminal/printer receives the response |
+| 1 | First-gen scanner | Full learned-matrix PASS sets `g_first_gen_print_ready` |
+| 2 | IR receiver | Printer polling prefix is captured on `PA6` while print-ready is armed |
+| 3 | IR transmitter | `LINE_COMM_CODE_TESTER_RESPONSE` is transmitted on `PA7` after the learned delay |
+| 4 | State control | NG/unlearned states block response; current implementation clears print-ready after one response |
+| 5 | Debug counters | Poll match, reject, response sent, blocked, ready, and waiting states are exposed as watch variables |
+| 6 | Bench test | Next required step: verify timing with oscilloscope and confirm terminal/printer receives the response |
+
+## 6A. Line Communication Transport Layer
+
+Current firmware now separates line communication from the scan and print
+business logic through `line_comm_transport`.
+
+| Role | Current backend | Firmware behavior |
+|---|---|---|
+| Scanner / tester | IR transmit | After PASS, sends `LINE_COMM_CODE_PRINT_REQUEST` once as a print trigger |
+| Print terminal | IR receive | Polls for the `LINE_COMM_CODE_PRINT_REQUEST` prefix and prints the current LCDM job when it matches |
+| Future wireless | Placeholder | Add a wireless UART/Sub-GHz/LoRa backend behind the same transport API |
+| Future wired | Placeholder | Add RS485 backend behind the same transport API |
+
+The present IR trigger is a fixed learned waveform. It only means "print now";
+it does not carry variable fields such as station, product, result, or serial
+number. Those fields are still edited on LCDM or held in the terminal state.
+When the wireless UART/RS485 backend is added, `line_comm_print_request_t` can
+be serialized to carry station/result/test count without changing the scan or
+print modules.
+
+Detailed transport planning is tracked in `docs/line_comm_transport_plan.md`.
 
 ## 7. Open Decisions
 

@@ -83,6 +83,22 @@ The firmware therefore uses natural zero-based mux indexes for
 `first_gen_1th_96x96`. The A/B split is still 48+48 points, but there is no
 per-8-channel remap table.
 
+The MCU2 GPIO control nets in `1thsch.pdf` page 4 are:
+
+| Net group | MCU pins |
+|---|---|
+| `IN_AMUX_A0/B1/C2` | `PC0` / `PC1` / `PC2` |
+| `IN_AMUX_EN0..EN7` | `PE0`, `PE1`, `PE2`, `PE3`, `PE4`, `PE5`, `PE6`, `PE7` |
+| `IN_BMUX_A0/B1/C2` | `PB0` / `PB1` / `PB2` |
+| `IN_BMUX_EN0..EN7` | `PE8`, `PE9`, `PE10`, `PE11`, `PE12`, `PE13`, `PE14`, `PE15` |
+| `OUT_AMUX_A0/B1/C2` | `PC10` / `PC11` / `PC12` |
+| `OUT_AMUX_EN0..EN7` | `PD0`, `PD1`, `PD2`, `PD3`, `PD4`, `PD5`, `PD6`, `PD7` |
+| `OUT_BMUX_A0/B1/C2` | `PB10` / `PB11` / `PB12` |
+| `OUT_BMUX_EN0..EN7` | `PD9`, `PD10`, `PD11`, `PD12`, `PD13`, `PD14`, `PD15`, `PC6` |
+
+Do not use the older continuous `PD8..PD15` assumption for `OUT_BMUX_EN0..EN7`;
+`PD8` is not the `OUT_BMUX_EN0` net in this schematic.
+
 ## Legacy DB50 Connector Mapping
 
 Each physical DB50 connector has two corresponding 25-pin rows:

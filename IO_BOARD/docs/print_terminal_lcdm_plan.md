@@ -1,0 +1,105 @@
+# 打印终端与 LCDM 输入模块规划
+
+本文记录打印终端模块的当前实现方向。三大模块保持独立：
+
+| 模块 | 构建模式 | 主要文件 | 说明 |
+|---|---|---|---|
+| 一代本机测试 | `FIRST_GEN_4051_LOCAL` | `first_gen_4051_scan.c`, `tm1637_display.c` | IO 扫描、学习、测试、LEDM 显示、打印触发 |
+| 打印终端 / LCDM | `PRINT_TERMINAL` | `lcdm_tjc.c`, `print_terminal.c`, `print_driver.c`, `print_job_model.c` | 标签内容输入、预览、打印提交 |
+| 树莓派 / RS485 | `RPI_RS485_LEGACY` | `rpi_rs485*.c`, `rpi_protocol.c` | 第二代或上位机通信 |
+
+当前程序把三类模块放在同一个工程内一起编译，可以用 `IO_APP_MODE=UNIFIED` 输出一个统一固件文件。统一固件上电后先选择产品类型，再只初始化对应模块；LCDM、LEDM 和 RS485 代码保持独立接口，不在业务逻辑里互相调用。
+
+当前 `UNIFIED` 选择逻辑先由 CMake 参数 `UNIFIED_DEFAULT_PRODUCT_MODE` 决定，可选 `FIRST_GEN_4051_LOCAL`、`PRINT_TERMINAL`、`RPI_RS485_LEGACY`。后续把 `unified_select_product_mode()` 改成通信/配置判定即可，烧录文件仍然只有一个。
+
+## LCDM 方向
+
+Steering Engine 项目里使用的是 TJC/Nextion 风格的串口智能屏，不是 MCU 直接驱动的裸 LCD。当前 `PRINT_TERMINAL` 先沿用这个方向：
+
+- MCU 通过 UART 发送 ASCII 控件命令，结尾为 `FF FF FF`。
+- LCDM 屏幕工程负责触摸、键盘、字体和页面控件。
+- MCU 只保存打印字段和接收屏幕发回的字段更新。
+
+这种方式支持英文大小写、阿拉伯数字和常用 ASCII 符号，MCU 不需要内置整套字体和软键盘。当前固件接受 `0x20` 到 `0x7E` 的可打印 ASCII 字符；为避免破坏 TJC 的 `obj.txt="..."` 指令，双引号会转成单引号，反斜杠会转成 `/`。
+
+## 当前字段容量
+
+| 字段 | 宏 | 容量 |
+|---|---|---:|
+| 标题 | `PRINT_FIELD_TITLE_LEN` | 23 字符 + `NUL` |
+| 项目 | `PRINT_FIELD_ITEM_LEN` | 23 字符 + `NUL` |
+| 内容 | `PRINT_FIELD_CONTENT_LEN` | 47 字符 + `NUL` |
+| 条码/编号 | `PRINT_FIELD_CODE_LEN` | 31 字符 + `NUL` |
+| 标签文本缓冲 | `PRINT_LABEL_TEXT_MAX` | 192 字节 |
+
+AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LCDM 接收缓冲只有数百字节，容量没有压力。后续如果要保存多套模板或历史记录，应单独规划 Flash 存储区。
+
+## LCDM 到 MCU 的建议协议
+
+屏幕端输入完成后发送 ASCII 包，并以 `FF FF FF` 结束：
+
+| 包内容 | 动作 |
+|---|---|
+| `title=HARNESS TEST` | 更新标题 |
+| `item=MODEL-A` | 更新项目 |
+| `content=LEFT DOOR 12P` | 更新内容 |
+| `code=A123456789` | 更新条码/编号 |
+| `qty=1` | 更新数量 |
+| `copies=1` | 更新份数 |
+| `pass=1` | 更新测试结果 |
+| `preview` | 刷新预览 |
+| `print` | 提交打印 |
+| `refresh` | 重新下发当前字段 |
+
+也兼容 TJC 常见触摸事件 `65 page component event FF FF FF`。当前临时定义：
+
+| component id | 动作 |
+|---:|---|
+| 1 | 预览 |
+| 2 | 打印 |
+| 3 | 恢复默认字段 |
+
+## LCDM 控件命名
+
+当前 MCU 会写入这些控件：
+
+| 控件 | 类型 | 内容 |
+|---|---|---|
+| `tTitle` | 文本 | 标题 |
+| `tItem` | 文本 | 项目 |
+| `tContent` | 文本 | 内容 |
+| `tCode` | 文本 | 条码/编号 |
+| `nQty` | 数字 | 数量 |
+| `nCopies` | 数字 | 份数 |
+| `tPreview` | 文本 | ASCII 标签预览 |
+| `tStatus` | 文本 | `READY` / `PRINT OK` / `PRINT ERROR` |
+
+## 接线注意
+
+当前 `lcdm_tjc.c` 默认使用 `USART1 PA9/PA10`，115200 8N1。这是独立 `PRINT_TERMINAL` 模式使用的临时默认脚位。
+
+如果同一块一代测试板仍把 `PA9/PA10` 接给 LEDM/TM1637，就不能同时运行 LCDM 串口屏。若最终硬件是图纸上的 `LCM_SPI_SCK/MOSI/RESET/CMD/CS/BL` 裸屏接口，则不能直接使用 TJC 串口协议，需要另建 SPI LCD + 触摸 + 软键盘驱动。
+
+## 斑马打印机 RS485 后端
+
+打印驱动已预留 Zebra/ZPL 直连后端。启用方式：
+
+```sh
+cmake -S . -B build-print-zebra -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \
+  -DIO_APP_MODE=PRINT_TERMINAL \
+  -DPRINT_DRIVER_BACKEND=ZPL_RS485
+```
+
+当前后端行为：
+
+| 项目 | 当前实现 |
+|---|---|
+| 打印语言 | ZPL |
+| 串口 | `USART2` |
+| 默认脚位 | `PA2=TX`, `PA3=RX`, AF7 |
+| 默认波特率 | `9600`, 8N1 |
+| 方向控制 | 默认不驱动 DE/RE；如硬件需要，编译加 `PRINT_RS485_USE_DIR_PIN=1`，默认方向脚 `PA1` |
+| 打印提交 | LCDM 发送 `print` 后，MCU 生成 ZPL 并发到 RS485 |
+
+注意：Zebra 打印机本体通常是 USB/以太网/RS232，若使用 RS485，需要打印机侧或中间转换器支持透明串口传输 ZPL。MCU 侧当前只负责把 ZPL 文本送到 RS485，总线应保证只有 MCU 对打印机发送，避免多主冲突。

@@ -1,22 +1,23 @@
 #include "ir_remote.h"
 
 #include "at32f45x_board.h"
-
 #include <stdio.h>
 
-#define IR_RX_GPIO                 GPIOA
+#define IR_RX_GPIO                 GPIOB
 #define IR_RX_PIN                  GPIO_PINS_6
-#define IR_RX_GPIO_CRM_CLK         CRM_GPIOA_PERIPH_CLOCK
+#define IR_RX_GPIO_CRM_CLK         CRM_GPIOB_PERIPH_CLOCK
 
-#define IR_TX_GPIO                 GPIOA
+#define IR_TX_GPIO                 GPIOB
 #define IR_TX_PIN                  GPIO_PINS_7
-#define IR_TX_GPIO_CRM_CLK         CRM_GPIOA_PERIPH_CLOCK
+#define IR_TX_GPIO_CRM_CLK         CRM_GPIOB_PERIPH_CLOCK
 
 #define IR_IDLE_LEVEL              1U
 #define IR_MARK_LEVEL              0U
 #define IR_GAP_TIMEOUT_US          30000U
 #define IR_MIN_FRAME_US            4000U
 #define IR_DEFAULT_CARRIER_HALF_US 12U
+#define IR_SOFTWARE_TIMING_NUM     963U
+#define IR_SOFTWARE_TIMING_DEN     1000U
 
 volatile uint8_t g_ir_rx_level;
 volatile uint8_t g_ir_rx_last_level;
@@ -37,6 +38,7 @@ volatile uint32_t g_ir_tx_duration_us;
 volatile uint32_t g_ir_tx_packet_us;
 volatile uint32_t g_ir_tx_gap_us;
 volatile uint32_t g_ir_carrier_half_us = IR_DEFAULT_CARRIER_HALF_US;
+volatile uint8_t g_ir_pwm_enabled;
 
 static uint32_t g_cycles_per_us;
 static ir_raw_signal_t g_saved_signal;
@@ -53,6 +55,11 @@ static void ir_timebase_init(void)
 static uint32_t ir_micros(void)
 {
   return DWT->CYCCNT / g_cycles_per_us;
+}
+
+static uint32_t ir_cycles(void)
+{
+  return DWT->CYCCNT;
 }
 
 uint32_t ir_time_us(void)
@@ -72,6 +79,18 @@ static void ir_wait_until_elapsed_us(uint32_t start_us, uint32_t duration_us)
   }
 }
 
+static void ir_wait_until_elapsed_cycles(uint32_t start_cycles, uint32_t duration_cycles)
+{
+  while((uint32_t)(ir_cycles() - start_cycles) < duration_cycles) {
+    __asm volatile("nop");
+  }
+}
+
+static uint32_t ir_us_to_cycles(uint32_t duration_us)
+{
+  return ((duration_us * g_cycles_per_us) * IR_SOFTWARE_TIMING_NUM) / IR_SOFTWARE_TIMING_DEN;
+}
+
 void ir_wait_until_us(uint32_t start_us, uint32_t duration_us)
 {
   ir_wait_until_elapsed_us(start_us, duration_us);
@@ -84,22 +103,27 @@ static uint8_t ir_rx_level(void)
 
 static void ir_tx_write(uint8_t level)
 {
-  gpio_bits_write(IR_TX_GPIO, IR_TX_PIN, level ? TRUE : FALSE);
+  if(level != 0U) {
+    IR_TX_GPIO->scr = IR_TX_PIN;
+  } else {
+    IR_TX_GPIO->clr = IR_TX_PIN;
+  }
 }
 
 static void ir_mark_us(uint32_t duration_us)
 {
-  uint32_t start_us = ir_micros();
-  uint32_t edge_us = start_us;
-  uint32_t half_us = g_ir_carrier_half_us;
+  uint32_t start_cycles = ir_cycles();
+  uint32_t edge_cycles = start_cycles;
+  uint32_t half_cycles = ir_us_to_cycles(g_ir_carrier_half_us);
+  uint32_t duration_cycles = ir_us_to_cycles(duration_us);
 
-  while(ir_elapsed_us(start_us) < duration_us) {
+  while((uint32_t)(ir_cycles() - start_cycles) < duration_cycles) {
     ir_tx_write(1U);
-    ir_wait_until_elapsed_us(edge_us, half_us);
-    edge_us += half_us;
+    ir_wait_until_elapsed_cycles(edge_cycles, half_cycles);
+    edge_cycles += half_cycles;
     ir_tx_write(0U);
-    ir_wait_until_elapsed_us(edge_us, half_us);
-    edge_us += half_us;
+    ir_wait_until_elapsed_cycles(edge_cycles, half_cycles);
+    edge_cycles += half_cycles;
   }
 
   ir_tx_write(0U);
@@ -108,7 +132,7 @@ static void ir_mark_us(uint32_t duration_us)
 static void ir_space_us(uint32_t duration_us)
 {
   ir_tx_write(0U);
-  ir_wait_until_elapsed_us(ir_micros(), duration_us);
+  ir_wait_until_elapsed_cycles(ir_cycles(), ir_us_to_cycles(duration_us));
 }
 
 void ir_force_space_us(uint32_t duration_us)
@@ -119,6 +143,43 @@ void ir_force_space_us(uint32_t duration_us)
   g_ir_tx_duration_us = duration_us;
   g_ir_tx_gap_us = duration_us;
   ir_space_us(duration_us);
+}
+
+void ir_force_mark_no_carrier_us(uint32_t duration_us)
+{
+  g_ir_tx_active = 1U;
+  g_ir_tx_level = 1U;
+  g_ir_tx_segment_index = 0U;
+  g_ir_tx_duration_us = duration_us;
+  ir_tx_write(1U);
+  ir_wait_until_elapsed_cycles(ir_cycles(), ir_us_to_cycles(duration_us));
+  ir_tx_write(0U);
+  g_ir_tx_active = 0U;
+  g_ir_tx_level = 0U;
+}
+
+void ir_send_test_burst(uint16_t burst_us, uint8_t repeat_count)
+{
+  uint8_t repeat;
+
+  for(repeat = 0U; repeat < repeat_count; repeat++) {
+    ir_mark_us(burst_us);
+    ir_space_us(burst_us);
+  }
+}
+
+void ir_pwm_start(void)
+{
+  g_ir_tx_active = 1U;
+  g_ir_pwm_enabled = 1U;
+}
+
+void ir_pwm_stop(void)
+{
+  g_ir_pwm_enabled = 0U;
+  g_ir_tx_active = 0U;
+  g_ir_tx_level = 0U;
+  ir_tx_write(0U);
 }
 
 void ir_set_carrier_half_us(uint32_t half_period_us)
@@ -157,6 +218,7 @@ void ir_io_init(void)
   gpio_init_struct.gpio_pull = GPIO_PULL_NONE;
   ir_tx_write(0U);
   gpio_init(IR_TX_GPIO, &gpio_init_struct);
+  ir_pwm_stop();
 
   g_ir_rx_level = ir_rx_level();
   g_ir_rx_last_level = g_ir_rx_level;
@@ -179,6 +241,14 @@ void ir_poll_rx_status(void)
     g_ir_rx_last_level = level;
     g_ir_rx_edge_counter++;
   }
+}
+
+uint8_t ir_ack_edge_seen(void)
+{
+  uint32_t before = g_ir_rx_edge_counter;
+
+  ir_poll_rx_status();
+  return (g_ir_rx_edge_counter != before) ? 1U : 0U;
 }
 
 __attribute__((noinline)) void ir_debug_frame_ready(void)
