@@ -24,7 +24,7 @@
 #define FIRST_GEN_4051_ADC_THRESHOLD_DEFAULT 1600U
 #endif
 
-#define FIRST_GEN_4051_SCAN_PERIOD_MS 1U
+#define FIRST_GEN_4051_SCAN_PERIOD_MS 0U
 #define FIRST_GEN_4051_ERROR_PERIOD_MS 120U
 #define FIRST_GEN_4051_ADC_TIMEOUT    20000U
 #define FIRST_GEN_PRINT_POLL_WAIT_MS  100U
@@ -34,11 +34,13 @@
 #define FIRST_GEN_LEARN_MAX_CONNECTED_PAIRS 512UL
 #define FIRST_GEN_PANEL_TEST_START    1U
 #define FIRST_GEN_PANEL_TEST_END      92U
-#define FIRST_GEN_PANEL_TEST_STEP_MS  FIRST_GEN_4051_SCAN_PERIOD_MS
+#define FIRST_GEN_PANEL_TEST_STEP_MS  80U
 #define FIRST_GEN_PANEL_PASS_MS       1200U
 #define FIRST_GEN_PANEL_KEY_POLL_MS   5U
 #define FIRST_GEN_PROBLEM_RECHECK_MS  50U
+#define FIRST_GEN_PANEL_K1_SHORT_MS   80U
 #define FIRST_GEN_PANEL_K1_LONG_MS    3000U
+#define FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS 200U
 #define FIRST_GEN_IDLE_SCROLL_MS      60000U
 #define FIRST_GEN_IR_TEST_BURST_US    800U
 #define FIRST_GEN_IR_TEST_BURST_COUNT 2U
@@ -46,6 +48,11 @@
 #define FIRST_GEN_PRINT_READY_HINT_MS 300U
 #define FIRST_GEN_IR_PRINT_ENABLE     1U
 #define FIRST_GEN_IR_PRINT_TEST_ONLY  0U
+#define FIRST_GEN_PC7_DIAG_ONLY       0U
+#define FIRST_GEN_PROBLEM_NONE        0U
+#define FIRST_GEN_PROBLEM_MISSING     1U
+#define FIRST_GEN_PROBLEM_SHORT       2U
+#define FIRST_GEN_SHORT_BLINK_MS      500U
 
 #define FIRST_GEN_RECIPE_FLASH_ADDR   0x0807F800U
 #define FIRST_GEN_RECIPE_MAGIC        0x3148544CU
@@ -87,6 +94,8 @@ volatile uint8_t g_first_gen_panel_mode;
 volatile uint8_t g_first_gen_last_panel_key = TM1637_KEY_NONE;
 volatile uint8_t g_first_gen_pass_hold_active;
 volatile uint8_t g_first_gen_print_done;
+volatile uint8_t g_first_gen_print_trigger_level;
+volatile uint8_t g_first_gen_print_trigger_count;
 volatile uint32_t g_first_gen_last_connected_pairs;
 volatile uint32_t g_first_gen_learn_connected_pairs;
 volatile uint16_t g_first_gen_learn_out_count;
@@ -97,24 +106,45 @@ static io_scan_result_t scan_result;
 static uint32_t expected_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
 static uint16_t scan_out_point = 1U;
 static uint8_t waiting_on_error;
+static uint8_t current_problem_type;
 static uint8_t panel_auto_enabled;
 static uint8_t panel_last_test_mode;
 static uint8_t panel_operation_interrupted;
 static uint8_t panel_waiting_for_reconnect;
 static uint32_t panel_idle_ms;
+static uint8_t scan_cycle_has_problem;
+static uint8_t panel_display_state;
+static uint16_t panel_ng_out;
+static uint16_t panel_ng_in;
+static uint16_t panel_ng_tick;
+static uint8_t panel_ng_phase;
+static uint16_t panel_scan_tick;
+static uint8_t panel_scan_phase;
 static uint8_t print_event_pending;
 static uint8_t print_event_displayed;
 static uint8_t print_event_sent;
+static uint8_t print_trigger_waiting;
+static uint8_t print_trigger_released;
+static uint8_t print_trigger_press_count;
 static uint16_t print_retry_scan_counter;
 static uint8_t pass_print_started;
 static uint8_t printed_hold_active;
 static uint16_t printed_hold_out = 1U;
 static uint16_t printed_hold_in = 1U;
 
+#define FIRST_GEN_DISPLAY_UNKNOWN 0U
+#define FIRST_GEN_DISPLAY_PASS    1U
+#define FIRST_GEN_DISPLAY_NG      2U
+#define FIRST_GEN_DISPLAY_SCAN    3U
+#define FIRST_GEN_NG_DISPLAY_PERIOD_SCANS 24U
+#define FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS 12U
+
 uint8_t first_gen_4051_learn_current_harness(void);
 static uint8_t first_gen_4051_learn_preview(void);
 static uint8_t first_gen_4051_confirm_learn_save(void);
 static void panel_start_auto_test(void);
+static void panel_reset_to_zero(void);
+static void panel_wait_all_keys_released(uint16_t stable_ms);
 static uint8_t panel_priority_delay_ms(uint32_t duration_ms);
 static uint8_t first_gen_ir_send_logic_tx_once(void);
 static uint8_t scan_and_check_current_row(void);
@@ -134,8 +164,11 @@ static void panel_reset_scan_state(void)
   g_first_gen_first_fail_in = 0U;
   g_first_gen_current_out = 1U;
   g_first_gen_current_problem_in = 0U;
+  current_problem_type = FIRST_GEN_PROBLEM_NONE;
   g_first_gen_missing_counter = 0U;
   g_first_gen_unexpected_counter = 0U;
+  scan_cycle_has_problem = 0U;
+  panel_display_state = FIRST_GEN_DISPLAY_UNKNOWN;
   g_first_gen_pass_hold_active = 0U;
   pass_print_started = 0U;
   printed_hold_active = 0U;
@@ -153,6 +186,9 @@ static void panel_reset_print_state(void)
   print_event_pending = 0U;
   print_event_displayed = 0U;
   print_event_sent = 0U;
+  print_trigger_waiting = 0U;
+  print_trigger_released = 0U;
+  print_trigger_press_count = 0U;
   print_retry_scan_counter = 0U;
   pass_print_started = 0U;
   printed_hold_active = 0U;
@@ -391,6 +427,84 @@ static void display_pass(void)
   tm1637_display_write_text6(text);
 }
 
+static void display_ng(void)
+{
+  char text[TM1637_DIGITS] = {'N', 'G', ' ', ' ', ' ', ' '};
+
+  tm1637_display_write_text6(text);
+}
+
+static void panel_display_pass_once(void)
+{
+  if(panel_display_state != FIRST_GEN_DISPLAY_PASS) {
+    panel_ng_out = 0U;
+    panel_ng_in = 0U;
+    display_pass();
+    panel_display_state = FIRST_GEN_DISPLAY_PASS;
+  }
+}
+
+static void panel_display_ng_once(void)
+{
+  if(panel_display_state != FIRST_GEN_DISPLAY_NG) {
+    display_ng();
+    panel_display_state = FIRST_GEN_DISPLAY_NG;
+    panel_ng_tick = 0U;
+    panel_ng_phase = 0U;
+  }
+}
+
+static void panel_display_ng_service(void)
+{
+  if(panel_display_state != FIRST_GEN_DISPLAY_NG || panel_ng_out == 0U || panel_ng_in == 0U) {
+    return;
+  }
+
+  panel_ng_tick++;
+  if(panel_ng_tick < FIRST_GEN_NG_DISPLAY_PERIOD_SCANS) {
+    return;
+  }
+
+  panel_ng_tick = 0U;
+  panel_ng_phase ^= 1U;
+  if(panel_ng_phase == 0U) {
+    display_ng();
+  } else {
+    display_pair(panel_ng_out, panel_ng_in);
+  }
+}
+
+static void panel_display_scan_step(void)
+{
+  uint8_t segments[TM1637_DIGITS] = {0U, 0U, 0U, 0U, 0U, 0U};
+  uint8_t pos = (uint8_t)(panel_scan_phase * 2U);
+
+  segments[pos] = 0x40U;
+  segments[pos + 1U] = 0x40U;
+  tm1637_display_write_raw6(segments);
+  panel_display_state = FIRST_GEN_DISPLAY_SCAN;
+}
+
+static void panel_display_scan_service(void)
+{
+  if(panel_display_state != FIRST_GEN_DISPLAY_SCAN) {
+    panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
+  } else {
+    panel_scan_tick++;
+  }
+
+  if(panel_scan_tick < FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS) {
+    return;
+  }
+
+  panel_scan_tick = 0U;
+  panel_scan_phase++;
+  if(panel_scan_phase >= 3U) {
+    panel_scan_phase = 0U;
+  }
+  panel_display_scan_step();
+}
+
 static void display_self_pass(void)
 {
   char text[TM1637_DIGITS] = {'S', 'E', 'L', 'F', '-', 'O'};
@@ -482,6 +596,69 @@ static void display_learn_total_flash_twice(uint32_t total)
   }
 }
 
+static uint8_t panel_wait_learn_confirm(void)
+{
+  uint8_t show_total = 0U;
+  uint8_t key;
+
+  while(g_first_gen_learn_pending != 0U) {
+    if(show_total == 0U) {
+      display_pair(g_first_gen_learn_out_count, g_first_gen_learn_in_count);
+      show_total = 1U;
+    } else {
+      display_learn_total(g_first_gen_learn_connected_pairs);
+      show_total = 0U;
+    }
+
+    for(uint16_t elapsed_ms = 0U; elapsed_ms < 500U; elapsed_ms += FIRST_GEN_PANEL_KEY_POLL_MS) {
+      key = tm1637_key_read_raw();
+      if(key == TM1637_KEY_NONE) {
+        g_first_gen_last_panel_key = TM1637_KEY_NONE;
+        delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+        continue;
+      }
+      if(key == g_first_gen_last_panel_key) {
+        delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+        continue;
+      }
+
+      g_first_gen_last_panel_key = key;
+      if(key == TM1637_KEY_MINUS) {
+        panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+        return first_gen_4051_confirm_learn_save();
+      }
+      if(key == TM1637_KEY_PLUS) {
+        panel_reset_to_zero();
+        panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+        return 0U;
+      }
+      if(key == TM1637_KEY_CLEAR) {
+        panel_start_auto_test();
+        panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+        return 0U;
+      }
+    }
+  }
+
+  return 0U;
+}
+
+static void panel_wait_all_keys_released(uint16_t stable_ms)
+{
+  uint16_t released_ms = 0U;
+
+  while(released_ms < stable_ms) {
+    if(tm1637_key_read_raw() == TM1637_KEY_NONE) {
+      released_ms = (uint16_t)(released_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
+    } else {
+      released_ms = 0U;
+    }
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+  }
+
+  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+}
+
 static void display_print_ready(void)
 {
   char text[TM1637_DIGITS] = {'P', 'r', 'n', 't', ' ', ' '};
@@ -493,6 +670,28 @@ static void display_print_done(void)
 {
   char text[TM1637_DIGITS] = {'P', 'r', 'i', 'n', 't', 'd'};
 
+  tm1637_display_write_text6(text);
+}
+
+static void display_print_trigger_level(uint8_t level)
+{
+  char text[TM1637_DIGITS];
+
+  if(level != 0U) {
+    text[0] = 'r';
+    text[1] = 'E';
+    text[2] = 'L';
+    text[3] = '-';
+    text[4] = '1';
+    text[5] = ' ';
+  } else {
+    text[0] = 'P';
+    text[1] = 'r';
+    text[2] = 'E';
+    text[3] = 'S';
+    text[4] = '0';
+    text[5] = ' ';
+  }
   tm1637_display_write_text6(text);
 }
 
@@ -569,29 +768,42 @@ static void panel_start_auto_test(void)
   }
 
   panel_auto_enabled = 1U;
-  display_pair(1U, 0U);
+  panel_display_state = FIRST_GEN_DISPLAY_UNKNOWN;
+  panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
+  panel_scan_phase = 2U;
+  panel_display_scan_service();
 }
 
 static void panel_handle_k1_press(void)
 {
   uint16_t elapsed_ms = 0U;
+  uint8_t learned = 0U;
 
   while(tm1637_key_read_raw() == TM1637_KEY_SET) {
     if(elapsed_ms >= FIRST_GEN_PANEL_K1_LONG_MS) {
       panel_auto_enabled = 0U;
       g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
       (void)first_gen_4051_learn_preview();
-      while(tm1637_key_read_raw() == TM1637_KEY_SET) {
-        delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
-      }
-      g_first_gen_last_panel_key = TM1637_KEY_NONE;
-      return;
+      learned = 1U;
+      break;
     }
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
     elapsed_ms = (uint16_t)(elapsed_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
   }
 
-  panel_run_self_test();
+  while(tm1637_key_read_raw() == TM1637_KEY_SET) {
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+  }
+  delay_ms(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+
+  if(learned != 0U) {
+    return;
+  }
+
+  if(elapsed_ms >= FIRST_GEN_PANEL_K1_SHORT_MS) {
+    panel_run_self_test();
+  }
 }
 
 static uint8_t panel_handle_key(void)
@@ -702,21 +914,28 @@ static uint8_t panel_show_problem_blink_once(uint16_t problem_out, uint16_t prob
   uint8_t status;
 
   display_pair(problem_out, problem_in);
-  status = panel_problem_live_delay_ms(FIRST_GEN_REMOVE_CHECK_MS, problem_out);
+  status = panel_problem_live_delay_ms(FIRST_GEN_SHORT_BLINK_MS, problem_out);
   if(status != PANEL_PROBLEM_CONTINUE) {
     return status;
   }
 
   tm1637_display_clear();
-  return panel_problem_live_delay_ms(FIRST_GEN_REMOVE_CHECK_MS, problem_out);
+  return panel_problem_live_delay_ms(FIRST_GEN_SHORT_BLINK_MS, problem_out);
 }
 
-static void panel_record_current_problem(uint16_t problem_out, uint16_t problem_in)
+static void panel_record_current_problem(uint16_t problem_out, uint16_t problem_in, uint8_t problem_type)
 {
   g_first_gen_current_out = problem_out;
   g_first_gen_current_problem_in = problem_in;
   g_first_gen_first_fail_out = problem_out;
   g_first_gen_first_fail_in = problem_in;
+  current_problem_type = problem_type;
+  if(scan_cycle_has_problem == 0U || panel_ng_out == 0U || panel_ng_in == 0U) {
+    panel_ng_out = problem_out;
+    panel_ng_in = problem_in;
+    panel_ng_tick = FIRST_GEN_NG_DISPLAY_PERIOD_SCANS;
+    panel_ng_phase = 1U;
+  }
   g_first_gen_last_pass = 0U;
   g_first_gen_print_ready = 0U;
   pass_print_started = 0U;
@@ -727,8 +946,23 @@ static void panel_hold_current_problem(void)
 {
   uint16_t problem_out;
   uint16_t problem_in;
+  uint8_t status;
 
   waiting_on_error = 1U;
+  if(current_problem_type == FIRST_GEN_PROBLEM_SHORT) {
+    status = panel_show_problem_blink_once(g_first_gen_current_out,
+                                           g_first_gen_current_problem_in);
+    if(status == PANEL_PROBLEM_RESTORED) {
+      current_problem_type = FIRST_GEN_PROBLEM_NONE;
+      g_first_gen_first_fail_out = 0U;
+      g_first_gen_first_fail_in = 0U;
+      g_first_gen_current_problem_in = 0U;
+      waiting_on_error = 0U;
+      scan_out_point = 1U;
+    }
+    return;
+  }
+
   if(expected_harness_find_next_problem(g_first_gen_current_out,
                                         g_first_gen_current_problem_in,
                                         &problem_out,
@@ -737,12 +971,13 @@ static void panel_hold_current_problem(void)
     g_first_gen_first_fail_out = 0U;
     g_first_gen_first_fail_in = 0U;
     g_first_gen_current_problem_in = 0U;
+    current_problem_type = FIRST_GEN_PROBLEM_NONE;
     waiting_on_error = 0U;
     scan_out_point = 1U;
     return;
   }
 
-  panel_record_current_problem(problem_out, problem_in);
+  panel_record_current_problem(problem_out, problem_in, FIRST_GEN_PROBLEM_MISSING);
   display_pair(problem_out, problem_in);
 }
 
@@ -886,14 +1121,13 @@ static uint8_t scan_problem_row_live(uint16_t out_point)
   scan_result.active_out_pos = IO_POS_OUT(out_point);
 
   if(scan_one_row(out_point) == 0U) {
-    panel_record_current_problem(out_point, 1U);
+    panel_record_current_problem(out_point, 1U, FIRST_GEN_PROBLEM_MISSING);
     return 0U;
   }
   g_first_gen_last_connected_pairs = scan_result.connected_pairs;
 
   if(find_row_problem(out_point, &problem_in, &problem_type) != 0U) {
-    (void)problem_type;
-    panel_record_current_problem(out_point, problem_in);
+    panel_record_current_problem(out_point, problem_in, problem_type);
     return 0U;
   }
 
@@ -1008,12 +1242,10 @@ static uint8_t scan_and_check_current_row(void)
 
   g_first_gen_current_out = scan_out_point;
   g_first_gen_current_problem_in = 0U;
-  display_pair(scan_out_point, 0U);
 
   if(scan_one_row(scan_out_point) == 0U) {
-    panel_record_current_problem(scan_out_point, 1U);
+    panel_record_current_problem(scan_out_point, 1U, FIRST_GEN_PROBLEM_MISSING);
     g_first_gen_print_blocked_counter++;
-    display_pair(scan_out_point, 1U);
     return 0U;
   }
   g_first_gen_last_connected_pairs = scan_result.connected_pairs;
@@ -1024,9 +1256,8 @@ static uint8_t scan_and_check_current_row(void)
     } else {
       g_first_gen_unexpected_counter++;
     }
-    panel_record_current_problem(scan_out_point, problem_in);
+    panel_record_current_problem(scan_out_point, problem_in, problem_type);
     g_first_gen_print_blocked_counter++;
-    display_pair(scan_out_point, problem_in);
     return 0U;
   }
 
@@ -1132,31 +1363,61 @@ static void panel_hold_pass_until_restart(void)
     return;
   }
 
-  print_event_pending = 1U;
+  print_event_pending = 0U;
   print_event_displayed = 0U;
   print_event_sent = 0U;
+  print_trigger_waiting = 1U;
+  print_trigger_released = 0U;
+  print_trigger_press_count = 0U;
   g_first_gen_last_pass = 1U;
   g_first_gen_print_done = 0U;
   print_retry_scan_counter = FIRST_GEN_PRINT_RETRY_SCAN_PERIODS;
   pass_print_started = 1U;
-  display_print_ready();
-  (void)panel_priority_delay_ms(FIRST_GEN_PRINT_READY_HINT_MS);
+  panel_display_pass_once();
 }
 
-static void panel_service_print_event(void)
+static uint8_t panel_service_print_event(void)
 {
 #if FIRST_GEN_IR_PRINT_ENABLE
+  if(print_trigger_waiting != 0U) {
+    g_first_gen_print_trigger_level = io_print_trigger_level_read();
+    if(g_first_gen_print_trigger_level != 0U) {
+      print_trigger_released = 1U;
+      print_trigger_press_count = 0U;
+      return 0U;
+    }
+    if(print_trigger_released == 0U) {
+      print_trigger_press_count = 0U;
+      return 0U;
+    }
+    delay_ms(20U);
+    if(io_print_trigger_level_read() != 0U) {
+      g_first_gen_print_trigger_level = 1U;
+      print_trigger_press_count = 0U;
+      return 0U;
+    }
+    g_first_gen_print_trigger_level = 0U;
+    print_trigger_waiting = 0U;
+    print_trigger_released = 0U;
+    print_trigger_press_count = 0U;
+    g_first_gen_print_trigger_count = 0U;
+    print_event_pending = 1U;
+    print_event_displayed = 0U;
+    print_event_sent = 0U;
+  }
+
   if(print_event_pending == 0U) {
-    return;
+    return 0U;
   }
 
   if(print_event_sent == 0U) {
     if(first_gen_ir_send_logic_tx_once() != 0U) {
       print_event_sent = 1U;
-      display_print_ready();
+      panel_display_pass_once();
     } else {
       g_first_gen_print_poll_reject_counter++;
       print_event_pending = 0U;
+      return 0U;
     }
   }
 
@@ -1171,7 +1432,9 @@ static void panel_service_print_event(void)
     printed_hold_in = 1U;
     print_event_displayed = 1U;
     print_event_pending = 0U;
+    return 0U;
   }
+  return 1U;
 #else
   if(print_event_pending != 0U) {
     g_first_gen_print_done = 1U;
@@ -1181,7 +1444,9 @@ static void panel_service_print_event(void)
     printed_hold_in = 1U;
     print_event_pending = 0U;
     print_event_displayed = 1U;
+    return 0U;
   }
+  return 0U;
 #endif
 }
 
@@ -1221,7 +1486,7 @@ static uint8_t panel_printed_hold_service(void)
          pair.connected == 0U) {
         io_mux_disable_all();
         printed_hold_active = 0U;
-        panel_record_current_problem(out_point, in_point);
+        panel_record_current_problem(out_point, in_point, FIRST_GEN_PROBLEM_MISSING);
         display_pair(out_point, in_point);
       }
       return 1U;
@@ -1256,6 +1521,12 @@ void first_gen_4051_scan_init(void)
 
 #if FIRST_GEN_IR_PRINT_TEST_ONLY
   display_print_ready();
+  return;
+#endif
+
+#if FIRST_GEN_PC7_DIAG_ONLY
+  g_first_gen_print_trigger_level = io_print_trigger_level_read();
+  display_print_trigger_level(g_first_gen_print_trigger_level);
   return;
 #endif
 
@@ -1324,25 +1595,23 @@ static uint8_t first_gen_4051_learn_preview(void)
   io_mux_disable_all();
   scan_out_point = 1U;
   g_first_gen_last_connected_pairs = scan_result.connected_pairs;
-  g_first_gen_learn_connected_pairs = scan_result.connected_pairs;
   g_first_gen_learn_out_count = count_nonzero_rows(scan_result.matrix);
   g_first_gen_learn_in_count = count_nonzero_inputs(scan_result.matrix);
+  g_first_gen_learn_connected_pairs = (uint32_t)g_first_gen_learn_out_count +
+                                      (uint32_t)g_first_gen_learn_in_count;
 
-  if(scan_result.connected_pairs == 0U ||
+  if(g_first_gen_learn_connected_pairs == 0U ||
      scan_result.connected_pairs > FIRST_GEN_LEARN_MAX_CONNECTED_PAIRS) {
     g_first_gen_recipe_valid = 0U;
     g_first_gen_print_ready = 0U;
     g_first_gen_learn_status = 4U;
-    display_error_code((uint16_t)(scan_result.connected_pairs > 9999U ? 9999U : scan_result.connected_pairs));
+    display_error_code((uint16_t)(g_first_gen_learn_connected_pairs > 9999U ? 9999U : g_first_gen_learn_connected_pairs));
     return 0U;
   }
 
   g_first_gen_learn_pending = 1U;
   g_first_gen_learn_status = 5U;
-  display_pair(g_first_gen_learn_out_count, g_first_gen_learn_in_count);
-  delay_ms(500U);
-  display_learn_total(g_first_gen_learn_connected_pairs);
-  return 1U;
+  return panel_wait_learn_confirm();
 }
 
 static uint8_t first_gen_4051_confirm_learn_save(void)
@@ -1370,20 +1639,25 @@ static uint8_t first_gen_4051_confirm_learn_save(void)
   waiting_on_error = 0U;
   display_learn_total_flash_twice(g_first_gen_learn_connected_pairs);
   display_saved();
+  panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
   return 1U;
 }
 
 uint8_t first_gen_4051_learn_current_harness(void)
 {
-  if(first_gen_4051_learn_preview() == 0U) {
-    return 0U;
-  }
-  return first_gen_4051_confirm_learn_save();
+  return first_gen_4051_learn_preview();
 }
 
 void first_gen_4051_scan_service(void)
 {
   uint8_t pass;
+
+#if FIRST_GEN_PC7_DIAG_ONLY
+  g_first_gen_print_trigger_level = io_print_trigger_level_read();
+  display_print_trigger_level(g_first_gen_print_trigger_level);
+  delay_ms(100U);
+  return;
+#endif
 
 #if FIRST_GEN_IR_PRINT_TEST_ONLY
   first_gen_ir_sync_print_test_service();
@@ -1394,7 +1668,11 @@ void first_gen_4051_scan_service(void)
     return;
   }
 
-  panel_service_print_event();
+  panel_display_ng_service();
+
+  if(panel_service_print_event() != 0U) {
+    return;
+  }
 
   if(panel_printed_hold_service() != 0U) {
     return;
@@ -1412,7 +1690,7 @@ void first_gen_4051_scan_service(void)
   if(panel_auto_enabled == 0U) {
     (void)panel_priority_delay_ms(FIRST_GEN_4051_SCAN_PERIOD_MS);
     if(panel_waiting_for_reconnect == 0U && g_first_gen_pass_hold_active == 0U) {
-      panel_idle_ms += FIRST_GEN_4051_SCAN_PERIOD_MS;
+      panel_idle_ms += (FIRST_GEN_4051_SCAN_PERIOD_MS == 0U) ? 1U : FIRST_GEN_4051_SCAN_PERIOD_MS;
       if(panel_idle_ms >= FIRST_GEN_IDLE_SCROLL_MS) {
         if(g_first_gen_recipe_valid != 0U && expected_harness_has_connection() != 0U) {
           panel_idle_ms = 0U;
@@ -1438,6 +1716,11 @@ void first_gen_4051_scan_service(void)
     g_first_gen_unexpected_counter = 0U;
     g_first_gen_first_fail_out = 0U;
     g_first_gen_first_fail_in = 0U;
+    scan_cycle_has_problem = 0U;
+  }
+
+  if(g_first_gen_last_pass == 0U && panel_display_state != FIRST_GEN_DISPLAY_NG) {
+    panel_display_scan_service();
   }
 
   pass = scan_and_check_current_row();
@@ -1446,15 +1729,35 @@ void first_gen_4051_scan_service(void)
     scan_out_point++;
     if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
       g_first_gen_scan_counter++;
-      g_first_gen_last_pass = 1U;
       scan_out_point = 1U;
-      panel_hold_pass_until_restart();
-      panel_service_print_event();
+      if(scan_cycle_has_problem == 0U) {
+        g_first_gen_last_pass = 1U;
+        panel_hold_pass_until_restart();
+      } else {
+        g_first_gen_last_pass = 0U;
+        print_trigger_waiting = 0U;
+        print_event_pending = 0U;
+        print_event_sent = 0U;
+        pass_print_started = 0U;
+        panel_display_ng_once();
+      }
     } else {
       (void)panel_priority_delay_ms(FIRST_GEN_4051_SCAN_PERIOD_MS);
     }
   } else {
-    panel_hold_current_problem();
+    scan_cycle_has_problem = 1U;
+    g_first_gen_last_pass = 0U;
+    print_trigger_waiting = 0U;
+    print_event_pending = 0U;
+    print_event_sent = 0U;
+    pass_print_started = 0U;
+    panel_display_ng_once();
+    waiting_on_error = 0U;
+    scan_out_point++;
+    if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+      g_first_gen_scan_counter++;
+      scan_out_point = 1U;
+    }
   }
 }
 

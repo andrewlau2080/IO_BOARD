@@ -153,7 +153,7 @@ io_scan_status_t io_scan_read_pair(uint16_t out_pos, uint16_t in_pos, io_scan_pa
     return IO_SCAN_INVALID_POINT;
   }
 
-  delay_us(20);
+  delay_us(10);
   connected = io_scan_measure_selected_pair();
 
   result->out_pos = out_pos;

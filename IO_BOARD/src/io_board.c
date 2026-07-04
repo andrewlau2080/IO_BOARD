@@ -41,6 +41,7 @@ static const io_pin_t buttons[6] = {
   PIN_C(4), PIN_C(5), PIN_C(7), PIN_C(8), PIN_C(9), PIN_A(8)
 };
 
+static const io_pin_t print_trigger = PIN_C(7);
 static const io_pin_t debug_out = PIN_H(3);
 static const io_pin_t lcm_outputs[] = {
   PIN_B(4), /* LCM_RESET */
@@ -169,6 +170,16 @@ uint8_t io_button_read(io_button_t button)
   return gpio_input_data_bit_read(buttons[button].port, buttons[button].pin) == RESET;
 }
 
+uint8_t io_print_trigger_read(void)
+{
+  return gpio_input_data_bit_read(print_trigger.port, print_trigger.pin) == RESET;
+}
+
+uint8_t io_print_trigger_level_read(void)
+{
+  return gpio_input_data_bit_read(print_trigger.port, print_trigger.pin) != RESET;
+}
+
 void io_debug_write(uint8_t level)
 {
   gpio_bits_write(debug_out.port, debug_out.pin, level ? TRUE : FALSE);
@@ -196,6 +207,7 @@ void io_board_init(void)
   for(i = 0; i < 6; i++) {
     input_pullup_init(&buttons[i]);
   }
+  input_pullup_init(&print_trigger);
 
   output_init(&debug_out, FALSE);
   output_init(&lcm_outputs[0], TRUE);
