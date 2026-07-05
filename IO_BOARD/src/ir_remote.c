@@ -4,11 +4,11 @@
 #include <stdio.h>
 
 #define IR_RX_GPIO                 GPIOB
-#define IR_RX_PIN                  GPIO_PINS_6
+#define IR_RX_PIN                  GPIO_PINS_7
 #define IR_RX_GPIO_CRM_CLK         CRM_GPIOB_PERIPH_CLOCK
 
 #define IR_TX_GPIO                 GPIOB
-#define IR_TX_PIN                  GPIO_PINS_7
+#define IR_TX_PIN                  GPIO_PINS_6
 #define IR_TX_GPIO_CRM_CLK         CRM_GPIOB_PERIPH_CLOCK
 
 #define IR_IDLE_LEVEL              1U

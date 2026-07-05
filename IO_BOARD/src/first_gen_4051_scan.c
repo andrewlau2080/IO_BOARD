@@ -48,7 +48,7 @@
 #define FIRST_GEN_PRINT_READY_HINT_MS 300U
 #define FIRST_GEN_IR_PRINT_ENABLE     1U
 #define FIRST_GEN_IR_PRINT_TEST_ONLY  0U
-#define FIRST_GEN_PC7_DIAG_ONLY       0U
+#define FIRST_GEN_TRIGGER_DIAG_ONLY   0U
 #define FIRST_GEN_PROBLEM_NONE        0U
 #define FIRST_GEN_PROBLEM_MISSING     1U
 #define FIRST_GEN_PROBLEM_SHORT       2U
@@ -1524,7 +1524,7 @@ void first_gen_4051_scan_init(void)
   return;
 #endif
 
-#if FIRST_GEN_PC7_DIAG_ONLY
+#if FIRST_GEN_TRIGGER_DIAG_ONLY
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
   display_print_trigger_level(g_first_gen_print_trigger_level);
   return;
@@ -1652,7 +1652,7 @@ void first_gen_4051_scan_service(void)
 {
   uint8_t pass;
 
-#if FIRST_GEN_PC7_DIAG_ONLY
+#if FIRST_GEN_TRIGGER_DIAG_ONLY
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
   display_print_trigger_level(g_first_gen_print_trigger_level);
   delay_ms(100U);

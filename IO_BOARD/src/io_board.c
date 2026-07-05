@@ -41,14 +41,8 @@ static const io_pin_t buttons[6] = {
   PIN_C(4), PIN_C(5), PIN_C(7), PIN_C(8), PIN_C(9), PIN_A(8)
 };
 
-static const io_pin_t print_trigger = PIN_C(7);
+static const io_pin_t print_trigger = PIN_B(8);
 static const io_pin_t debug_out = PIN_H(3);
-static const io_pin_t lcm_outputs[] = {
-  PIN_B(4), /* LCM_RESET */
-  PIN_B(6), /* LCM_CMD */
-  PIN_B(7), /* LCM_CS */
-  PIN_B(8), /* LCM_BL_LED */
-};
 
 static void clock_enable(const io_pin_t *pin)
 {
@@ -210,10 +204,6 @@ void io_board_init(void)
   input_pullup_init(&print_trigger);
 
   output_init(&debug_out, FALSE);
-  output_init(&lcm_outputs[0], TRUE);
-  output_init(&lcm_outputs[1], FALSE);
-  output_init(&lcm_outputs[2], TRUE);
-  output_init(&lcm_outputs[3], FALSE);
 
   io_mux_disable_all();
 }

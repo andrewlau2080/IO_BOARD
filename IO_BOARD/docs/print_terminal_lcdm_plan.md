@@ -76,20 +76,20 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 
 ## 接线与 IO 规格
 
-打印端 LCDM 使用 TJC/陶晶驰 UART 协议，但不强制占用硬件 USART。当前只剩 `PB3/PB4/PB5` 可给 LCDM 时，LCDM 采用 GPIO 软件串口；打印机通讯仍使用 `PA9/PA10` 的硬件 USART1。这样避免 LCDM 占用 LEDM/打印机共用的 `PA9/PA10`，也避免误用 `PA2` 或封装未确认的 `PH2`。
+打印端 LCDM 使用 TJC/陶晶驰 UART 协议，但不强制占用硬件 USART。按 `SCH_FIXTURE_2026-07-05.pdf`，当前 TJC LCDM 只使用 `PB3/PB5` 两线软件串口；打印机通讯仍使用 `PA9/PA10` 的硬件 USART1。这样避免 LCDM 占用 LEDM/打印机共用的 `PA9/PA10`，也避免误用 `PA2` 或封装未确认的 `PH2`。
 
 | 功能 | 模块侧信号 | AT32 引脚 | 外设 | 参数 | 说明 |
 |---|---|---|---|---|---|
 | LCDM RX | 接 MCU TX | `PB3` | GPIO 软件 UART TX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 接收 MCU 控件命令；原裸屏 `LCM_SPI_SCK` 改作串口 TX |
 | LCDM TX | 接 MCU RX | `PB5` | GPIO 软件 UART RX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 回传触摸和字段包；原裸屏 `LCM_SPI_MOSI` 改作串口 RX |
-| LCDM RESET | 屏复位/可选 | `PB4` | GPIO 输出 | 高有效/按模块要求 | 原裸屏 `LCM_RESET`，TJC 模块若不需要复位可 DNP 或保留测试点 |
 | LCDM VCC | 屏幕电源 | 5V 或模块要求电源 | 电源 | - | 串口电平必须兼容 AT32 3.3V，必要时加电平转换 |
 | LCDM GND | GND | GND | 电源 | - | 必须共地 |
 | 打印机通讯 TX | MCU -> 打印机/RS485 | `PA9` | `USART1_TX` / AF7 | 默认 9600 8N1，可由 LCDM 设置 | `PRINT_TERMINAL` 模式下作为打印机通讯口 |
 | 打印机通讯 RX | 打印机/RS485 -> MCU | `PA10` | `USART1_RX` / AF7 | 默认 9600 8N1，可由 LCDM 设置 | 可读打印机/转换器返回状态 |
 | RS485 DE/RE | 方向控制 | 默认预留 `PA1` | GPIO | 可选 | 需要半双工收发器时启用 `PRINT_RS485_USE_DIR_PIN=1` |
+| WiFi/无线模块 | 未定 | 未分配 | 待定 | 待模块选型后确认 | 当前没有找到合适 WiFi 模块，只预留机械空间、电源余量、0R/测试点，不写死 UART/SPI/SDIO 引脚 |
 
-`PA2` 已固定为扫描输入 `ADC2_IN2`，不得再分配给 LCDM 或打印机通讯。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新拿封装 pinout 证明它是可落板脚。`PA9/PA10` 在打印主机角色中给打印机通讯使用，在测试机角色中可给 LEDM/TM1637 使用，两种角色不能同时并接。
+`PB4` 不写入 2026-07-05 TJC LCDM 当前规格；`PB6/PB7` 已用于 `IR_TX/IR_RX`，`PB8` 已用于 `HALL_SW`。`PA2` 已固定为扫描输入 `ADC2_IN2`，不得再分配给 LCDM、打印机通讯或 WiFi/无线模块。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新拿封装 pinout 证明它是可落板脚。`PA9/PA10` 在打印主机角色中给打印机通讯使用，在测试机角色中可给 LEDM/TM1637 使用，两种角色不能同时并接；WiFi 模块也不得默认占用这两个脚，除非后续重新定义产品角色和 BOM。
 
 ## 斑马打印机 RS485 后端
 

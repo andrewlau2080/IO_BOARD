@@ -16,7 +16,7 @@
 | 项目 | 规格 |
 |---|---|
 | LCDM 品牌/协议 | TJC 陶晶驰串口 HMI，兼容 Nextion 风格 ASCII 指令 + `FF FF FF` 结束符 |
-| LCDM 通讯 | GPIO 软件 UART：`PB3=MCU_TX` 接 LCDM RX，`PB5=MCU_RX` 接 LCDM TX，`PB4` 预留 LCDM RESET |
+| LCDM 通讯 | GPIO 软件 UART：`PB3=MCU_TX` 接 LCDM RX，`PB5=MCU_RX` 接 LCDM TX；2026-07-05 图纸不再把 `PB4` 写入 TJC LCDM 当前规格 |
 | LCDM 串口参数 | 默认 9600 8N1；实机稳定后可评估 38400 |
 | 打印机通讯 | `USART1`，`PA9=TX`，`PA10=RX`，默认 9600 8N1 |
 | 禁用脚 | `PA2` 已用于 `ADC2_IN2` 扫描输入，不能接 LCDM；`PH2` 不写入 LQFP100 最终规格 |

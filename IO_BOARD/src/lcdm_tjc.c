@@ -27,7 +27,7 @@
 #endif
 
 #ifndef LCDM_TJC_USE_RESET_PIN
-#define LCDM_TJC_USE_RESET_PIN 1
+#define LCDM_TJC_USE_RESET_PIN 0
 #endif
 
 volatile uint32_t g_lcdm_tjc_tx_cmd_count;

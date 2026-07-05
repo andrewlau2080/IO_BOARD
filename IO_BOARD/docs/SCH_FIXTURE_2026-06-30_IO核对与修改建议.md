@@ -1,6 +1,6 @@
-# SCH_FIXTURE_2026-06-30 IO核对与修改建议
+# SCH_FIXTURE IO核对与修改建议
 
-依据：`IO_BOARD/docs/SCH_FIXTURE_2026-06-30.pdf` 第3页 MCU2。目标 MCU：AT32F455VET7 LQFP100。
+最新依据：`IO_BOARD/docs/SCH_FIXTURE_2026-07-05.pdf` 第3页 MCU2。旧 `SCH_FIXTURE_2026-06-30.pdf` 内容只作历史对照。目标 MCU：AT32F455VET7 LQFP100。
 
 ## 总体结论
 
@@ -9,10 +9,10 @@
 | 4051扫描脚 | IN/OUT A/B 地址线和使能线 | 和当前修正后的 `io_board.c` 一致 | 保留 |
 | OUT_BMUX_EN | `PD9..PD15, PC6` | 新版图纸明确不是 `PD8..PD15` | 保留当前修正版 |
 | SWD烧录 | J4标 `SWCLK/SWDIO`，但 MCU 侧疑似 `PA14/PA15`；`PA13` 被 `DEBUG_TTL_TX` 占用 | 标准 SWD 应使用 `PA13=SWDIO`、`PA14=SWCLK` | 必须改/确认 |
-| PA9/PA10 | 图纸为 `USART_TX/USART_RX` | 旧 TM1637 代码使用 `PA9/PA10` 做 `CLK/DIO` | 必须改 |
-| LCDM接口 | `PB3/PB4/PB5/PB6/PB7/PB8` | 图纸已有 LCDM/LCM 接口，代码只初始化部分控制脚 | 建议按 LCDM 实现 |
-| LEDM/TM1637 | 图纸未见独立 LEDM/TM1637 `CLK/DIO` | 若要两组 LED 模块，需新增接口或占用空余 GPIO | 必须决定 |
-| PA6/PA7 | 图纸无 `IR_RX/IR_TX` 网名 | 旧 IR 打印代码使用 `PA6/PA7`，不可直接上板 | 必须确认 |
+| PA9/PA10 | 07-05 图纸为 `USART_TX/USART_RX`，同时规划 LEDM/TM1637 角色复用 | 使用 LEDM 时会与打印机/主通讯 USART1 冲突 | 按产品角色/BOM 二选一 |
+| LCDM接口 | `PB3=LCDM_TX`、`PB5=LCDM_RX` | TJC 串口屏只需 TX/RX；PB4 不再写作 LCDM_RESET | 按 07-05 图纸保留 |
+| IR打印 | `PB6=IR_TX`、`PB7=IR_RX` | 旧文档曾写反 PB6/PB7 | 固件与规格表必须按 07-05 图纸更新 |
+| 感应触发 | `PB8=HALL_SW` | 旧图曾作 `LCM_BL_LED`，当前新版已改为霍尔/感应输入 | 按 07-05 图纸保留 |
 
 ## 给画图人员的修改清单
 
@@ -21,10 +21,21 @@
 | 1 | SWD接口 | J4改为：3.3V/Vref、`SWDIO=PA13`、`SWCLK=PA14`、GND，建议加 `NRST` | 必须改 |
 | 2 | `DEBUG_TTL_TX` | 不要占用 `PA13`；移到空余脚或删除 | 必须改 |
 | 3 | `PA9/PA10` | 只作为 `USART_TX/RX`；删除 TM1637/LEDM 复用说明 | 必须改 |
-| 4 | 显示接口 | 优先使用 LCDM：`PB3 SCK`、`PB5 MOSI`、`PB4 RESET`、`PB6 CMD`、`PB7 CS`、`PB8 BL` | 建议改 |
+| 4 | 显示接口 | 按 2026-07-05 当前方案使用 TJC LCDM：`PB3=LCDM_TX`、`PB5=LCDM_RX`；不要再把 `PB4/PB6/PB7/PB8` 写成裸屏接口 | 必须改 |
 | 5 | LEDM/TM1637 | 若要两组 LED 模块，新增独立 `J_LEDM`，不占 USART；建议 `CLK/DIO_ERR/DIO_CUR` 三线 | 待决定 |
-| 6 | IR打印 | 如果保留红外打印，新增 `J_IR`：`IR_RX`、`IR_TX`、3.3V、GND，并指定 MCU 脚 | 待决定 |
+| 6 | IR打印 | 如果保留红外打印，新增 `J_IR`：`PB6=IR_TX`、`PB7=IR_RX`、3.3V、GND | 待决定 |
 | 7 | 固件 | 按最终图纸更新 `io_board.c`、LCDM驱动，禁用或迁移 `tm1637_display.c` 和 `ir_remote.c` | 后续执行 |
+| 8 | WiFi/无线模块 | 当前模块未选定，不分配固定 MCU IO；只预留安装空间、电源余量和可选 0R/测试点，待模块确认后再定 UART/SPI/SDIO | 待决定 |
+
+## 修订：感应打印触发输入
+
+`PC7` 是按键 `KEY_RIGHT`，此前只作临时打印触发测试，正式硬件不要再用 PC7 接感应触发。
+
+| 功能 | MCU脚 | 外设/方向 | 模块侧连接 | 结论 |
+|---|---|---|---|---|
+| `HALL_SW` | `PB8` | GPIO 输入，上拉，低电平有效 | 接霍尔/感应器 OUT / 开漏下拉输出 | 2026-07-05 正式打印感应触发采用 |
+
+限制说明：PB8 在旧裸屏接口中曾是 `LCM_BL_LED`。2026-07-05 图纸已改为 `HALL_SW`，因此不要再把 PB8 当 LCD 背光输出。若后续回退旧裸屏方案，需要重新分配感应触发脚。
 
 完整表格见同目录 DOCX：`SCH_FIXTURE_2026-06-30_IO核对与修改建议.docx`。
 
@@ -64,11 +75,20 @@
 
 | 功能 | MCU脚 | 外设/方向 | 模块侧连接 | 结论 |
 |---|---|---|---|---|
-| `LCDM_TX` | `PB3` | GPIO 软件 UART TX | 接 TJC LCDM `RX` | 打印端 LCDM 采用 |
-| `LCDM_RX` | `PB5` | GPIO 软件 UART RX | 接 TJC LCDM `TX` | 打印端 LCDM 采用 |
-| `LCDM_RESET` | `PB4` | GPIO 输出/可选 | 接 TJC LCDM `RESET` 或 DNP | 只剩 PB3/PB4/PB5 时保留 |
+| `LCDM_TX` | `PB3` | GPIO 软件 UART TX | 接 TJC LCDM `RX` | 2026-07-05 图纸采用 |
+| `LCDM_RX` | `PB5` | GPIO 软件 UART RX | 接 TJC LCDM `TX` | 2026-07-05 图纸采用 |
 | `PRINTER_TX` | `PA9` | `USART1_TX` | 接打印机/RS485 转换器 `RX/DI` | 打印主机采用 |
 | `PRINTER_RX` | `PA10` | `USART1_RX` | 接打印机/RS485 转换器 `TX/RO` | 打印主机采用 |
 | `RS485_DE_RE` | `PA1` | GPIO，可选 | 接收发器 `DE`/`RE` | 半双工需要时启用 |
+| `WIFI_MODULE` | 未定 | 未分配 | 待 WiFi 模块选型后确认 | 当前不写死 UART/SPI/SDIO 引脚 |
 
-限制说明：TJC/陶晶驰 LCDM 是串口 HMI，通讯量很小，不要求固定硬件 USART；当前 PB3/PB5 采用软件 UART，默认 9600 8N1，稳定后可评估 38400。`PA2` 已用于 `ADC2_IN2` 扫描输入，不能再给 LCDM。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新用封装 pinout 证明它是可落板脚。`PA9/PA10` 在测试机角色中可作为 LEDM/TM1637；在打印主机角色中作为打印机通讯 USART1。两种角色按 BOM/连接器二选一，不能同时并接 LEDM 和打印机通讯。
+限制说明：TJC/陶晶驰 LCDM 是串口 HMI，通讯量很小，不要求固定硬件 USART；当前 PB3/PB5 采用软件 UART，默认 9600 8N1，稳定后可评估 38400。`PB4` 不写入 2026-07-05 TJC LCDM 当前规格。`PB6/PB7` 已用于 IR，`PB8` 已用于 `HALL_SW`。`PA2` 已用于 `ADC2_IN2` 扫描输入，不能再给 LCDM、打印机或 WiFi/无线模块。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新用封装 pinout 证明它是可落板脚。`PA9/PA10` 在测试机角色中可作为 LEDM/TM1637；在打印主机角色中作为打印机通讯 USART1。两种角色按 BOM/连接器二选一，不能同时并接 LEDM 和打印机通讯。WiFi/无线模块尚未选型，不分配固定 MCU IO。
+
+## 修订：红外打印通讯 IO
+
+| 功能 | MCU脚 | 外设/方向 | 模块侧连接 | 结论 |
+|---|---|---|---|---|
+| `IR_TX` | `PB6` | GPIO 输出 / 载波包络 | 接 IR LED 驱动管输入 | 2026-07-05 图纸采用 |
+| `IR_RX` | `PB7` | GPIO 输入，上拉 | 接 38kHz 解调接收头 OUT | 2026-07-05 图纸采用 |
+
+限制说明：旧记录曾把 PB6/PB7 写反；以 2026-07-05 图纸为准，固件 `ir_remote.c` 已同步为 `PB6=IR_TX`、`PB7=IR_RX`。

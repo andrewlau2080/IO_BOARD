@@ -33,10 +33,10 @@ Current implementation rule:
 - The tester-side response packet is generated at build time from
   `TestV1.0/analysis_outputs/useful_tester_response_tx_envelope.csv` and is
   exposed as `LINE_COMM_CODE_TESTER_RESPONSE`.
-- Current firmware model waits for the printer polling packet prefix on `PA6`.
+- Current firmware model waits for the printer polling packet prefix on `PB7`.
   When the first 12 segments match `LINE_COMM_CODE_PRINT_REQUEST`, it starts
   the tester response at about 24.786 ms from the detected polling packet start.
-  It then transmits `LINE_COMM_CODE_TESTER_RESPONSE` once from `PA7` and
+  It then transmits `LINE_COMM_CODE_TESTER_RESPONSE` once from `PB6` and
   returns to waiting for the next printer polling packet.
 - Other old-link response/ack code slots remain empty until they are learned.
 - Keep local tester logic independent from the terminal protocol so scanning
@@ -70,9 +70,9 @@ Current printer polling transmitter settings:
 | Inter-packet space | about 166.452 ms |
 | Carrier half period | 12 us |
 | Estimated carrier | about 41.7 kHz |
-| Firmware output pin | `PA7` / `IR_TX` |
+| Firmware output pin | `PB6` / `IR_TX` |
 | Envelope debug pin | `PH3` / `DEBUG_OUT`, high during packet and low during inter-packet space |
-| Bench verification | Confirmed normal on 2026-06-03 |
+| Bench verification | Confirmed normal on 2026-06-03 with the old `PA7=IR_TX` bench wiring; current 2026-07-05 schematic uses `PB6=IR_TX` |
 
 Current closed-loop tester response settings:
 
@@ -85,7 +85,7 @@ Current closed-loop tester response settings:
 | Packet duration | about 2.151 s |
 | Carrier half period | 13 us |
 | Estimated carrier | about 38.5 kHz |
-| Firmware output pin | `PA7` / `IR_TX` |
+| Firmware output pin | `PB6` / `IR_TX` |
 | Envelope debug pin | `PH3` / `DEBUG_OUT`, high during response packet |
 | Loop behavior | Receive prefix, transmit once, guard 100 ms, wait again |
 
@@ -191,8 +191,8 @@ before choosing the final UI technology.
 | Step | Firmware block | Status |
 |---:|---|---|
 | 1 | First-gen scanner | Full learned-matrix PASS sets `g_first_gen_print_ready` |
-| 2 | IR receiver | Printer polling prefix is captured on `PA6` while print-ready is armed |
-| 3 | IR transmitter | `LINE_COMM_CODE_TESTER_RESPONSE` is transmitted on `PA7` after the learned delay |
+| 2 | IR receiver | Printer polling prefix is captured on `PB7` while print-ready is armed |
+| 3 | IR transmitter | `LINE_COMM_CODE_TESTER_RESPONSE` is transmitted on `PB6` after the learned delay |
 | 4 | State control | NG/unlearned states block response; current implementation clears print-ready after one response |
 | 5 | Debug counters | Poll match, reject, response sent, blocked, ready, and waiting states are exposed as watch variables |
 | 6 | Bench test | Next required step: verify timing with oscilloscope and confirm terminal/printer receives the response |
