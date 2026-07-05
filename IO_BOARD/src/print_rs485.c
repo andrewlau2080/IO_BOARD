@@ -18,6 +18,42 @@
 #define PRINT_RS485_DIR_PIN GPIO_PINS_1
 #endif
 
+#ifndef PRINT_RS485_USART
+#define PRINT_RS485_USART USART1
+#endif
+
+#ifndef PRINT_RS485_USART_CLOCK
+#define PRINT_RS485_USART_CLOCK CRM_USART1_PERIPH_CLOCK
+#endif
+
+#ifndef PRINT_RS485_GPIO
+#define PRINT_RS485_GPIO GPIOA
+#endif
+
+#ifndef PRINT_RS485_GPIO_CLOCK
+#define PRINT_RS485_GPIO_CLOCK CRM_GPIOA_PERIPH_CLOCK
+#endif
+
+#ifndef PRINT_RS485_TX_PIN
+#define PRINT_RS485_TX_PIN GPIO_PINS_9
+#endif
+
+#ifndef PRINT_RS485_RX_PIN
+#define PRINT_RS485_RX_PIN GPIO_PINS_10
+#endif
+
+#ifndef PRINT_RS485_TX_PIN_SOURCE
+#define PRINT_RS485_TX_PIN_SOURCE GPIO_PINS_SOURCE9
+#endif
+
+#ifndef PRINT_RS485_RX_PIN_SOURCE
+#define PRINT_RS485_RX_PIN_SOURCE GPIO_PINS_SOURCE10
+#endif
+
+#ifndef PRINT_RS485_GPIO_MUX
+#define PRINT_RS485_GPIO_MUX GPIO_MUX_7
+#endif
+
 volatile uint32_t g_print_rs485_tx_byte_count;
 volatile uint32_t g_print_rs485_tx_frame_count;
 volatile uint32_t g_print_rs485_reconfig_count;
@@ -122,20 +158,20 @@ void print_rs485_init(void)
   }
   rs485_config_validate(&rs485_config);
 
-  usart_enable(USART2, FALSE);
-  crm_periph_clock_enable(CRM_GPIOA_PERIPH_CLOCK, TRUE);
-  crm_periph_clock_enable(CRM_USART2_PERIPH_CLOCK, TRUE);
+  usart_enable(PRINT_RS485_USART, FALSE);
+  crm_periph_clock_enable(PRINT_RS485_GPIO_CLOCK, TRUE);
+  crm_periph_clock_enable(PRINT_RS485_USART_CLOCK, TRUE);
 
   gpio_default_para_init(&gpio_init_struct);
   gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
   gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
   gpio_init_struct.gpio_mode = GPIO_MODE_MUX;
-  gpio_init_struct.gpio_pins = GPIO_PINS_2 | GPIO_PINS_3;
+  gpio_init_struct.gpio_pins = PRINT_RS485_TX_PIN | PRINT_RS485_RX_PIN;
   gpio_init_struct.gpio_pull = GPIO_PULL_UP;
-  gpio_init(GPIOA, &gpio_init_struct);
+  gpio_init(PRINT_RS485_GPIO, &gpio_init_struct);
 
-  gpio_pin_mux_config(GPIOA, GPIO_PINS_SOURCE2, GPIO_MUX_7);
-  gpio_pin_mux_config(GPIOA, GPIO_PINS_SOURCE3, GPIO_MUX_7);
+  gpio_pin_mux_config(PRINT_RS485_GPIO, PRINT_RS485_TX_PIN_SOURCE, PRINT_RS485_GPIO_MUX);
+  gpio_pin_mux_config(PRINT_RS485_GPIO, PRINT_RS485_RX_PIN_SOURCE, PRINT_RS485_GPIO_MUX);
 
 #if PRINT_RS485_USE_DIR_PIN
   crm_periph_clock_enable(PRINT_RS485_DIR_GPIO_CLOCK, TRUE);
@@ -150,12 +186,12 @@ void print_rs485_init(void)
 
   print_rs485_set_tx(0U);
 
-  usart_init(USART2, rs485_config.baudrate, rs485_data_bits(), rs485_stop_bits());
-  usart_parity_selection_config(USART2, rs485_parity());
-  usart_hardware_flow_control_set(USART2, USART_HARDWARE_FLOW_NONE);
-  usart_transmitter_enable(USART2, TRUE);
-  usart_receiver_enable(USART2, TRUE);
-  usart_enable(USART2, TRUE);
+  usart_init(PRINT_RS485_USART, rs485_config.baudrate, rs485_data_bits(), rs485_stop_bits());
+  usart_parity_selection_config(PRINT_RS485_USART, rs485_parity());
+  usart_hardware_flow_control_set(PRINT_RS485_USART, USART_HARDWARE_FLOW_NONE);
+  usart_transmitter_enable(PRINT_RS485_USART, TRUE);
+  usart_receiver_enable(PRINT_RS485_USART, TRUE);
+  usart_enable(PRINT_RS485_USART, TRUE);
   g_print_rs485_reconfig_count++;
 }
 
@@ -198,12 +234,12 @@ void print_rs485_write(const uint8_t *data, uint16_t len)
 
   print_rs485_set_tx(1U);
   for(i = 0U; i < len; i++) {
-    while(usart_flag_get(USART2, USART_TDBE_FLAG) == RESET) {
+    while(usart_flag_get(PRINT_RS485_USART, USART_TDBE_FLAG) == RESET) {
     }
-    usart_data_transmit(USART2, data[i]);
+    usart_data_transmit(PRINT_RS485_USART, data[i]);
     g_print_rs485_tx_byte_count++;
   }
-  while(usart_flag_get(USART2, USART_TDC_FLAG) == RESET) {
+  while(usart_flag_get(PRINT_RS485_USART, USART_TDC_FLAG) == RESET) {
   }
   print_rs485_set_tx(0U);
   g_print_rs485_tx_frame_count++;
@@ -217,11 +253,11 @@ uint8_t print_rs485_poll_byte(uint8_t *out_byte)
     return 0U;
   }
 
-  if(usart_flag_get(USART2, USART_RDBF_FLAG) == RESET) {
+  if(usart_flag_get(PRINT_RS485_USART, USART_RDBF_FLAG) == RESET) {
     return 0U;
   }
 
-  value = (uint8_t)usart_data_receive(USART2);
+  value = (uint8_t)usart_data_receive(PRINT_RS485_USART);
   *out_byte = value;
   g_print_rs485_last_rx_byte = value;
   g_print_rs485_rx_byte_count++;

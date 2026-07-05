@@ -57,3 +57,18 @@
 如果 LEDM 是串口LED/串口屏：使用 `PA9=USART1_TX`、`PA10=USART1_RX`，模块侧交叉接线。
 
 如果 LEDM 是 TM1637：不要叫 TX/RX，应改名为 `LEDM_CLK=PA9`、`LEDM_DIO=PA10`，固件按GPIO时序驱动，不启用USART1。
+
+## 修订：打印端 LCDM 与打印机通讯 IO
+
+打印端 LCDM 使用与 MOTOR / Steering Engine 项目相同的 TJC 陶晶驰串口 HMI 方向，不走图纸旧 `LCM_SPI_SCK/MOSI/RESET/CMD/CS/BL` 裸屏接口作为首选。
+
+| 功能 | MCU脚 | 外设/方向 | 模块侧连接 | 结论 |
+|---|---|---|---|---|
+| `LCDM_TX` | `PB3` | GPIO 软件 UART TX | 接 TJC LCDM `RX` | 打印端 LCDM 采用 |
+| `LCDM_RX` | `PB5` | GPIO 软件 UART RX | 接 TJC LCDM `TX` | 打印端 LCDM 采用 |
+| `LCDM_RESET` | `PB4` | GPIO 输出/可选 | 接 TJC LCDM `RESET` 或 DNP | 只剩 PB3/PB4/PB5 时保留 |
+| `PRINTER_TX` | `PA9` | `USART1_TX` | 接打印机/RS485 转换器 `RX/DI` | 打印主机采用 |
+| `PRINTER_RX` | `PA10` | `USART1_RX` | 接打印机/RS485 转换器 `TX/RO` | 打印主机采用 |
+| `RS485_DE_RE` | `PA1` | GPIO，可选 | 接收发器 `DE`/`RE` | 半双工需要时启用 |
+
+限制说明：TJC/陶晶驰 LCDM 是串口 HMI，通讯量很小，不要求固定硬件 USART；当前 PB3/PB5 采用软件 UART，默认 9600 8N1，稳定后可评估 38400。`PA2` 已用于 `ADC2_IN2` 扫描输入，不能再给 LCDM。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新用封装 pinout 证明它是可落板脚。`PA9/PA10` 在测试机角色中可作为 LEDM/TM1637；在打印主机角色中作为打印机通讯 USART1。两种角色按 BOM/连接器二选一，不能同时并接 LEDM 和打印机通讯。

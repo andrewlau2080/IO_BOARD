@@ -14,7 +14,7 @@
 
 ## LCDM 方向
 
-Steering Engine 项目里使用的是 TJC/Nextion 风格的串口智能屏，不是 MCU 直接驱动的裸 LCD。当前 `PRINT_TERMINAL` 先沿用这个方向：
+MOTOR / Steering Engine 项目已选 TJC 陶晶驰串口 HMI 智能屏，不是 MCU 直接驱动的裸 LCD。打印端 LCDM 采用同一品牌/同一协议方向，当前 `PRINT_TERMINAL` 固定按 TJC/陶晶驰 UART HMI 设计：
 
 - MCU 通过 UART 发送 ASCII 控件命令，结尾为 `FF FF FF`。
 - LCDM 屏幕工程负责触摸、键盘、字体和页面控件。
@@ -74,11 +74,22 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 | `tPreview` | 文本 | ASCII 标签预览 |
 | `tStatus` | 文本 | `READY` / `PRINT OK` / `PRINT ERROR` |
 
-## 接线注意
+## 接线与 IO 规格
 
-当前 `lcdm_tjc.c` 默认使用 `USART1 PA9/PA10`，115200 8N1。这是独立 `PRINT_TERMINAL` 模式使用的临时默认脚位。
+打印端 LCDM 使用 TJC/陶晶驰 UART 协议，但不强制占用硬件 USART。当前只剩 `PB3/PB4/PB5` 可给 LCDM 时，LCDM 采用 GPIO 软件串口；打印机通讯仍使用 `PA9/PA10` 的硬件 USART1。这样避免 LCDM 占用 LEDM/打印机共用的 `PA9/PA10`，也避免误用 `PA2` 或封装未确认的 `PH2`。
 
-如果同一块一代测试板仍把 `PA9/PA10` 接给 LEDM/TM1637，就不能同时运行 LCDM 串口屏。若最终硬件是图纸上的 `LCM_SPI_SCK/MOSI/RESET/CMD/CS/BL` 裸屏接口，则不能直接使用 TJC 串口协议，需要另建 SPI LCD + 触摸 + 软键盘驱动。
+| 功能 | 模块侧信号 | AT32 引脚 | 外设 | 参数 | 说明 |
+|---|---|---|---|---|---|
+| LCDM RX | 接 MCU TX | `PB3` | GPIO 软件 UART TX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 接收 MCU 控件命令；原裸屏 `LCM_SPI_SCK` 改作串口 TX |
+| LCDM TX | 接 MCU RX | `PB5` | GPIO 软件 UART RX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 回传触摸和字段包；原裸屏 `LCM_SPI_MOSI` 改作串口 RX |
+| LCDM RESET | 屏复位/可选 | `PB4` | GPIO 输出 | 高有效/按模块要求 | 原裸屏 `LCM_RESET`，TJC 模块若不需要复位可 DNP 或保留测试点 |
+| LCDM VCC | 屏幕电源 | 5V 或模块要求电源 | 电源 | - | 串口电平必须兼容 AT32 3.3V，必要时加电平转换 |
+| LCDM GND | GND | GND | 电源 | - | 必须共地 |
+| 打印机通讯 TX | MCU -> 打印机/RS485 | `PA9` | `USART1_TX` / AF7 | 默认 9600 8N1，可由 LCDM 设置 | `PRINT_TERMINAL` 模式下作为打印机通讯口 |
+| 打印机通讯 RX | 打印机/RS485 -> MCU | `PA10` | `USART1_RX` / AF7 | 默认 9600 8N1，可由 LCDM 设置 | 可读打印机/转换器返回状态 |
+| RS485 DE/RE | 方向控制 | 默认预留 `PA1` | GPIO | 可选 | 需要半双工收发器时启用 `PRINT_RS485_USE_DIR_PIN=1` |
+
+`PA2` 已固定为扫描输入 `ADC2_IN2`，不得再分配给 LCDM 或打印机通讯。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新拿封装 pinout 证明它是可落板脚。`PA9/PA10` 在打印主机角色中给打印机通讯使用，在测试机角色中可给 LEDM/TM1637 使用，两种角色不能同时并接。
 
 ## 斑马打印机 RS485 后端
 
@@ -96,10 +107,12 @@ cmake -S . -B build-print-zebra -G Ninja \
 | 项目 | 当前实现 |
 |---|---|
 | 打印语言 | ZPL |
-| 串口 | `USART2` |
-| 默认脚位 | `PA2=TX`, `PA3=RX`, AF7 |
+| 串口 | `USART1` |
+| 默认脚位 | `PA9=TX`, `PA10=RX`, AF7 |
 | 默认波特率 | `9600`, 8N1 |
 | 方向控制 | 默认不驱动 DE/RE；如硬件需要，编译加 `PRINT_RS485_USE_DIR_PIN=1`，默认方向脚 `PA1` |
 | 打印提交 | LCDM 发送 `print` 后，MCU 生成 ZPL 并发到 RS485 |
 
 注意：Zebra 打印机本体通常是 USB/以太网/RS232，若使用 RS485，需要打印机侧或中间转换器支持透明串口传输 ZPL。MCU 侧当前只负责把 ZPL 文本送到 RS485，总线应保证只有 MCU 对打印机发送，避免多主冲突。
+
+`PA9/PA10` 是角色复用脚：扫描/LEDM 测试机角色可把它们接给 LEDM/TM1637；打印主机角色不装 LEDM，把它们恢复为打印机通讯 USART1。两种角色不能在同一硬件/BOM 上同时并接工作。

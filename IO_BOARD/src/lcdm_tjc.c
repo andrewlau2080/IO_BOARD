@@ -1,9 +1,34 @@
 #include "lcdm_tjc.h"
 
+#include "at32f45x_board.h"
 #include "at32f45x.h"
 
 #include <stdio.h>
 #include <string.h>
+
+#ifndef LCDM_TJC_GPIO
+#define LCDM_TJC_GPIO GPIOB
+#endif
+
+#ifndef LCDM_TJC_GPIO_CLOCK
+#define LCDM_TJC_GPIO_CLOCK CRM_GPIOB_PERIPH_CLOCK
+#endif
+
+#ifndef LCDM_TJC_TX_PIN
+#define LCDM_TJC_TX_PIN GPIO_PINS_3
+#endif
+
+#ifndef LCDM_TJC_RX_PIN
+#define LCDM_TJC_RX_PIN GPIO_PINS_5
+#endif
+
+#ifndef LCDM_TJC_RESET_PIN
+#define LCDM_TJC_RESET_PIN GPIO_PINS_4
+#endif
+
+#ifndef LCDM_TJC_USE_RESET_PIN
+#define LCDM_TJC_USE_RESET_PIN 1
+#endif
 
 volatile uint32_t g_lcdm_tjc_tx_cmd_count;
 volatile uint32_t g_lcdm_tjc_rx_byte_count;
@@ -15,6 +40,78 @@ volatile uint8_t g_lcdm_tjc_last_packet_len;
 static uint8_t rx_packet[LCDM_TJC_RX_PACKET_MAX];
 static uint8_t rx_len;
 static uint8_t rx_ff_count;
+static uint32_t bit_us;
+
+static void lcdm_tjc_wait_bit(void)
+{
+  delay_us(bit_us);
+}
+
+static void lcdm_tjc_tx_level(confirm_state level)
+{
+  gpio_bits_write(LCDM_TJC_GPIO, LCDM_TJC_TX_PIN, level);
+}
+
+static uint8_t lcdm_tjc_rx_level(void)
+{
+  return gpio_input_data_bit_read(LCDM_TJC_GPIO, LCDM_TJC_RX_PIN) != RESET;
+}
+
+static uint8_t lcdm_tjc_wait_for_start(uint32_t max_wait_us)
+{
+  uint32_t waited_us = 0U;
+
+  while(lcdm_tjc_rx_level() != 0U) {
+    if(waited_us >= max_wait_us) {
+      return 0U;
+    }
+    delay_us(1U);
+    waited_us++;
+  }
+
+  return 1U;
+}
+
+static void lcdm_tjc_write_byte(uint8_t value)
+{
+  uint8_t i;
+
+  lcdm_tjc_tx_level(FALSE);
+  lcdm_tjc_wait_bit();
+
+  for(i = 0U; i < 8U; i++) {
+    lcdm_tjc_tx_level((value & (1U << i)) ? TRUE : FALSE);
+    lcdm_tjc_wait_bit();
+  }
+
+  lcdm_tjc_tx_level(TRUE);
+  lcdm_tjc_wait_bit();
+}
+
+static uint8_t lcdm_tjc_read_byte(uint8_t *out_value)
+{
+  uint8_t i;
+  uint8_t value = 0U;
+
+  if(out_value == 0 || lcdm_tjc_rx_level() != 0U) {
+    return 0U;
+  }
+
+  delay_us(bit_us + (bit_us / 2U));
+  for(i = 0U; i < 8U; i++) {
+    if(lcdm_tjc_rx_level() != 0U) {
+      value |= (uint8_t)(1U << i);
+    }
+    lcdm_tjc_wait_bit();
+  }
+
+  if(lcdm_tjc_rx_level() == 0U) {
+    return 0U;
+  }
+
+  *out_value = value;
+  return 1U;
+}
 
 static void lcdm_tjc_write_bytes(const uint8_t *data, uint16_t len)
 {
@@ -25,12 +122,7 @@ static void lcdm_tjc_write_bytes(const uint8_t *data, uint16_t len)
   }
 
   for(i = 0U; i < len; i++) {
-    while(usart_flag_get(USART1, USART_TDBE_FLAG) == RESET) {
-    }
-    usart_data_transmit(USART1, data[i]);
-  }
-
-  while(usart_flag_get(USART1, USART_TDC_FLAG) == RESET) {
+    lcdm_tjc_write_byte(data[i]);
   }
 }
 
@@ -38,26 +130,32 @@ void lcdm_tjc_init(void)
 {
   gpio_init_type gpio_init_struct;
 
-  crm_periph_clock_enable(CRM_GPIOA_PERIPH_CLOCK, TRUE);
-  crm_periph_clock_enable(CRM_USART1_PERIPH_CLOCK, TRUE);
+  bit_us = (1000000UL + (LCDM_TJC_BAUDRATE / 2UL)) / LCDM_TJC_BAUDRATE;
+  if(bit_us == 0UL) {
+    bit_us = 1UL;
+  }
+
+  crm_periph_clock_enable(LCDM_TJC_GPIO_CLOCK, TRUE);
 
   gpio_default_para_init(&gpio_init_struct);
   gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
   gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
-  gpio_init_struct.gpio_mode = GPIO_MODE_MUX;
-  gpio_init_struct.gpio_pins = GPIO_PINS_9 | GPIO_PINS_10;
+  gpio_init_struct.gpio_mode = GPIO_MODE_OUTPUT;
+  gpio_init_struct.gpio_pins = LCDM_TJC_TX_PIN;
   gpio_init_struct.gpio_pull = GPIO_PULL_UP;
-  gpio_init(GPIOA, &gpio_init_struct);
+  gpio_bits_set(LCDM_TJC_GPIO, LCDM_TJC_TX_PIN);
+  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
 
-  gpio_pin_mux_config(GPIOA, GPIO_PINS_SOURCE9, GPIO_MUX_7);
-  gpio_pin_mux_config(GPIOA, GPIO_PINS_SOURCE10, GPIO_MUX_7);
+#if LCDM_TJC_USE_RESET_PIN
+  gpio_init_struct.gpio_pins = LCDM_TJC_RESET_PIN;
+  gpio_bits_set(LCDM_TJC_GPIO, LCDM_TJC_RESET_PIN);
+  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
+#endif
 
-  usart_init(USART1, LCDM_TJC_BAUDRATE, USART_DATA_8BITS, USART_STOP_1_BIT);
-  usart_parity_selection_config(USART1, USART_PARITY_NONE);
-  usart_hardware_flow_control_set(USART1, USART_HARDWARE_FLOW_NONE);
-  usart_transmitter_enable(USART1, TRUE);
-  usart_receiver_enable(USART1, TRUE);
-  usart_enable(USART1, TRUE);
+  gpio_init_struct.gpio_mode = GPIO_MODE_INPUT;
+  gpio_init_struct.gpio_pins = LCDM_TJC_RX_PIN;
+  gpio_init_struct.gpio_pull = GPIO_PULL_UP;
+  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
 
   rx_len = 0U;
   rx_ff_count = 0U;
@@ -111,9 +209,15 @@ void lcdm_tjc_page(uint8_t page_id)
 static void poll_rx_bytes(void)
 {
   uint8_t value;
+  uint8_t retry;
 
-  while(usart_flag_get(USART1, USART_RDBF_FLAG) != RESET && rx_ff_count < 3U) {
-    value = (uint8_t)usart_data_receive(USART1);
+  for(retry = 0U; retry < 8U && rx_ff_count < 3U; retry++) {
+    if(lcdm_tjc_wait_for_start((rx_len != 0U || rx_ff_count != 0U) ? (bit_us * 2U) : 0U) == 0U) {
+      break;
+    }
+    if(lcdm_tjc_read_byte(&value) == 0U) {
+      break;
+    }
     g_lcdm_tjc_rx_byte_count++;
 
     if(value == 0xFFU) {

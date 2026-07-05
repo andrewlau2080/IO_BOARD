@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifndef LCDM_TJC_BAUDRATE
-#define LCDM_TJC_BAUDRATE 115200U
+#define LCDM_TJC_BAUDRATE 9600U
 #endif
 
 #define LCDM_TJC_RX_PACKET_MAX 96U
