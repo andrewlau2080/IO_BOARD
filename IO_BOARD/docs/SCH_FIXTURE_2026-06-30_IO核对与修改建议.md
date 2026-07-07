@@ -1,5 +1,7 @@
 # SCH_FIXTURE IO核对与修改建议
 
+> 历史文档：本文件记录 2026-06-30 到 2026-07-05 期间的核对过程，不再作为 PCB layout 依据。当前 PCB 和 IO 规格以 `SCH_FIXTURE_2026-07-07.pdf` 及 `SCH_FIXTURE_2026-07-07_IO核对与PCB检查表.md` 为准。
+
 最新依据：`IO_BOARD/docs/SCH_FIXTURE_2026-07-05.pdf` 第3页 MCU2。旧 `SCH_FIXTURE_2026-06-30.pdf` 内容只作历史对照。目标 MCU：AT32F455VET7 LQFP100。
 
 ## 总体结论
@@ -7,7 +9,7 @@
 | 模块 | 图纸现状 | 问题 | 建议 |
 |---|---|---|---|
 | 4051扫描脚 | IN/OUT A/B 地址线和使能线 | 和当前修正后的 `io_board.c` 一致 | 保留 |
-| OUT_BMUX_EN | `PD9..PD15, PC6` | 新版图纸明确不是 `PD8..PD15` | 保留当前修正版 |
+| OUT_BMUX_EN | `PD8..PD15` | 旧记录曾写 `PD9..PD15, PC6`，新版图纸和 ATWP 明确 `PD8=OUT_BMUX_EN0` | 按新版修正 |
 | SWD烧录 | J4标 `SWCLK/SWDIO`，但 MCU 侧疑似 `PA14/PA15`；`PA13` 被 `DEBUG_TTL_TX` 占用 | 标准 SWD 应使用 `PA13=SWDIO`、`PA14=SWCLK` | 必须改/确认 |
 | PA9/PA10 | 07-05 图纸为 `USART_TX/USART_RX`，同时规划 LEDM/TM1637 角色复用 | 使用 LEDM 时会与打印机/主通讯 USART1 冲突 | 按产品角色/BOM 二选一 |
 | LCDM接口 | `PB3=LCDM_TX`、`PB5=LCDM_RX` | TJC 串口屏只需 TX/RX；PB4 不再写作 LCDM_RESET | 按 07-05 图纸保留 |
@@ -25,7 +27,7 @@
 | 5 | LEDM/TM1637 | 若要两组 LED 模块，新增独立 `J_LEDM`，不占 USART；建议 `CLK/DIO_ERR/DIO_CUR` 三线 | 待决定 |
 | 6 | IR打印 | 如果保留红外打印，新增 `J_IR`：`PB6=IR_TX`、`PB7=IR_RX`、3.3V、GND | 待决定 |
 | 7 | 固件 | 按最终图纸更新 `io_board.c`、LCDM驱动，禁用或迁移 `tm1637_display.c` 和 `ir_remote.c` | 后续执行 |
-| 8 | WiFi/无线模块 | 当前模块未选定，不分配固定 MCU IO；只预留安装空间、电源余量和可选 0R/测试点，待模块确认后再定 UART/SPI/SDIO | 待决定 |
+| 8 | WiFi/无线模块 | 采用 ESP32-C3-WROOM-02/02U 方向；第一版 AT32 侧推荐 `PC3=AT32_WIFI_TX` 候选、`PB9=AT32_WIFI_RX` 候选，`WIFI_EN/WIFI_BOOT` 不接 AT32，只做上拉和测试点/按键；连接规格见 `docs/wifi_module_pcb_connection_plan.md` | 必须改 |
 
 ## 修订：感应打印触发输入
 
@@ -79,10 +81,10 @@
 | `LCDM_RX` | `PB5` | GPIO 软件 UART RX | 接 TJC LCDM `TX` | 2026-07-05 图纸采用 |
 | `PRINTER_TX` | `PA9` | `USART1_TX` | 接打印机/RS485 转换器 `RX/DI` | 打印主机采用 |
 | `PRINTER_RX` | `PA10` | `USART1_RX` | 接打印机/RS485 转换器 `TX/RO` | 打印主机采用 |
-| `RS485_DE_RE` | `PA1` | GPIO，可选 | 接收发器 `DE`/`RE` | 半双工需要时启用 |
-| `WIFI_MODULE` | 未定 | 未分配 | 待 WiFi 模块选型后确认 | 当前不写死 UART/SPI/SDIO 引脚 |
+| `RS485_DE_RE` | 待核定 | GPIO，可选 | 接收发器 `DE`/`RE` | `PA1` 已为 `DEBUG_TTL_RX`，不能作为方向脚 |
+| `WIFI_MODULE` | 架构已定，MCU IO 第一版建议 | `PC3候选/PB9候选/EN测试点/BOOT测试点` | 接 ESP32-C3-WROOM-02/02U | `PC3` 接 ESP32 `RXD`，`PB9` 接 ESP32 `TXD`；`EN/BOOT` 不占 AT32，做 10k 上拉和测试点/按键 |
 
-限制说明：TJC/陶晶驰 LCDM 是串口 HMI，通讯量很小，不要求固定硬件 USART；当前 PB3/PB5 采用软件 UART，默认 9600 8N1，稳定后可评估 38400。`PB4` 不写入 2026-07-05 TJC LCDM 当前规格。`PB6/PB7` 已用于 IR，`PB8` 已用于 `HALL_SW`。`PA2` 已用于 `ADC2_IN2` 扫描输入，不能再给 LCDM、打印机或 WiFi/无线模块。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新用封装 pinout 证明它是可落板脚。`PA9/PA10` 在测试机角色中可作为 LEDM/TM1637；在打印主机角色中作为打印机通讯 USART1。两种角色按 BOM/连接器二选一，不能同时并接 LEDM 和打印机通讯。WiFi/无线模块尚未选型，不分配固定 MCU IO。
+限制说明：TJC/陶晶驰 LCDM 是串口 HMI，通讯量很小，不要求固定硬件 USART；当前 PB3/PB5 采用软件 UART，默认 9600 8N1，稳定后可评估 38400。`PB4` 不写入 2026-07-05 TJC LCDM 当前规格。`PB6/PB7` 已用于 IR，`PB8` 已用于 `HALL_SW`。`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，不得再给 RS485 方向、WiFi 或其它功能。`PA2` 已用于 `ADC2_IN2` 扫描输入，`PD8` 按最新图纸保留给 `OUT_BMUX_EN0`，二者都不能再给 LCDM、打印机或 WiFi/无线模块。`PH2` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新用封装 pinout 证明它是可落板脚。`PA9/PA10` 在测试机角色中可作为 LEDM/TM1637；在打印主机角色中作为打印机通讯 USART1。两种角色按 BOM/连接器二选一，不能同时并接 LEDM 和打印机通讯。WiFi/无线模块第一版推荐 `PC3=AT32_WIFI_TX` 候选、`PB9=AT32_WIFI_RX` 候选；`WIFI_EN/WIFI_BOOT` 不占 AT32，只做上拉和测试点/按键。
 
 ## 修订：红外打印通讯 IO
 

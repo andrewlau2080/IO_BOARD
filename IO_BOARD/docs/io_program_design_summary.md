@@ -71,15 +71,15 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 | tester_v2 simple command dispatcher | done for link/UI test | Handles `0x10` ... `0x17`; currently reports active DB78 profile points as OK until the real measurement hook is implemented |
 | New `55 AA` Raspberry Pi command dispatcher | pending | Keep for future richer scan/profile/row/pair API after the current Qt simple protocol test path is stable |
 | LED seven-segment reuse of comm port | specified | Command `0x30` reserved |
-| Learned IR print link after scan | code present, wiring pending | Current code uses the earlier PA6/PA7 learned IR pins; `1thsch.pdf` does not show PA6/PA7 as IR receive/transmit nets |
+| Learned IR print link after scan | code present, wiring pending | Current 2026-07-07 schematic uses `PB6=IR_TX` and `PB7=IR_RX`; older PA6/PA7 learned IR wiring is bench history only |
 
 ## Next Development Step
 
 | Priority | Item | Expected result |
 |---:|---|---|
 | 1 | Decide first-gen display wiring | Either migrate firmware to `1thsch.pdf` LCDM nets or add confirmed TM1637 wiring |
-| 2 | Decide first-gen print/IR wiring | Assign schematic nets/connectors before using the carried-over PA6/PA7 IR code |
-| 3 | Bench-test first-gen scan GPIO | Confirm corrected `OUT_BMUX_EN0..EN7 = PD9..PD15, PC6` selection with meter/scope |
+| 2 | Decide first-gen print/IR wiring | Align firmware and connectors to the current `PB6=IR_TX` / `PB7=IR_RX` schematic nets |
+| 3 | Bench-test first-gen scan GPIO | Confirm corrected `OUT_BMUX_EN0..EN7 = PD8..PD15` selection with meter/scope |
 | 4 | Decode remaining legacy return codes | Fill PRINT_ACK/BUSY/DONE timing placeholders when captures are available |
 
 ## RS485 Implementation Estimate

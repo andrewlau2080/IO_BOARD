@@ -23,6 +23,13 @@
 ## MCU2 GPIO Mapping From `1thsch.pdf`
 
 The 4051 mapping below is taken from page 4 of `1thsch.pdf`.
+This section is only for the old first-generation `1TH_NEW` board. Do not copy
+the `OUT_BMUX_EN0..EN7 = PD9..PD15, PC6` mapping to the 2026-07-07 fixture
+board; that current fixture revision uses `PD8..PD15` for `OUT_BMUX_EN0..EN7`.
+
+For the current PCB layout work, do not use this `1thsch.pdf` mapping directly.
+The current fixture source of truth is `SCH_FIXTURE_2026-07-07.pdf` and
+`SCH_FIXTURE_2026-07-07_IO核对与PCB检查表.md`.
 
 | Net group | MCU pins |
 |---|---|

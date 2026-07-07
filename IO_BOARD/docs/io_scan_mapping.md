@@ -94,10 +94,11 @@ The MCU2 GPIO control nets in `1thsch.pdf` page 4 are:
 | `OUT_AMUX_A0/B1/C2` | `PC10` / `PC11` / `PC12` |
 | `OUT_AMUX_EN0..EN7` | `PD0`, `PD1`, `PD2`, `PD3`, `PD4`, `PD5`, `PD6`, `PD7` |
 | `OUT_BMUX_A0/B1/C2` | `PB10` / `PB11` / `PB12` |
-| `OUT_BMUX_EN0..EN7` | `PD9`, `PD10`, `PD11`, `PD12`, `PD13`, `PD14`, `PD15`, `PC6` |
+| `OUT_BMUX_EN0..EN7` | `PD8`, `PD9`, `PD10`, `PD11`, `PD12`, `PD13`, `PD14`, `PD15` |
 
-Do not use the older continuous `PD8..PD15` assumption for `OUT_BMUX_EN0..EN7`;
-`PD8` is not the `OUT_BMUX_EN0` net in this schematic.
+Use the latest `SCH_FIXTURE_2026-07-07.pdf`
+mapping for `OUT_BMUX_EN0..EN7`: `PD8..PD15`. Do not use the older
+`PD9..PD15, PC6` record for this board revision.
 
 ## Legacy DB50 Connector Mapping
 

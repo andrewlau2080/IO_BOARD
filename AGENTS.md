@@ -62,6 +62,17 @@ directory. Keep firmware shared in the `IO_BOARD` root (`src/`, `inc/`,
 `CMakeLists.txt`) and select connector behavior by board profile/mapping table
 instead of duplicating program directories.
 
+Local PDF handling convention:
+
+- "刘氏PDF" means to prioritize project-local PDF datasheets and schematics
+  under `IO_BOARD/docs/` or the relevant hardware directory as design inputs.
+  First try local PDF text extraction or page inspection; if local tooling cannot
+  extract enough information, cross-check against official vendor documentation
+  and record the derived design conclusion in project markdown/PPT files.
+  For WiFi module PCB work, reference
+  `IO_BOARD/docs/esp32-c3-wroom-02_datasheet_cn.pdf` and keep the extracted
+  connection/layout decisions in `IO_BOARD/docs/wifi_module_pcb_connection_plan.md`.
+
 Display/communication planning:
 
 - The old single-MCU DB50 board keeps a local LED seven-segment display. It uses

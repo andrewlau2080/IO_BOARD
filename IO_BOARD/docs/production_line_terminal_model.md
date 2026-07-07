@@ -71,8 +71,8 @@ Current printer polling transmitter settings:
 | Carrier half period | 12 us |
 | Estimated carrier | about 41.7 kHz |
 | Firmware output pin | `PB6` / `IR_TX` |
-| Envelope debug pin | `PH3` / `DEBUG_OUT`, high during packet and low during inter-packet space |
-| Bench verification | Confirmed normal on 2026-06-03 with the old `PA7=IR_TX` bench wiring; current 2026-07-05 schematic uses `PB6=IR_TX` |
+| Envelope debug pin | 07-07 schematic has no final PH3 debug pin assignment; use only if a new test point is explicitly added |
+| Bench verification | Confirmed normal on 2026-06-03 with the old `PA7=IR_TX` bench wiring; current 2026-07-07 schematic uses `PB6=IR_TX` |
 
 Current closed-loop tester response settings:
 
@@ -86,7 +86,7 @@ Current closed-loop tester response settings:
 | Carrier half period | 13 us |
 | Estimated carrier | about 38.5 kHz |
 | Firmware output pin | `PB6` / `IR_TX` |
-| Envelope debug pin | `PH3` / `DEBUG_OUT`, high during response packet |
+| Envelope debug pin | 07-07 schematic has no final PH3 debug pin assignment; use only if a new test point is explicitly added |
 | Loop behavior | Receive prefix, transmit once, guard 100 ms, wait again |
 
 When the learned IR frame is available, fill the placeholder like this:

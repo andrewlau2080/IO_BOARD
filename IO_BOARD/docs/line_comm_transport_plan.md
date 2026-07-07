@@ -28,7 +28,7 @@ Tester station 1-10
 | Scanner IO module | After PASS, sends a print request through `line_comm_transport_send_print_request()` |
 | Print module | Polls `line_comm_transport_poll_print_request()` and prints the current label when a request is received |
 | First backend | IR trigger using the existing learned `LINE_COMM_CODE_PRINT_REQUEST` waveform |
-| Future backend | Wireless UART / WiFi / Sub-GHz / LoRa / RS485 can be added under the same API |
+| Future backend | WiFi / Wireless UART / Sub-GHz / LoRa / RS485 can be added under the same API |
 
 The current IR trigger is a fixed waveform only. It means "print now" and does
 not yet carry station/model/result data. The print terminal therefore uses the
@@ -73,7 +73,11 @@ issues. Recommended order:
 | Wired RS485 | Most deterministic if slip ring/cable routing is practical |
 
 For future MAS/MES, prefer WiFi with a real packet protocol rather than only a
-transparent trigger. First practical packet can be ASCII or JSON-like:
+transparent trigger. The full workshop network, MQTT topic plan, device state
+machines, offline cache, and WiFi module boundary are tracked in
+`docs/wifi_mas_network_architecture.md`.
+
+First practical packet can be ASCII or JSON-like:
 
 ```text
 IOBRD,PRINT,ST=01,PASS=1,COUNT=123,MODEL=MODEL-A,CODE=A1B1-000001
