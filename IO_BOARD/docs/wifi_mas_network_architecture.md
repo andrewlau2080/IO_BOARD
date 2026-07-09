@@ -398,7 +398,7 @@ row_type,file_ver,line_id,station_id,device_uid,product_id,product_name,profile_
 | 模块 | 职责 |
 |---|---|
 | `io_scan` | 4051 扫描、学习、PASS/NG 判断 |
-| `first_gen_4051_scan` | 一代本机流程、LEDM 显示、按键、打印触发 |
+| `first_gen_4051_scan` | 一代本机流程、LEDM 或 LCDM 显示、按键、打印触发 |
 | `line_comm_transport` | 抽象 IR / WiFi / RS485 传输，不处理业务统计 |
 | `net_service` | WiFi 连接、本线打印主机会话、MAS 同步会话、重连、时间同步 |
 | `device_identity` | UID、短码、绑定信息、固件/硬件版本 |
@@ -544,7 +544,7 @@ BOOT
 
 | 场景 | 处理 |
 |---|---|
-| 测试机到打印主机断开 | 本地继续测试；事件写入测试机短缓存；LEDM 可显示 `OFFL` 提醒；恢复后先补给打印主机 |
+| 测试机到打印主机断开 | 本地继续测试；事件写入测试机短缓存；普通测试机 LEDM 或高档测试机 LCDM 可显示 `OFFL` 提醒；恢复后先补给打印主机 |
 | 打印主机到 MAS 断开 | 本线仍可打印；测试和打印记录进入打印主机本地缓存 |
 | MAS 服务器离线 | 打印主机保持重连；不丢测试结果；恢复后按 `event_id` 补传 |
 | 重复上报 | MAS 按 `device_uid + event_id` 去重 |

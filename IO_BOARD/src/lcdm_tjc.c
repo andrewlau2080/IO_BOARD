@@ -22,12 +22,12 @@
 #define LCDM_TJC_RX_PIN GPIO_PINS_5
 #endif
 
-#ifndef LCDM_TJC_RESET_PIN
-#define LCDM_TJC_RESET_PIN GPIO_PINS_4
-#endif
-
 #ifndef LCDM_TJC_USE_RESET_PIN
 #define LCDM_TJC_USE_RESET_PIN 0
+#endif
+
+#if LCDM_TJC_USE_RESET_PIN && !defined(LCDM_TJC_RESET_PIN)
+#error "LCDM_TJC_RESET_PIN must be assigned explicitly. PB4 is reserved for BUZZER_2K."
 #endif
 
 volatile uint32_t g_lcdm_tjc_tx_cmd_count;

@@ -22,6 +22,7 @@ typedef enum {
 void io_board_init(void);
 void io_debug_write(uint8_t level);
 void io_debug_toggle(void);
+void io_buzzer_write(uint8_t level);
 void io_mux_disable_all(void);
 void io_mux_select(io_mux_bank_t bank, uint8_t index);
 uint8_t io_button_read(io_button_t button);

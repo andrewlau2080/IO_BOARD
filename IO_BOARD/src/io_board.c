@@ -42,6 +42,7 @@ static const io_pin_t buttons[6] = {
 };
 
 static const io_pin_t print_trigger = PIN_B(8);
+static const io_pin_t buzzer_2k = PIN_B(4);
 static const io_pin_t debug_out = PIN_H(3);
 
 static void clock_enable(const io_pin_t *pin)
@@ -184,6 +185,11 @@ void io_debug_toggle(void)
   gpio_bits_toggle(debug_out.port, debug_out.pin);
 }
 
+void io_buzzer_write(uint8_t level)
+{
+  gpio_bits_write(buzzer_2k.port, buzzer_2k.pin, level ? TRUE : FALSE);
+}
+
 void io_board_init(void)
 {
   uint8_t i;
@@ -203,6 +209,7 @@ void io_board_init(void)
   }
   input_pullup_init(&print_trigger);
 
+  output_init(&buzzer_2k, FALSE);
   output_init(&debug_out, FALSE);
 
   io_mux_disable_all();

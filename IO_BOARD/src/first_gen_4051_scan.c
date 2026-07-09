@@ -8,7 +8,7 @@
 #include "line_comm_bridge.h"
 #include "line_comm_transport.h"
 #include "ir_remote.h"
-#include "tm1637_display.h"
+#include "first_gen_display.h"
 
 #ifndef IO_APP_MODE
 #define IO_APP_MODE 2
@@ -49,6 +49,11 @@
 #define FIRST_GEN_IR_PRINT_ENABLE     1U
 #define FIRST_GEN_IR_PRINT_TEST_ONLY  0U
 #define FIRST_GEN_TRIGGER_DIAG_ONLY   0U
+#define FIRST_GEN_BUZZER_PASS_ON_MS   1000U
+#define FIRST_GEN_BUZZER_PASS_OFF_MS  1000U
+#define FIRST_GEN_BUZZER_NG_ON_MS     500U
+#define FIRST_GEN_BUZZER_NG_GAP_MS    500U
+#define FIRST_GEN_BUZZER_NG_OFF_MS    1000U
 #define FIRST_GEN_PROBLEM_NONE        0U
 #define FIRST_GEN_PROBLEM_MISSING     1U
 #define FIRST_GEN_PROBLEM_SHORT       2U
@@ -91,7 +96,7 @@ volatile uint8_t g_first_gen_print_ready;
 volatile uint8_t g_first_gen_print_waiting_for_poll;
 volatile uint8_t g_first_gen_print_response_ready;
 volatile uint8_t g_first_gen_panel_mode;
-volatile uint8_t g_first_gen_last_panel_key = TM1637_KEY_NONE;
+volatile uint8_t g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 volatile uint8_t g_first_gen_pass_hold_active;
 volatile uint8_t g_first_gen_print_done;
 volatile uint8_t g_first_gen_print_trigger_level;
@@ -131,6 +136,9 @@ static uint8_t pass_print_started;
 static uint8_t printed_hold_active;
 static uint16_t printed_hold_out = 1U;
 static uint16_t printed_hold_in = 1U;
+static uint8_t buzzer_pattern;
+static uint8_t buzzer_step;
+static uint16_t buzzer_step_remaining_ms;
 
 #define FIRST_GEN_DISPLAY_UNKNOWN 0U
 #define FIRST_GEN_DISPLAY_PASS    1U
@@ -138,6 +146,9 @@ static uint16_t printed_hold_in = 1U;
 #define FIRST_GEN_DISPLAY_SCAN    3U
 #define FIRST_GEN_NG_DISPLAY_PERIOD_SCANS 24U
 #define FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS 12U
+#define FIRST_GEN_BUZZER_PATTERN_NONE 0U
+#define FIRST_GEN_BUZZER_PATTERN_PASS 1U
+#define FIRST_GEN_BUZZER_PATTERN_NG   2U
 
 uint8_t first_gen_4051_learn_current_harness(void);
 static uint8_t first_gen_4051_learn_preview(void);
@@ -155,6 +166,85 @@ static uint8_t expected_harness_find_next_problem(uint16_t start_out,
                                                   uint16_t *problem_in);
 static uint8_t panel_printed_hold_service(void);
 static void first_gen_ir_sync_print_test_service(void);
+
+static void buzzer_stop(void)
+{
+  buzzer_pattern = FIRST_GEN_BUZZER_PATTERN_NONE;
+  buzzer_step = 0U;
+  buzzer_step_remaining_ms = 0U;
+  io_buzzer_write(0U);
+}
+
+static void buzzer_start(uint8_t pattern)
+{
+  buzzer_pattern = pattern;
+  buzzer_step = 0U;
+  buzzer_step_remaining_ms = 0U;
+}
+
+static void buzzer_set_step(uint8_t level, uint16_t duration_ms)
+{
+  io_buzzer_write(level);
+  buzzer_step_remaining_ms = duration_ms;
+}
+
+static void buzzer_advance(void)
+{
+  if(buzzer_pattern == FIRST_GEN_BUZZER_PATTERN_PASS) {
+    if(buzzer_step == 0U) {
+      buzzer_step = 1U;
+      buzzer_set_step(1U, FIRST_GEN_BUZZER_PASS_ON_MS);
+    } else {
+      buzzer_step = 0U;
+      buzzer_set_step(0U, FIRST_GEN_BUZZER_PASS_OFF_MS);
+    }
+    return;
+  }
+
+  if(buzzer_pattern == FIRST_GEN_BUZZER_PATTERN_NG) {
+    switch(buzzer_step) {
+    case 0U:
+      buzzer_step = 1U;
+      buzzer_set_step(1U, FIRST_GEN_BUZZER_NG_ON_MS);
+      break;
+    case 1U:
+      buzzer_step = 2U;
+      buzzer_set_step(0U, FIRST_GEN_BUZZER_NG_GAP_MS);
+      break;
+    case 2U:
+      buzzer_step = 3U;
+      buzzer_set_step(1U, FIRST_GEN_BUZZER_NG_ON_MS);
+      break;
+    default:
+      buzzer_step = 0U;
+      buzzer_set_step(0U, FIRST_GEN_BUZZER_NG_OFF_MS);
+      break;
+    }
+    return;
+  }
+
+  buzzer_stop();
+}
+
+static void buzzer_service(uint16_t elapsed_ms)
+{
+  if(buzzer_pattern == FIRST_GEN_BUZZER_PATTERN_NONE) {
+    io_buzzer_write(0U);
+    return;
+  }
+
+  if(buzzer_step_remaining_ms == 0U) {
+    buzzer_advance();
+    return;
+  }
+
+  if(elapsed_ms >= buzzer_step_remaining_ms) {
+    buzzer_step_remaining_ms = 0U;
+    buzzer_advance();
+  } else {
+    buzzer_step_remaining_ms = (uint16_t)(buzzer_step_remaining_ms - elapsed_ms);
+  }
+}
 
 static void panel_reset_scan_state(void)
 {
@@ -174,6 +264,7 @@ static void panel_reset_scan_state(void)
   printed_hold_active = 0U;
   printed_hold_out = 1U;
   printed_hold_in = 1U;
+  buzzer_stop();
 }
 
 static void panel_reset_print_state(void)
@@ -356,7 +447,7 @@ static uint8_t first_set_bit_1_based(uint32_t value)
 
 static void display_pair(uint16_t left, uint16_t right)
 {
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
 
   text[0] = (char)('0' + ((left / 100U) % 10U));
   text[1] = (char)('0' + ((left / 10U) % 10U));
@@ -364,7 +455,7 @@ static void display_pair(uint16_t left, uint16_t right)
   text[3] = (char)('0' + ((right / 100U) % 10U));
   text[4] = (char)('0' + ((right / 10U) % 10U));
   text[5] = (char)('0' + (right % 10U));
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static uint16_t count_nonzero_rows(const uint32_t matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS])
@@ -409,7 +500,7 @@ static uint16_t count_nonzero_inputs(const uint32_t matrix[FIRST_GEN_4051_POINT_
 
 static void display_panel_test_pair(uint16_t point)
 {
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
 
   text[0] = 'A';
   text[1] = (char)('0' + ((point / 10U) % 10U));
@@ -417,21 +508,21 @@ static void display_panel_test_pair(uint16_t point)
   text[3] = 'b';
   text[4] = (char)('0' + ((point / 10U) % 10U));
   text[5] = (char)('0' + (point % 10U));
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_pass(void)
 {
-  char text[TM1637_DIGITS] = {'P', 'A', 'S', 'S', ' ', ' '};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'P', 'A', 'S', 'S', ' ', ' '};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_ng(void)
 {
-  char text[TM1637_DIGITS] = {'N', 'G', ' ', ' ', ' ', ' '};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'N', 'G', ' ', ' ', ' ', ' '};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void panel_display_pass_once(void)
@@ -441,6 +532,7 @@ static void panel_display_pass_once(void)
     panel_ng_in = 0U;
     display_pass();
     panel_display_state = FIRST_GEN_DISPLAY_PASS;
+    buzzer_start(FIRST_GEN_BUZZER_PATTERN_PASS);
   }
 }
 
@@ -451,6 +543,7 @@ static void panel_display_ng_once(void)
     panel_display_state = FIRST_GEN_DISPLAY_NG;
     panel_ng_tick = 0U;
     panel_ng_phase = 0U;
+    buzzer_start(FIRST_GEN_BUZZER_PATTERN_NG);
   }
 }
 
@@ -476,12 +569,12 @@ static void panel_display_ng_service(void)
 
 static void panel_display_scan_step(void)
 {
-  uint8_t segments[TM1637_DIGITS] = {0U, 0U, 0U, 0U, 0U, 0U};
+  uint8_t segments[FIRST_GEN_DISPLAY_DIGITS] = {0U, 0U, 0U, 0U, 0U, 0U};
   uint8_t pos = (uint8_t)(panel_scan_phase * 2U);
 
   segments[pos] = 0x40U;
   segments[pos + 1U] = 0x40U;
-  tm1637_display_write_raw6(segments);
+  first_gen_display_write_raw6(segments);
   panel_display_state = FIRST_GEN_DISPLAY_SCAN;
 }
 
@@ -507,48 +600,62 @@ static void panel_display_scan_service(void)
 
 static void display_self_pass(void)
 {
-  char text[TM1637_DIGITS] = {'S', 'E', 'L', 'F', '-', 'O'};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'S', 'E', 'L', 'F', '-', 'O'};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_auto_idle(void)
 {
-  char text[TM1637_DIGITS] = {'A', 'U', 'T', 'O', '-', 'T'};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'A', 'U', 'T', 'O', '-', 'T'};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
+}
+
+static uint8_t display_wait_for_any_key_ms(uint16_t duration_ms)
+{
+  uint16_t elapsed_ms = 0U;
+
+  while(elapsed_ms < duration_ms) {
+    if(first_gen_display_key_read_raw() != FIRST_GEN_KEY_NONE) {
+      while(first_gen_display_key_read_raw() != FIRST_GEN_KEY_NONE) {
+        delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+      }
+      g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
+      return 1U;
+    }
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+    elapsed_ms = (uint16_t)(elapsed_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
+  }
+
+  return 0U;
 }
 
 static void display_power_on_scroll(void)
 {
   static const char message[] = "   WIRE TESTER   ";
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
   uint8_t offset;
   uint8_t i;
 
   while(1) {
-    for(offset = 0U; offset <= (uint8_t)(sizeof(message) - 1U - TM1637_DIGITS); offset++) {
-      if(tm1637_key_read_raw() != TM1637_KEY_NONE) {
-        while(tm1637_key_read_raw() != TM1637_KEY_NONE) {
-          delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
-        }
-        g_first_gen_last_panel_key = TM1637_KEY_NONE;
-        return;
-      }
-      for(i = 0U; i < TM1637_DIGITS; i++) {
+    for(offset = 0U; offset <= (uint8_t)(sizeof(message) - 1U - FIRST_GEN_DISPLAY_DIGITS); offset++) {
+      for(i = 0U; i < FIRST_GEN_DISPLAY_DIGITS; i++) {
         text[i] = message[offset + i];
       }
-      tm1637_display_write_text6(text);
-      delay_ms(480U);
+      first_gen_display_write_text6(text);
+      if(display_wait_for_any_key_ms(480U) != 0U) {
+        return;
+      }
     }
   }
 }
 
 static void display_learn(void)
 {
-  char text[TM1637_DIGITS] = {'L', 'E', 'A', 'r', 'n', ' '};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'L', 'E', 'A', 'r', 'n', ' '};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_current_idle_state(void)
@@ -562,14 +669,14 @@ static void display_current_idle_state(void)
 
 static void display_saved(void)
 {
-  char text[TM1637_DIGITS] = {'S', 'A', 'U', 'E', 'd', ' '};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'S', 'A', 'U', 'E', 'd', ' '};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_learn_total(uint32_t total)
 {
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
 
   if(total > 99UL) {
     total = 99UL;
@@ -581,7 +688,7 @@ static void display_learn_total(uint32_t total)
   text[3] = '-';
   text[4] = (char)('0' + ((total / 10UL) % 10UL));
   text[5] = (char)('0' + (total % 10UL));
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_learn_total_flash_twice(uint32_t total)
@@ -591,7 +698,7 @@ static void display_learn_total_flash_twice(uint32_t total)
   for(i = 0U; i < 2U; i++) {
     display_learn_total(total);
     delay_ms(100U);
-    tm1637_display_clear();
+    first_gen_display_clear();
     delay_ms(100U);
   }
 }
@@ -611,9 +718,9 @@ static uint8_t panel_wait_learn_confirm(void)
     }
 
     for(uint16_t elapsed_ms = 0U; elapsed_ms < 500U; elapsed_ms += FIRST_GEN_PANEL_KEY_POLL_MS) {
-      key = tm1637_key_read_raw();
-      if(key == TM1637_KEY_NONE) {
-        g_first_gen_last_panel_key = TM1637_KEY_NONE;
+      key = first_gen_display_key_read_raw();
+      if(key == FIRST_GEN_KEY_NONE) {
+        g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
         delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
         continue;
       }
@@ -623,16 +730,16 @@ static uint8_t panel_wait_learn_confirm(void)
       }
 
       g_first_gen_last_panel_key = key;
-      if(key == TM1637_KEY_MINUS) {
+      if(key == FIRST_GEN_KEY_MINUS) {
         panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
         return first_gen_4051_confirm_learn_save();
       }
-      if(key == TM1637_KEY_PLUS) {
+      if(key == FIRST_GEN_KEY_PLUS) {
         panel_reset_to_zero();
         panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
         return 0U;
       }
-      if(key == TM1637_KEY_CLEAR) {
+      if(key == FIRST_GEN_KEY_CLEAR) {
         panel_start_auto_test();
         panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
         return 0U;
@@ -648,7 +755,7 @@ static void panel_wait_all_keys_released(uint16_t stable_ms)
   uint16_t released_ms = 0U;
 
   while(released_ms < stable_ms) {
-    if(tm1637_key_read_raw() == TM1637_KEY_NONE) {
+    if(first_gen_display_key_read_raw() == FIRST_GEN_KEY_NONE) {
       released_ms = (uint16_t)(released_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
     } else {
       released_ms = 0U;
@@ -656,26 +763,26 @@ static void panel_wait_all_keys_released(uint16_t stable_ms)
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
   }
 
-  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 }
 
 static void display_print_ready(void)
 {
-  char text[TM1637_DIGITS] = {'P', 'r', 'n', 't', ' ', ' '};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'P', 'r', 'n', 't', ' ', ' '};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_print_done(void)
 {
-  char text[TM1637_DIGITS] = {'P', 'r', 'i', 'n', 't', 'd'};
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'P', 'r', 'i', 'n', 't', 'd'};
 
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_print_trigger_level(uint8_t level)
 {
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
 
   if(level != 0U) {
     text[0] = 'r';
@@ -692,12 +799,12 @@ static void display_print_trigger_level(uint8_t level)
     text[4] = '0';
     text[5] = ' ';
   }
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void display_error_code(uint16_t point)
 {
-  char text[TM1637_DIGITS];
+  char text[FIRST_GEN_DISPLAY_DIGITS];
 
   text[0] = 'E';
   text[1] = 'r';
@@ -705,7 +812,7 @@ static void display_error_code(uint16_t point)
   text[3] = (char)('0' + ((point / 100U) % 10U));
   text[4] = (char)('0' + ((point / 10U) % 10U));
   text[5] = (char)('0' + (point % 10U));
-  tm1637_display_write_text6(text);
+  first_gen_display_write_text6(text);
 }
 
 static void panel_reset_to_zero(void)
@@ -716,7 +823,7 @@ static void panel_reset_to_zero(void)
   g_first_gen_learn_pending = 0U;
   g_first_gen_last_pass = 0U;
   g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_RESET;
-  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
   panel_reset_scan_state();
   panel_reset_print_state();
   if(g_first_gen_recipe_valid != 0U) {
@@ -779,7 +886,7 @@ static void panel_handle_k1_press(void)
   uint16_t elapsed_ms = 0U;
   uint8_t learned = 0U;
 
-  while(tm1637_key_read_raw() == TM1637_KEY_SET) {
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
     if(elapsed_ms >= FIRST_GEN_PANEL_K1_LONG_MS) {
       panel_auto_enabled = 0U;
       g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
@@ -791,11 +898,11 @@ static void panel_handle_k1_press(void)
     elapsed_ms = (uint16_t)(elapsed_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
   }
 
-  while(tm1637_key_read_raw() == TM1637_KEY_SET) {
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
   }
   delay_ms(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
-  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 
   if(learned != 0U) {
     return;
@@ -808,10 +915,10 @@ static void panel_handle_k1_press(void)
 
 static uint8_t panel_handle_key(void)
 {
-  uint8_t key = tm1637_key_read_raw();
+  uint8_t key = first_gen_display_key_read_raw();
 
-  if(key == TM1637_KEY_NONE) {
-    g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  if(key == FIRST_GEN_KEY_NONE) {
+    g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
     return 0U;
   }
 
@@ -822,19 +929,19 @@ static uint8_t panel_handle_key(void)
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
   switch(key) {
-  case TM1637_KEY_SET:
+  case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
     return 1U;
 
-  case TM1637_KEY_CLEAR:
+  case FIRST_GEN_KEY_CLEAR:
     panel_start_auto_test();
     return 1U;
 
-  case TM1637_KEY_PLUS:
+  case FIRST_GEN_KEY_PLUS:
     panel_reset_to_zero();
     return 1U;
 
-  case TM1637_KEY_MINUS:
+  case FIRST_GEN_KEY_MINUS:
     (void)first_gen_4051_confirm_learn_save();
     return 1U;
 
@@ -845,29 +952,29 @@ static uint8_t panel_handle_key(void)
 
 static uint8_t panel_priority_key_service(void)
 {
-  uint8_t key = tm1637_key_read_raw();
+  uint8_t key = first_gen_display_key_read_raw();
 
-  if(key == TM1637_KEY_NONE) {
-    g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  if(key == FIRST_GEN_KEY_NONE) {
+    g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
     return 0U;
   }
 
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
   switch(key) {
-  case TM1637_KEY_SET:
+  case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
     return 1U;
 
-  case TM1637_KEY_CLEAR:
+  case FIRST_GEN_KEY_CLEAR:
     panel_start_auto_test();
     return 1U;
 
-  case TM1637_KEY_PLUS:
+  case FIRST_GEN_KEY_PLUS:
     panel_reset_to_zero();
     return 1U;
 
-  case TM1637_KEY_MINUS:
+  case FIRST_GEN_KEY_MINUS:
     (void)first_gen_4051_confirm_learn_save();
     return 1U;
 
@@ -885,6 +992,7 @@ static uint8_t panel_priority_delay_ms(uint32_t duration_ms)
       return 1U;
     }
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+    buzzer_service(FIRST_GEN_PANEL_KEY_POLL_MS);
     elapsed_ms += FIRST_GEN_PANEL_KEY_POLL_MS;
   }
 
@@ -900,6 +1008,7 @@ static uint8_t panel_problem_live_delay_ms(uint32_t duration_ms, uint16_t proble
       return PANEL_PROBLEM_INTERRUPTED;
     }
     delay_ms(FIRST_GEN_PROBLEM_RECHECK_MS);
+    buzzer_service(FIRST_GEN_PROBLEM_RECHECK_MS);
     elapsed_ms += FIRST_GEN_PROBLEM_RECHECK_MS;
     if(scan_problem_row_live(problem_out) != 0U) {
       return PANEL_PROBLEM_RESTORED;
@@ -919,7 +1028,7 @@ static uint8_t panel_show_problem_blink_once(uint16_t problem_out, uint16_t prob
     return status;
   }
 
-  tm1637_display_clear();
+  first_gen_display_clear();
   return panel_problem_live_delay_ms(FIRST_GEN_SHORT_BLINK_MS, problem_out);
 }
 
@@ -1312,13 +1421,13 @@ static void first_gen_ir_sync_print_test_service(void)
 
   display_print_ready();
 
-  key = tm1637_key_read_raw();
-  if(key == TM1637_KEY_NONE) {
-    g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  key = first_gen_display_key_read_raw();
+  if(key == FIRST_GEN_KEY_NONE) {
+    g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
     return;
   }
 
-  if(key != TM1637_KEY_MINUS || key == g_first_gen_last_panel_key) {
+  if(key != FIRST_GEN_KEY_MINUS || key == g_first_gen_last_panel_key) {
     g_first_gen_last_panel_key = key;
     return;
   }
@@ -1330,10 +1439,10 @@ static void first_gen_ir_sync_print_test_service(void)
   }
 
   display_print_done();
-  while(tm1637_key_read_raw() == TM1637_KEY_MINUS) {
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_MINUS) {
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
   }
-  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 }
 
 static uint8_t first_gen_ir_send_logic_tx_once(void)
@@ -1374,6 +1483,9 @@ static void panel_hold_pass_until_restart(void)
   print_retry_scan_counter = FIRST_GEN_PRINT_RETRY_SCAN_PERIODS;
   pass_print_started = 1U;
   panel_display_pass_once();
+  if(panel_priority_delay_ms(FIRST_GEN_PASS_HOLD_MS) == 0U) {
+    display_print_ready();
+  }
 }
 
 static uint8_t panel_service_print_event(void)
@@ -1413,7 +1525,7 @@ static uint8_t panel_service_print_event(void)
   if(print_event_sent == 0U) {
     if(first_gen_ir_send_logic_tx_once() != 0U) {
       print_event_sent = 1U;
-      panel_display_pass_once();
+      display_print_ready();
     } else {
       g_first_gen_print_poll_reject_counter++;
       print_event_pending = 0U;
@@ -1501,7 +1613,7 @@ static uint8_t panel_printed_hold_service(void)
 void first_gen_4051_scan_init(void)
 {
   scan_signal_gpio_init();
-  tm1637_display_init();
+  first_gen_display_init();
   first_gen_print_link_init();
   io_scan_init(IO_SCAN_PROFILE_FIRST_GEN_1TH);
   io_scan_clear_result(&scan_result);
@@ -1512,7 +1624,7 @@ void first_gen_4051_scan_init(void)
   g_first_gen_pass_hold_active = 0U;
   g_first_gen_print_done = 0U;
   g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
-  g_first_gen_last_panel_key = TM1637_KEY_NONE;
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
   panel_auto_enabled = 0U;
   panel_last_test_mode = 0U;
   panel_waiting_for_reconnect = 0U;
@@ -1651,6 +1763,8 @@ uint8_t first_gen_4051_learn_current_harness(void)
 void first_gen_4051_scan_service(void)
 {
   uint8_t pass;
+
+  buzzer_service(1U);
 
 #if FIRST_GEN_TRIGGER_DIAG_ONLY
   g_first_gen_print_trigger_level = io_print_trigger_level_read();

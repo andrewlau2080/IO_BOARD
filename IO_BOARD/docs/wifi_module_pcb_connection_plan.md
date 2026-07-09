@@ -25,7 +25,7 @@ ESP32-C3-WROOM-02/02U 模块上的 4 MB Flash 不作为打印主机的生产记�
 
 ### 新版 AT32 与 WiFi 连接规划表
 
-当前推荐按“最小可靠连接”画 PCB：AT32 只占用 WiFi UART 的 TX/RX 两根线；ESP32 的 `EN`、`IO9/BOOT` 用上拉、按键/测试点处理，不强制占用 AT32 IO。`PB13/PB14/PB15/PA6` 已用于打印主机 SPI NOR Flash，不能再作为 WiFi 备用脚。`PA7/PA8/PC13/PA15/PB4` 只作为后续低速控制备用脚池记录，不直接改变第一版 WiFi 主连接。
+当前推荐按“最小可靠连接”画 PCB：AT32 只占用 WiFi UART 的 TX/RX 两根线；ESP32 的 `EN`、`IO9/BOOT` 用上拉、按键/测试点处理，不强制占用 AT32 IO。`PB13/PB14/PB15/PA6` 已用于打印主机 SPI NOR Flash，不能再作为 WiFi 备用脚。2026-07-09 起 `PB4` 已改为 `BUZZER_2K`，不再作为 WiFi 或低速控制备用脚；`PA7/PA8/PC13/PA15` 只作为后续低速控制备用脚池记录，不直接改变第一版 WiFi 主连接。
 
 | 序号 | WiFi 功能 | AT32F455VET7 引脚 | LQFP100 脚号 | ESP32-C3-WROOM-02/02U 脚位 | 连接方式 | 当前结论 |
 |---:|---|---|---:|---|---|---|
@@ -46,7 +46,7 @@ ESP32-C3-WROOM-02/02U 模块上的 4 MB Flash 不作为打印主机的生产记�
 | `PA8` | 67 | 07-07-N 为 `backup02` | 可备用 |
 | `PC13` | 7 | 07-07-N 为 `backup03` | 只建议低速控制，注意 RTC/TAMPER 区域 |
 | `PA15` | 77 | 07-07-N 为 `backup04` | 谨慎备用；涉及 JTAG 复用 |
-| `PB4` | 90 | 07-07-N 为 `backup05` | 可备用 |
+| `PB4` | 90 | 2026-07-09 改为 `BUZZER_2K` | 不再作为备用 |
 | `PB9` | 96 | 07-07-N 已为 `WIFI_RX` | 当前用于 WiFi RX，不再当普通备用 |
 
 ### 当前核查状态
@@ -60,9 +60,9 @@ ESP32-C3-WROOM-02/02U 模块上的 4 MB Flash 不作为打印主机的生产记�
 | `3V3_WIFI` | 3.3 V 电源 | Pin 1 `3V3` | 电源 | WiFi 分支供电能力建议 >= 500 mA |
 | `GND` | 系统地 | Pin 9、Pin 19-25 `GND` | 电源 | 19-25 为内部 GND 焊盘，按规格书 land pattern 接地 |
 
-本轮不把 `PB13/PB14/PB15/PA6` 写成 WiFi 脚，因为它们已规划给 SPI NOR Flash。`PA7/PA15` 仍只作为谨慎备用脚池。`WIFI_EN/WIFI_BOOT` 直接上拉是可行的，第一版不强制占用 MCU。
+本轮不把 `PB13/PB14/PB15/PA6` 写成 WiFi 脚，因为它们已规划给 SPI NOR Flash。`PB4` 已规划给 2 kHz 蜂鸣器，不再作为备用。`PA7/PA15` 仍只作为谨慎备用脚池。`WIFI_EN/WIFI_BOOT` 直接上拉是可行的，第一版不强制占用 MCU。
 
-不使用这些脚连接 WiFi：`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，`PA2` 已用于 `ADC2_IN2`，`PA6/PB13/PB14/PB15` 已用于 SPI NOR Flash，`PD8` 保留给 `OUT_BMUX_EN0`，`PH2/PH3` 不写入 LQFP100 最终规格，`PA9/PA10` 留给一个共用角色通讯接插件，测试机接 LEDM、打印主机接打印机通讯，`PB3/PB5` 留给 LCDM，`PB6/PB7` 留给 IR，`PB8` 留给 `HALL_SW`，`PC4..PC9` 留给按键。
+不使用这些脚连接 WiFi：`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，`PA2` 已用于 `ADC2_IN2`，`PA6/PB13/PB14/PB15` 已用于 SPI NOR Flash，`PB4=BUZZER_2K`，`PD8` 保留给 `OUT_BMUX_EN0`，`PH2/PH3` 不写入 LQFP100 最终规格，`PA9/PA10` 留给一个共用角色通讯接插件，测试机接 LEDM 或打印主机接打印机通讯，`PB3/PB5` 留给 LCDM，`PB6/PB7` 留给 IR，`PB8` 留给 `HALL_SW`，`PC4..PC9` 留给按键。
 
 ### 本轮禁止/待核定脚位
 

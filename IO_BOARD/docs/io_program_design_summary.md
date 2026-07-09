@@ -7,7 +7,7 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 
 | Module | Files | Responsibility |
 |---|---|---|
-| Board IO | `inc/io_board.h`, `src/io_board.c` | MCU pin init and low-level mux bank select |
+| Board IO | `inc/io_board.h`, `src/io_board.c` | MCU pin init, low-level mux bank select, PB4 buzzer control |
 | Scan core | `inc/io_scan.h`, `src/io_scan.c` | Logical OUT/IN position validation, pair selection, full matrix scan |
 | Pi protocol | `inc/rpi_protocol.h`, `src/rpi_protocol.c` | Binary frame encode/decode, CRC16, command IDs |
 | Pi RS485 transport | `inc/rpi_rs485.h`, `src/rpi_rs485.c` | USART1 PA9/PA10, 115200 8N1 polling RX and blocking TX |
@@ -18,13 +18,34 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 
 | Product path | Host/control model | IO mux control | Display/terminal role | Firmware impact |
 |---|---|---|---|---|
-| First-gen replacement | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines per `1thsch.pdf`; no 74LS164 in this version | Local display/print wiring still needs final schematic alignment; `1thsch.pdf` shows LCDM/USART headers, not the earlier PA9/PA10 TM1637 and PA6/PA7 IR wiring | Uses `FIRST_GEN_4051_LOCAL`, DAC excitation, ADC sense, self-learned Flash matrix, and a separate 48+48 A/B scan profile |
+| Basic tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | LEDM/TM1637 on PA9/PA10 shared role connector; PB4 buzzer for PASS/NG prompt | Uses `FIRST_GEN_4051_LOCAL`, learned Flash matrix, and local PASS/NG indication |
+| LCDM tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | TJC LCDM on PB3/PB5; PB4 buzzer for PASS/NG prompt | Same test core as basic tester, different display page set |
+| Print host | Line edge controller | No local scan required except diagnostics | TJC LCDM on PB3/PB5; PA9/PA10 used as printer USART/adapter; PB4 buzzer may be used for alarms | Manages binding, print queue, local cache, WiFi/MAS sync |
 | Second-gen Raspberry Pi board | Raspberry Pi sends commands over RS485 | Existing direct GPIO 4051 mux control remains the default | Raspberry Pi drives LCD/screen and high-level UI | Needs RS485 transport and command dispatcher; AT32 acts as scan/IO slave |
 
 The second-gen product must not be treated as an autonomous scanner. The AT32
 waits for Raspberry Pi RS485 frames, executes requested scan operations, and
 returns results. Full self-test or automatic test sequencing belongs on the
 Raspberry Pi side unless a fallback standalone mode is explicitly selected.
+
+## Device Role Configuration
+
+The unified firmware must not decide print host versus tester only by probing
+LCDM. High-end testers and print hosts can both have a TJC LCDM on PB3/PB5.
+The role is a stored device configuration, written by factory tooling,
+DEBUG_TTL, LCDM maintenance page, WiFi maintenance command, or line pairing.
+
+| Stored role | Meaning | Display | PA9/PA10 use |
+|---|---|---|---|
+| `TESTER_BASIC` | Standard tester station | LEDM/TM1637 | LEDM GPIO/UART only |
+| `TESTER_LCDM` | High-end tester station | TJC LCDM | Not used for printing; may remain idle or reserved |
+| `PRINT_HOST` | Line print master / edge controller | TJC LCDM | Printer USART/adapter |
+| `UNCONFIGURED` | New or invalid device config | Maintenance only | Safe idle |
+
+Required stored fields: `device_role`, `display_type`, `device_uid`,
+`line_id`, `station_id`, config revision, and CRC. If the config is missing or
+CRC fails, firmware enters unconfigured safe mode: no automatic scan and no
+printer command output.
 
 ## Scan Data Model
 
