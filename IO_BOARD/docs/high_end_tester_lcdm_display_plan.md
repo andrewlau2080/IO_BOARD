@@ -88,5 +88,5 @@ TJC 按钮建议打开按下和松开事件。固件收到按下事件时保持�
 ## 当前限制
 
 - 第一版 LCDM 后端还只是 LEDM 兼容显示，不做二代机那种完整 128 点网格页。
-- `TESTER_LCDM` 和 `PRINT_HOST` 都使用 `PB3/PB5` LCDM 电气接口，角色仍由 Flash 配置决定，不能靠 LCDM 是否存在判定。
+- `TESTER_LCDM` 和 `PRINT_HOST` 都使用 `PA9/PA10` LCDM 显示接口，角色仍由 Flash 配置决定，不能靠 LCDM 是否存在判定。
 - LCDM 页面内容后续可以扩展，但不要改变 K1-K4 的基础语义，否则普通 LEDM 和高档 LCDM 两套操作会分裂。

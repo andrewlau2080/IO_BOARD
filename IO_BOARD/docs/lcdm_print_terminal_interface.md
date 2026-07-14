@@ -16,14 +16,14 @@
 | 项目 | 规格 |
 |---|---|
 | LCDM 品牌/协议 | TJC 陶晶驰串口 HMI，兼容 Nextion 风格 ASCII 指令 + `FF FF FF` 结束符 |
-| LCDM 通讯 | GPIO 软件 UART：`PB3=MCU_TX` 接 LCDM RX，`PB5=MCU_RX` 接 LCDM TX；2026-07-09 规划中 `PB4=BUZZER_2K`，不写入 TJC LCDM 当前规格 |
-| LCDM 串口参数 | 默认 9600 8N1；实机稳定后可评估 38400 |
-| 角色判定 | 上电先读取 Flash 配置中的 `device_role/display_type`；LCDM 有响应只能说明屏幕在线，不能直接判定为打印主机 |
-| 打印机通讯 | 打印主机角色使用 `USART1`，`PA9=TX`，`PA10=RX`，默认 9600 8N1；测试机角色同一接插件接 LEDM |
+| LCDM 通讯 | 硬件 USART1：`PA9=MCU_TX` 接 LCDM RX，`PA10=MCU_RX` 接 LCDM TX；PA9/PA10 是 LEDM/LCDM 显示共用口 |
+| LCDM 串口参数 | 默认 115200 8N1；上电先按 LCDM 协议多次探测，有回应则锁定 LCDM 模式 |
+| 角色判定 | LCDM 有响应只代表显示类型是 LCDM；测试机/打印主机角色仍由 Flash 配置、SPI NOR、打印机接口检测或维护页选择决定 |
+| 打印机通讯 | 打印主机角色使用独立打印口：`PB5=MCU_TX` 接打印机/转换器 RX，`PB3=MCU_RX` 接打印机/转换器 TX，默认 9600 8N1 |
 | 禁用脚 | `PA2` 已用于 `ADC2_IN2` 扫描输入，不能接 LCDM；`PH2` 不写入 LQFP100 最终规格 |
 | 电平 | AT32 侧为 3.3V TTL；LCDM/打印机转换模块若为 5V TTL，必须加电平转换或确认 3.3V 兼容 |
 
-说明：高档测试机和打印主机都可能使用同一 `PB3/PB5` LCDM 电气接口，二者通过 Flash 中的 `device_role` 区分。后续高档测试机 LCDM 页面内容另行规格化，不能复用“有 LCDM 就是打印主机”的旧规则。
+说明：普通测试机和高档测试机同一时间只装 LEDM 或 LCDM 其中一种。高档测试机和打印主机都可能使用 `PA9/PA10` LCDM 显示接口，二者通过 Flash 中的 `device_role` 区分，不能复用“有 LCDM 就是打印主机”的旧规则。LCDM 负责输入标签字段，AT32 保存并生成 ZPL/TSPL/ESC/POS，再从 `PB5/PB3` 打印口发送给打印机。
 
 ## 控件命名
 

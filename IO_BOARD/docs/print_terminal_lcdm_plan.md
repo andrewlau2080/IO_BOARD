@@ -18,17 +18,17 @@
 
 | 步骤 | 动作 | 结果 |
 |---:|---|---|
-| 1 | 上电后 MCU 做基础时钟、GPIO 安全态初始化 | `PB4` 蜂鸣器默认低电平关闭，`PA9/PA10` 暂不发送打印命令 |
+| 1 | 上电后 MCU 做基础时钟、GPIO 安全态初始化 | `PB4` 蜂鸣器默认低电平关闭，`PB5/PB3` 暂不发送打印命令 |
 | 2 | 读取本机 Flash 配置 | 取得 `device_role`、`display_type`、CRC 和版本号 |
 | 3 | `TESTER_BASIC` | 进入测试机端，显示使用 LEDM/TM1637，`PA9/PA10` 按 LEDM 使用 |
-| 4 | `TESTER_LCDM` | 进入测试机端，显示使用 TJC LCDM，`PB3/PB5` 按 LCDM 使用 |
+| 4 | `TESTER_LCDM` | 进入测试机端，显示使用 TJC LCDM，`PA9/PA10` 按 LCDM USART1 使用 |
 | 5 | `PRINT_HOST` | 进入打印主机端，初始化 LCDM、打印通讯、WiFi/MAS、本地缓存 |
 | 6 | 未配置或 CRC 错误 | 进入未配置安全模式，不启动测试、不发送打印命令 |
 | 7 | 角色锁定后 | 本次运行不再自动切换；异常只按当前角色报错 |
 
 LEDM/LCDM 探测只用于确认显示外设是否在线，不作为角色唯一依据。测试机模式不能发送任何可能被打印机执行的 ZPL、TSPL、ESC/POS 或其它打印内容；只有 `PRINT_HOST` 才允许启用打印机通讯。
 
-如果 LEDM 使用 TM1637，探测方式是 TM1637 ACK 或读键返回；如果 LEDM 使用串口 LED 模块，探测方式是读取 ID/版本/握手返回。LCDM 高档测试机和打印主机使用同一 `PB3/PB5` 电气接口，界面内容后续分开定义。
+上电先按 LCDM 协议探测 `PA9/PA10`。若 LCDM 有回应则锁定 LCDM 模式；若多次无回应则切换为 LEDM/TM1637 模式。LCDM 高档测试机和打印主机使用同一 `PA9/PA10` 显示接口，界面内容后续分开定义。
 
 ## LCDM 方向
 
@@ -94,16 +94,18 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 
 ## 接线与 IO 规格
 
-打印端 LCDM 使用 TJC/陶晶驰 UART 协议，但不强制占用硬件 USART。按 `SCH_FIXTURE_2026-07-07-N.pdf`，当前 TJC LCDM 只使用 `PB3/PB5` 两线软件串口；`PA9/PA10` 只走到一个共用通讯接插件，测试机角色接 LEDM，打印主机角色接打印机串口/RS485 转换器。这样避免 LCDM 占用打印通讯口，也避免误用 `PA2` 或封装未确认的 `PH2`。
+打印端 LCDM 使用 TJC/陶晶驰 UART 协议，并改用硬件 USART1。当前新基准为：`PA9/PA10` 作为 LEDM/LCDM 显示共用口，上电只先探测 LCDM 协议；`PB5/PB3` 作为打印主机的打印机串口/RS232/RS485 转换器接口。这样 LCDM 输入标签字段后，由 AT32 生成打印语言并从独立打印口发出。
 
 | 功能 | 模块侧信号 | AT32 引脚 | 外设 | 参数 | 说明 |
 |---|---|---|---|---|---|
-| LCDM RX | 接 MCU TX | `PB3` | GPIO 软件 UART TX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 接收 MCU 控件命令；原裸屏 `LCM_SPI_SCK` 改作串口 TX |
-| LCDM TX | 接 MCU RX | `PB5` | GPIO 软件 UART RX | 默认 9600 8N1 | TJC/陶晶驰串口 HMI 回传触摸和字段包；原裸屏 `LCM_SPI_MOSI` 改作串口 RX |
+| LCDM RX | 接 MCU TX | `PA9` | USART1_TX | 默认 115200 8N1 | TJC/陶晶驰串口 HMI 接收 MCU 控件命令 |
+| LCDM TX | 接 MCU RX | `PA10` | USART1_RX | 默认 115200 8N1 | TJC/陶晶驰串口 HMI 回传触摸和字段包 |
 | LCDM VCC | 屏幕电源 | 5V 或模块要求电源 | 电源 | - | 串口电平必须兼容 AT32 3.3V，必要时加电平转换 |
 | LCDM GND | GND | GND | 电源 | - | 必须共地 |
-| 共用通讯口 TX | MCU -> LEDM/打印机转换器 | `PA9` | GPIO 或 `USART1_TX` / AF7 | 按角色决定 | 普通测试机端可作 LEDM CLK/TX；打印主机端作打印机通讯 TX |
-| 共用通讯口 RX | LEDM/打印机转换器 -> MCU | `PA10` | GPIO 或 `USART1_RX` / AF7 | 按角色决定 | 普通测试机端可作 LEDM DIO/RX；打印主机端作打印机通讯 RX |
+| 显示共用口 TX | MCU -> LEDM/LCDM | `PA9` | GPIO 或 `USART1_TX` / AF7 | 按显示探测决定 | 无 LCDM 回应时作 LEDM CLK/TX；有 LCDM 回应时作 LCDM TX |
+| 显示共用口 RX | LEDM/LCDM -> MCU | `PA10` | GPIO 或 `USART1_RX` / AF7 | 按显示探测决定 | 无 LCDM 回应时作 LEDM DIO/RX；有 LCDM 回应时作 LCDM RX |
+| 打印机 TX | MCU -> 打印机/转换器 | `PB5` | GPIO 软件 UART TX | 默认 9600 8N1 | 发送 ZPL/TSPL/ESC/POS 标签内容 |
+| 打印机 RX | 打印机/转换器 -> MCU | `PB3` | GPIO 软件 UART RX | 默认 9600 8N1 | 接收打印机状态或转换器返回 |
 | 2 kHz 蜂鸣器 | 蜂鸣器驱动 | `PB4` | GPIO 输出 | 高电平有效 | PASS 1s 响 1s 停；NG 0.5s 响两下，中间 0.5s，末尾停 1s |
 | RS485 DE/RE | 方向控制 | 待核定 | GPIO | 可选 | `PA1` 已为 `DEBUG_TTL_RX`，不能作为方向脚；需要半双工时重新分配 |
 | WiFi/无线模块 TX | MCU 发给 ESP32 | `PC3` | GPIO 软件 UART TX | 第一版建议 115200 8N1 | 07-07-N 已确认为 `WIFI_TX`，接 ESP32-C3-WROOM-02U `RXD` / Pin 11 |
@@ -111,7 +113,7 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 | WiFi EN | ESP32 复位/使能 | 第一版不接 AT32 | 硬件上拉/手动控制 | ESP32 侧 10k 上拉到 3.3V | 接 ESP32 `EN` / Pin 2；留 RESET 测试点/按键拉 GND |
 | WiFi BOOT | ESP32 下载模式 | 第一版不接 AT32 | 硬件上拉/手动控制 | ESP32 侧 10k 上拉到 3.3V | 接 ESP32 `IO9` / Pin 8；留 BOOT 测试点/按键拉 GND |
 
-`PB4` 在 2026-07-09 规划改为 `BUZZER_2K`，不再作为 TJC LCDM reset、WiFi 备用或普通备用；`PB6/PB7` 已用于 `IR_TX/IR_RX`，`PB8` 已用于 `HALL_SW`。`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，不得再分配给 RS485 方向、WiFi 或其它功能。`PA2` 已固定为扫描输入 `ADC2_IN2`，`PD8` 保留给 `OUT_BMUX_EN0`，二者都不得再分配给 LCDM、打印机通讯或 WiFi/无线模块。`PH2/PH3` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新拿封装 pinout 证明它是可落板脚。`PA9/PA10` 在 07-07-N 图纸中为 `USART_TX/RX`，但 PCB 只保留一个共用通讯接插件；角色由 Flash 配置区分，高档测试机和打印主机都可使用 LCDM。WiFi 模块第一版固定 `PC3=AT32_WIFI_TX`、`PB9=AT32_WIFI_RX`；`WIFI_EN/WIFI_BOOT` 不占 AT32，只做上拉和测试点/按键。
+`PB4` 在 2026-07-09 规划改为 `BUZZER_2K`，不再作为 TJC LCDM reset、WiFi 备用或普通备用；`PB6/PB7` 已用于 `IR_TX/IR_RX`，`PB8` 已用于 `HALL_SW`。`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，不得再分配给 RS485 方向、WiFi 或其它功能。`PA2` 已固定为扫描输入 `ADC2_IN2`，`PD8` 保留给 `OUT_BMUX_EN0`，二者都不得再分配给 LCDM、打印机通讯或 WiFi/无线模块。`PH2/PH3` 不写入 AT32F455VET7 LQFP100 最终规格，除非重新拿封装 pinout 证明它是可落板脚。`PA9/PA10` 在新基准中为 LEDM/LCDM 显示共用口；`PB5/PB3` 为打印机通讯口。WiFi 模块第一版固定 `PC3=AT32_WIFI_TX`、`PB9=AT32_WIFI_RX`；`WIFI_EN/WIFI_BOOT` 不占 AT32，只做上拉和测试点/按键。
 
 ## 斑马打印机 RS485 后端
 
@@ -137,4 +139,4 @@ cmake -S . -B build-print-zebra -G Ninja \
 
 注意：Zebra 打印机本体通常是 USB/以太网/RS232，若使用 RS485，需要打印机侧或中间转换器支持透明串口传输 ZPL。MCU 侧当前只负责把 ZPL 文本送到 RS485，总线应保证只有 MCU 对打印机发送，避免多主冲突。
 
-`PA9/PA10` 是角色复用脚，但 PCB 只放一个共用通讯接插件。普通测试机角色插 LEDM/TM1637；高档测试机使用 `PB3/PB5` LCDM；打印主机角色插打印机串口/RS485 转换器。上电先读本机 Flash 角色配置，不再用 LCDM 是否存在判定打印主机。
+`PA9/PA10` 是显示复用脚。上电先按 LCDM 协议探测：有回应则使用 LCDM；无回应则使用 LEDM/TM1637。普通测试机和高档测试机同一时间只装 LEDM 或 LCDM 其中一种。打印主机也使用 LCDM 作为界面，打印机串口/RS485 转换器固定走 `PB5/PB3`。LCDM 是否存在不能判定打印主机，角色仍由 Flash 配置和维护流程决定。

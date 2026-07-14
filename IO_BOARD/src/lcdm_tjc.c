@@ -1,729 +1,498 @@
 #include "lcdm_tjc.h"
 
-#include "at32f45x_board.h"
 #include "at32f45x.h"
-#include "at32f45x_exint.h"
-#include "at32f45x_scfg.h"
+#include "at32f45x_board.h"
 
 #include <stdio.h>
 #include <string.h>
 
+#ifndef LCDM_TJC_USART
+#define LCDM_TJC_USART USART1
+#endif
+
+#ifndef LCDM_TJC_USART_CLOCK
+#define LCDM_TJC_USART_CLOCK CRM_USART1_PERIPH_CLOCK
+#endif
+
 #ifndef LCDM_TJC_GPIO
-#define LCDM_TJC_GPIO GPIOB
+#define LCDM_TJC_GPIO GPIOA
 #endif
 
 #ifndef LCDM_TJC_GPIO_CLOCK
-#define LCDM_TJC_GPIO_CLOCK CRM_GPIOB_PERIPH_CLOCK
+#define LCDM_TJC_GPIO_CLOCK CRM_GPIOA_PERIPH_CLOCK
 #endif
 
-#ifndef LCDM_TJC_SWAP_PINS
-#define LCDM_TJC_SWAP_PINS 1
-#endif
-
-#if LCDM_TJC_SWAP_PINS
 #ifndef LCDM_TJC_TX_PIN
-#define LCDM_TJC_TX_PIN GPIO_PINS_5
+#define LCDM_TJC_TX_PIN GPIO_PINS_9
 #endif
 
 #ifndef LCDM_TJC_RX_PIN
-#define LCDM_TJC_RX_PIN GPIO_PINS_3
-#endif
-#else
-#ifndef LCDM_TJC_TX_PIN
-#define LCDM_TJC_TX_PIN GPIO_PINS_3
+#define LCDM_TJC_RX_PIN GPIO_PINS_10
 #endif
 
-#ifndef LCDM_TJC_RX_PIN
-#define LCDM_TJC_RX_PIN GPIO_PINS_5
-#endif
-#endif
-
-#ifndef LCDM_TJC_USE_RESET_PIN
-#define LCDM_TJC_USE_RESET_PIN 0
+#ifndef LCDM_TJC_TX_PIN_SOURCE
+#define LCDM_TJC_TX_PIN_SOURCE GPIO_PINS_SOURCE9
 #endif
 
-#ifndef LCDM_TJC_RX_EXINT_ENABLE
-#define LCDM_TJC_RX_EXINT_ENABLE 0
+#ifndef LCDM_TJC_RX_PIN_SOURCE
+#define LCDM_TJC_RX_PIN_SOURCE GPIO_PINS_SOURCE10
 #endif
 
-#ifndef LCDM_TJC_TX_FOREVER_DIAG
-#define LCDM_TJC_TX_FOREVER_DIAG 0
+#ifndef LCDM_TJC_GPIO_MUX
+#define LCDM_TJC_GPIO_MUX GPIO_MUX_7
 #endif
-
-#ifndef LCDM_TJC_BIT_CYCLES_OVERRIDE
-#define LCDM_TJC_BIT_CYCLES_OVERRIDE 0U
-#endif
-
-#if LCDM_TJC_USE_RESET_PIN && !defined(LCDM_TJC_RESET_PIN)
-#error "LCDM_TJC_RESET_PIN must be assigned explicitly. PB4 is reserved for BUZZER_2K."
-#endif
-
-volatile uint32_t g_lcdm_tjc_tx_cmd_count;
-volatile uint32_t g_lcdm_tjc_rx_byte_count;
-volatile uint32_t g_lcdm_tjc_rx_packet_count;
-volatile uint32_t g_lcdm_tjc_rx_overflow_count;
-volatile uint32_t g_lcdm_tjc_rx_start_count;
-volatile uint32_t g_lcdm_tjc_rx_frame_error_count;
-volatile uint32_t g_lcdm_tjc_rx_low_sample_count;
-volatile uint32_t g_lcdm_tjc_exint_count;
-volatile uint32_t g_lcdm_tjc_exint_rx_ok_count;
-volatile uint32_t g_lcdm_tjc_exint_rx_fail_count;
-volatile uint32_t g_lcdm_tjc_rx_edge_min_cycles;
-volatile uint32_t g_lcdm_tjc_rx_decode_bit_cycles;
-volatile uint8_t g_lcdm_tjc_last_rx_byte;
-volatile uint8_t g_lcdm_tjc_rx_level_now;
-volatile uint8_t g_lcdm_tjc_last_packet0;
-volatile uint8_t g_lcdm_tjc_last_packet1;
-volatile uint8_t g_lcdm_tjc_last_packet2;
-volatile uint8_t g_lcdm_tjc_last_packet_len;
-volatile uint8_t g_lcdm_tjc_rx_debug_index;
-volatile uint8_t g_lcdm_tjc_rx_debug_bytes[LCDM_TJC_RX_DEBUG_MAX];
-volatile uint8_t g_lcdm_tjc_rx_edge_debug_index;
-volatile uint8_t g_lcdm_tjc_rx_edge_debug_levels[16];
-volatile uint16_t g_lcdm_tjc_rx_edge_debug_deltas[16];
-
-#define LCDM_TJC_RX_EDGE_MAX 256U
-#define LCDM_TJC_RX_EDGE_MASK (LCDM_TJC_RX_EDGE_MAX - 1U)
-
-static uint8_t rx_packet[LCDM_TJC_RX_PACKET_MAX];
-static uint8_t rx_len;
-static uint8_t rx_ff_count;
-static uint32_t cycles_per_us;
-static uint32_t tx_bit_cycles;
-static uint32_t rx_bit_cycles;
-static uint32_t active_baudrate;
-static uint8_t rx_exint_enabled;
-static uint32_t rx_start_detect_cycles;
-static volatile uint32_t rx_edge_cycles[LCDM_TJC_RX_EDGE_MAX];
-static volatile uint8_t rx_edge_levels[LCDM_TJC_RX_EDGE_MAX];
-static volatile uint32_t rx_edge_head;
-static uint32_t rx_edge_tail;
-static uint32_t rx_decode_bit_cycles;
-static uint32_t rx_edge_last_cycles;
-
-static void lcdm_tjc_store_rx_byte(uint8_t value);
 
 #ifndef LCDM_TJC_CMD_GAP_MS
 #define LCDM_TJC_CMD_GAP_MS 2U
-#endif
-
-#ifndef LCDM_TJC_CAPTURE_AFTER_TX
-#define LCDM_TJC_CAPTURE_AFTER_TX 0
 #endif
 
 #ifndef LCDM_TJC_POWER_ON_WAIT_MS
 #define LCDM_TJC_POWER_ON_WAIT_MS 500U
 #endif
 
-#ifndef LCDM_TJC_RX_POLL_US
-#define LCDM_TJC_RX_POLL_US 2000U
+#ifndef LCDM_TJC_PROBE_ATTEMPTS
+#define LCDM_TJC_PROBE_ATTEMPTS 5U
+#endif
+
+#ifndef LCDM_TJC_PROBE_WAIT_MS
+#define LCDM_TJC_PROBE_WAIT_MS 80U
 #endif
 
 #ifndef LCDM_TJC_RECOVERY_BAUD1
-#define LCDM_TJC_RECOVERY_BAUD1 38400U
+#define LCDM_TJC_RECOVERY_BAUD1 9600U
 #endif
 
 #ifndef LCDM_TJC_RECOVERY_BAUD2
-#define LCDM_TJC_RECOVERY_BAUD2 115200U
+#define LCDM_TJC_RECOVERY_BAUD2 38400U
 #endif
 
 #ifndef LCDM_TJC_RECOVERY_BAUD3
-#define LCDM_TJC_RECOVERY_BAUD3 230400U
+#define LCDM_TJC_RECOVERY_BAUD3 115200U
 #endif
 
-static void lcdm_tjc_timebase_init(void)
+volatile uint32_t g_lcdm_tjc_tx_cmd_count;
+volatile uint32_t g_lcdm_tjc_tx_error_count;
+volatile uint32_t g_lcdm_tjc_rx_byte_count;
+volatile uint32_t g_lcdm_tjc_rx_packet_count;
+volatile uint32_t g_lcdm_tjc_rx_overflow_count;
+volatile uint32_t g_lcdm_tjc_rx_queue_overflow_count;
+volatile uint32_t g_lcdm_tjc_uart_error_count;
+volatile uint8_t g_lcdm_tjc_last_packet_len;
+volatile uint8_t g_lcdm_tjc_last_packet0;
+volatile uint8_t g_lcdm_tjc_last_packet1;
+volatile uint8_t g_lcdm_tjc_last_packet2;
+volatile uint8_t g_lcdm_tjc_last_event_type;
+volatile uint16_t g_lcdm_tjc_last_x;
+volatile uint16_t g_lcdm_tjc_last_y;
+volatile uint8_t g_lcdm_tjc_last_touch_event;
+volatile uint8_t g_lcdm_tjc_last_page_id;
+volatile uint8_t g_lcdm_tjc_last_component_id;
+volatile uint32_t g_lcdm_tjc_last_number;
+volatile uint8_t g_lcdm_tjc_last_raw0;
+volatile uint8_t g_lcdm_tjc_last_raw1;
+volatile uint8_t g_lcdm_tjc_last_raw2;
+volatile uint8_t g_lcdm_tjc_last_raw3;
+volatile uint8_t g_lcdm_tjc_last_raw4;
+volatile uint8_t g_lcdm_tjc_last_raw5;
+volatile uint8_t g_lcdm_tjc_last_raw6;
+volatile uint8_t g_lcdm_tjc_last_raw7;
+volatile uint8_t g_lcdm_tjc_debug_page;
+
+static uint8_t rx_packet[LCDM_TJC_RX_PACKET_MAX];
+static uint8_t rx_len;
+static uint8_t rx_ff_count;
+static uint8_t ready_packet[LCDM_TJC_RX_QUEUE_DEPTH][LCDM_TJC_RX_PACKET_MAX];
+static uint8_t ready_len[LCDM_TJC_RX_QUEUE_DEPTH];
+static volatile uint8_t ready_head;
+static volatile uint8_t ready_tail;
+static volatile uint8_t ready_count;
+static uint8_t current_page;
+static uint8_t refresh_requested;
+static uint32_t active_baudrate;
+
+static void poll_rx_bytes(void);
+
+static void rx_reset(void)
 {
-#if LCDM_TJC_BIT_CYCLES_OVERRIDE != 0U
-  cycles_per_us = (LCDM_TJC_BIT_CYCLES_OVERRIDE * LCDM_TJC_BAUDRATE + 999999U) / 1000000U;
-#else
-  cycles_per_us = system_core_clock / 1000000U;
-#endif
-  if(cycles_per_us == 0U) {
-    cycles_per_us = 1U;
-  }
-
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0U;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-}
-
-static uint32_t lcdm_tjc_cycles(void)
-{
-  return DWT->CYCCNT;
-}
-
-static uint32_t baud_to_cycles(uint32_t baudrate)
-{
-  uint32_t bit_cycles;
-
-  if(baudrate == 0U) {
-    baudrate = 9600U;
-  }
-
-  bit_cycles = (system_core_clock + (baudrate / 2U)) / baudrate;
-  if(bit_cycles == 0U) {
-    bit_cycles = 1U;
-  }
-  return bit_cycles;
-}
-
-static uint32_t baud_to_us_ceil(uint32_t baudrate)
-{
-  uint32_t bit_us;
-
-  if(baudrate == 0U) {
-    baudrate = 9600U;
-  }
-
-  bit_us = (1000000UL + baudrate - 1UL) / baudrate;
-  if(bit_us == 0UL) {
-    bit_us = 1UL;
-  }
-  return bit_us;
-}
-
-static void lcdm_tjc_set_active_baud(uint32_t baudrate)
-{
-  active_baudrate = baudrate;
-#if LCDM_TJC_BIT_CYCLES_OVERRIDE != 0U
-  (void)active_baudrate;
-  tx_bit_cycles = LCDM_TJC_BIT_CYCLES_OVERRIDE;
-#else
-  tx_bit_cycles = baud_to_cycles(active_baudrate);
-#endif
-  rx_bit_cycles = tx_bit_cycles;
-  rx_decode_bit_cycles = rx_bit_cycles;
-  g_lcdm_tjc_rx_decode_bit_cycles = rx_decode_bit_cycles;
-}
-
-static void lcdm_tjc_wait_until_cycles(uint32_t target_cycles)
-{
-  while((int32_t)(lcdm_tjc_cycles() - target_cycles) < 0) {
-    __asm volatile("nop");
-  }
-}
-
-static void lcdm_tjc_delay_cycles(uint32_t duration_cycles)
-{
-  uint32_t start_cycles = lcdm_tjc_cycles();
-
-  while((uint32_t)(lcdm_tjc_cycles() - start_cycles) < duration_cycles) {
-    __asm volatile("nop");
-  }
-}
-
-static void lcdm_tjc_delay_us(uint32_t duration_us)
-{
-  lcdm_tjc_delay_cycles(duration_us * cycles_per_us);
+  rx_len = 0U;
+  rx_ff_count = 0U;
 }
 
 static void lcdm_tjc_delay_ms(uint32_t duration_ms)
 {
   while(duration_ms != 0U) {
     uint32_t chunk_ms = (duration_ms > 100U) ? 100U : duration_ms;
-    lcdm_tjc_delay_cycles(chunk_ms * (system_core_clock / 1000U));
+    delay_ms(chunk_ms);
     duration_ms -= chunk_ms;
   }
 }
 
-static void lcdm_tjc_tx_level(uint8_t level)
+static void lcdm_tjc_usart_config(uint32_t baudrate)
 {
-  if(level != 0U) {
-    LCDM_TJC_GPIO->scr = LCDM_TJC_TX_PIN;
-  } else {
-    LCDM_TJC_GPIO->clr = LCDM_TJC_TX_PIN;
+  gpio_init_type gpio_init_struct;
+
+  if(baudrate == 0U) {
+    baudrate = LCDM_TJC_BAUDRATE;
   }
+
+  crm_periph_clock_enable(LCDM_TJC_GPIO_CLOCK, TRUE);
+  crm_periph_clock_enable(LCDM_TJC_USART_CLOCK, TRUE);
+
+  usart_enable(LCDM_TJC_USART, FALSE);
+
+  gpio_default_para_init(&gpio_init_struct);
+  gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
+  gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
+  gpio_init_struct.gpio_mode = GPIO_MODE_MUX;
+  gpio_init_struct.gpio_pins = LCDM_TJC_TX_PIN | LCDM_TJC_RX_PIN;
+  gpio_init_struct.gpio_pull = GPIO_PULL_UP;
+  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
+
+  gpio_pin_mux_config(LCDM_TJC_GPIO, LCDM_TJC_TX_PIN_SOURCE, LCDM_TJC_GPIO_MUX);
+  gpio_pin_mux_config(LCDM_TJC_GPIO, LCDM_TJC_RX_PIN_SOURCE, LCDM_TJC_GPIO_MUX);
+
+  usart_init(LCDM_TJC_USART, baudrate, USART_DATA_8BITS, USART_STOP_1_BIT);
+  usart_parity_selection_config(LCDM_TJC_USART, USART_PARITY_NONE);
+  usart_hardware_flow_control_set(LCDM_TJC_USART, USART_HARDWARE_FLOW_NONE);
+  usart_transmitter_enable(LCDM_TJC_USART, TRUE);
+  usart_receiver_enable(LCDM_TJC_USART, TRUE);
+  usart_interrupt_enable(LCDM_TJC_USART, USART_RDBF_INT, TRUE);
+  usart_interrupt_enable(LCDM_TJC_USART, USART_ERR_INT, TRUE);
+  usart_enable(LCDM_TJC_USART, TRUE);
+  nvic_irq_enable(USART1_IRQn, 1U, 0U);
+  active_baudrate = baudrate;
 }
 
-static uint8_t lcdm_tjc_rx_level(void)
+static void send_byte(uint8_t value)
 {
-  g_lcdm_tjc_rx_level_now = gpio_input_data_bit_read(LCDM_TJC_GPIO, LCDM_TJC_RX_PIN) != RESET;
-  if(g_lcdm_tjc_rx_level_now == 0U) {
-    g_lcdm_tjc_rx_low_sample_count++;
-  }
-  return g_lcdm_tjc_rx_level_now;
-}
+  uint32_t timeout = 100000U;
 
-static uint8_t lcdm_tjc_wait_for_start(uint32_t max_wait_us)
-{
-  uint32_t waited_us = 0U;
-  uint8_t was_high = lcdm_tjc_rx_level();
-
-  while(waited_us < max_wait_us) {
-    uint8_t level = lcdm_tjc_rx_level();
-    if(was_high != 0U && level == 0U) {
-      rx_start_detect_cycles = lcdm_tjc_cycles();
-      return 1U;
+  while(usart_flag_get(LCDM_TJC_USART, USART_TDBE_FLAG) == RESET) {
+    if(timeout == 0U) {
+      g_lcdm_tjc_tx_error_count++;
+      return;
     }
-    was_high = level;
-    if(waited_us >= max_wait_us) {
-      return 0U;
-    }
-    lcdm_tjc_delay_us(1U);
-    waited_us++;
+    timeout--;
   }
-
-  return 0U;
+  usart_data_transmit(LCDM_TJC_USART, value);
 }
 
-static void lcdm_tjc_write_byte(uint8_t value)
-{
-  uint8_t i;
-  uint32_t target_cycles;
-  uint32_t primask;
-
-  target_cycles = lcdm_tjc_cycles();
-  primask = __get_PRIMASK();
-  __disable_irq();
-  lcdm_tjc_tx_level(0U);
-  target_cycles += tx_bit_cycles;
-  lcdm_tjc_wait_until_cycles(target_cycles);
-
-  for(i = 0U; i < 8U; i++) {
-    lcdm_tjc_tx_level((value & (1U << i)) ? 1U : 0U);
-    target_cycles += tx_bit_cycles;
-    lcdm_tjc_wait_until_cycles(target_cycles);
-  }
-
-  lcdm_tjc_tx_level(1U);
-  target_cycles += tx_bit_cycles;
-  lcdm_tjc_wait_until_cycles(target_cycles);
-  if(primask == 0U) {
-    __enable_irq();
-  }
-}
-
-static uint8_t lcdm_tjc_read_byte(uint8_t *out_value)
-{
-  uint8_t i;
-  uint8_t value = 0U;
-  uint32_t target_cycles;
-  uint32_t primask;
-
-  if(out_value == 0 || lcdm_tjc_rx_level() != 0U) {
-    return 0U;
-  }
-
-  target_cycles = rx_start_detect_cycles + rx_bit_cycles + (rx_bit_cycles / 2U);
-  primask = __get_PRIMASK();
-  __disable_irq();
-  lcdm_tjc_wait_until_cycles(target_cycles);
-  for(i = 0U; i < 8U; i++) {
-    if(lcdm_tjc_rx_level() != 0U) {
-      value |= (uint8_t)(1U << i);
-    }
-    target_cycles += rx_bit_cycles;
-    lcdm_tjc_wait_until_cycles(target_cycles);
-  }
-
-  if(lcdm_tjc_rx_level() == 0U) {
-    if(primask == 0U) {
-      __enable_irq();
-    }
-    g_lcdm_tjc_rx_frame_error_count++;
-    return 0U;
-  }
-  if(primask == 0U) {
-    __enable_irq();
-  }
-
-  *out_value = value;
-  return 1U;
-}
-
-static uint8_t lcdm_tjc_read_byte_from_start_isr(uint8_t *out_value)
-{
-  uint8_t i;
-  uint8_t value = 0U;
-  uint32_t target_cycles;
-
-  if(out_value == 0 || lcdm_tjc_rx_level() != 0U) {
-    return 0U;
-  }
-
-  target_cycles = lcdm_tjc_cycles() + rx_bit_cycles + (rx_bit_cycles / 2U);
-  lcdm_tjc_wait_until_cycles(target_cycles);
-  for(i = 0U; i < 8U; i++) {
-    if(lcdm_tjc_rx_level() != 0U) {
-      value |= (uint8_t)(1U << i);
-    }
-    target_cycles += rx_bit_cycles;
-    lcdm_tjc_wait_until_cycles(target_cycles);
-  }
-
-  if(lcdm_tjc_rx_level() == 0U) {
-    g_lcdm_tjc_rx_frame_error_count++;
-    return 0U;
-  }
-
-  *out_value = value;
-  return 1U;
-}
-
-static uint8_t lcdm_tjc_edge_level_at(uint32_t edge_start,
-                                      uint32_t edge_end,
-                                      uint32_t sample_cycles)
-{
-  uint32_t edge;
-  uint8_t level = rx_edge_levels[edge_start & LCDM_TJC_RX_EDGE_MASK];
-
-  for(edge = edge_start + 1U; edge != edge_end; edge++) {
-    uint32_t edge_cycles = rx_edge_cycles[edge & LCDM_TJC_RX_EDGE_MASK];
-    if((int32_t)(edge_cycles - sample_cycles) > 0) {
-      break;
-    }
-    level = rx_edge_levels[edge & LCDM_TJC_RX_EDGE_MASK];
-  }
-
-  return level;
-}
-
-static uint32_t lcdm_tjc_edge_after(uint32_t edge_start,
-                                    uint32_t edge_end,
-                                    uint32_t sample_cycles)
-{
-  uint32_t edge = edge_start + 1U;
-
-  while(edge != edge_end) {
-    uint32_t edge_cycles = rx_edge_cycles[edge & LCDM_TJC_RX_EDGE_MASK];
-    if((int32_t)(edge_cycles - sample_cycles) > 0) {
-      break;
-    }
-    edge++;
-  }
-
-  return edge;
-}
-
-static void lcdm_tjc_update_rx_bit_cycles(uint32_t edge_start, uint32_t edge_end)
-{
-  uint32_t edge;
-  uint32_t min_delta = 0xFFFFFFFFUL;
-  uint32_t min_valid = cycles_per_us * 3U;
-  uint32_t max_valid = cycles_per_us * 30U;
-
-  for(edge = edge_start + 1U; edge != edge_end; edge++) {
-    uint32_t current = rx_edge_cycles[edge & LCDM_TJC_RX_EDGE_MASK];
-    uint32_t previous = rx_edge_cycles[(edge - 1U) & LCDM_TJC_RX_EDGE_MASK];
-    uint32_t delta = current - previous;
-    if(delta >= min_valid && delta <= max_valid && delta < min_delta) {
-      min_delta = delta;
-    }
-  }
-
-  if(min_delta != 0xFFFFFFFFUL) {
-    rx_decode_bit_cycles = min_delta;
-    g_lcdm_tjc_rx_edge_min_cycles = min_delta;
-  } else if(rx_decode_bit_cycles == 0U) {
-    rx_decode_bit_cycles = rx_bit_cycles;
-  }
-
-  g_lcdm_tjc_rx_decode_bit_cycles = rx_decode_bit_cycles;
-}
-
-static void lcdm_tjc_decode_rx_edges(void)
-{
-  uint32_t head_snapshot = rx_edge_head;
-  uint32_t bit_cycles;
-  uint32_t now_cycles = lcdm_tjc_cycles();
-
-  if(head_snapshot - rx_edge_tail >= (LCDM_TJC_RX_EDGE_MAX - 2U)) {
-    rx_edge_tail = head_snapshot;
-    g_lcdm_tjc_rx_overflow_count++;
-    return;
-  }
-
-  lcdm_tjc_update_rx_bit_cycles(rx_edge_tail, head_snapshot);
-  bit_cycles = (rx_decode_bit_cycles != 0U) ? rx_decode_bit_cycles : rx_bit_cycles;
-
-  while(rx_edge_tail != head_snapshot) {
-    uint8_t i;
-    uint8_t value = 0U;
-    uint32_t start_cycles;
-    uint32_t stop_sample;
-    uint32_t wait_cycles = bit_cycles * 10U;
-
-    if(rx_edge_levels[rx_edge_tail & LCDM_TJC_RX_EDGE_MASK] != 0U) {
-      rx_edge_tail++;
-      continue;
-    }
-
-    start_cycles = rx_edge_cycles[rx_edge_tail & LCDM_TJC_RX_EDGE_MASK];
-    if((uint32_t)(now_cycles - start_cycles) < wait_cycles) {
-      break;
-    }
-
-    for(i = 0U; i < 8U; i++) {
-      uint32_t sample_cycles = start_cycles + bit_cycles + (bit_cycles / 2U) + (bit_cycles * i);
-      if(lcdm_tjc_edge_level_at(rx_edge_tail, head_snapshot, sample_cycles) != 0U) {
-        value |= (uint8_t)(1U << i);
-      }
-    }
-
-    stop_sample = start_cycles + (bit_cycles * 9U) + (bit_cycles / 2U);
-    if(lcdm_tjc_edge_level_at(rx_edge_tail, head_snapshot, stop_sample) == 0U) {
-      g_lcdm_tjc_rx_frame_error_count++;
-      rx_edge_tail++;
-      continue;
-    }
-
-    g_lcdm_tjc_exint_rx_ok_count++;
-    g_lcdm_tjc_rx_start_count++;
-    lcdm_tjc_store_rx_byte(value);
-    rx_edge_tail = lcdm_tjc_edge_after(rx_edge_tail, head_snapshot, stop_sample);
-  }
-}
-
-static void lcdm_tjc_store_rx_byte(uint8_t value)
-{
-  g_lcdm_tjc_rx_byte_count++;
-  g_lcdm_tjc_last_rx_byte = value;
-  g_lcdm_tjc_rx_debug_bytes[g_lcdm_tjc_rx_debug_index & (LCDM_TJC_RX_DEBUG_MAX - 1U)] = value;
-  g_lcdm_tjc_rx_debug_index++;
-
-  if(value == 0xFFU) {
-    if(rx_ff_count < 3U) {
-      rx_ff_count++;
-    }
-    return;
-  }
-
-  if(rx_ff_count != 0U) {
-    rx_ff_count = 0U;
-  }
-
-  if(rx_len >= LCDM_TJC_RX_PACKET_MAX) {
-    rx_len = 0U;
-    g_lcdm_tjc_rx_overflow_count++;
-  }
-
-  rx_packet[rx_len] = value;
-  rx_len++;
-}
-
-static uint8_t lcdm_tjc_read_next_byte(uint32_t max_wait_us)
-{
-  uint8_t value;
-
-  if(lcdm_tjc_wait_for_start(max_wait_us) == 0U) {
-    return 0U;
-  }
-
-  g_lcdm_tjc_rx_start_count++;
-  if(lcdm_tjc_read_byte(&value) == 0U) {
-    return 0U;
-  }
-
-  lcdm_tjc_store_rx_byte(value);
-  return 1U;
-}
-
-#if LCDM_TJC_CAPTURE_AFTER_TX
-static void lcdm_tjc_capture_rx_after_tx(uint32_t first_wait_us)
-{
-  uint8_t retry;
-  uint32_t next_wait_us = baud_to_us_ceil(active_baudrate) * 3U;
-
-  for(retry = 0U; retry < 16U; retry++) {
-    uint32_t wait_us = (retry == 0U) ? first_wait_us : next_wait_us;
-    if(lcdm_tjc_read_next_byte(wait_us) == 0U) {
-      break;
-    }
-    if(rx_ff_count >= 3U) {
-      break;
-    }
-  }
-}
-#endif
-
-static uint8_t lcdm_tjc_wait_for_start_cycles_isr(uint32_t max_wait_cycles)
-{
-  uint32_t start_cycles = lcdm_tjc_cycles();
-
-  while(lcdm_tjc_rx_level() != 0U) {
-    if((uint32_t)(lcdm_tjc_cycles() - start_cycles) >= max_wait_cycles) {
-      return 0U;
-    }
-  }
-
-  return 1U;
-}
-
-static void lcdm_tjc_rx_exint_config(void)
-{
-  exint_init_type exint_init_struct;
-
-#if LCDM_TJC_RX_EXINT_ENABLE && LCDM_TJC_RX_PIN == GPIO_PINS_3
-  crm_periph_clock_enable(CRM_SCFG_PERIPH_CLOCK, TRUE);
-  scfg_exint_line_config(SCFG_PORT_SOURCE_GPIOB, SCFG_PINS_SOURCE3);
-
-  exint_default_para_init(&exint_init_struct);
-  exint_init_struct.line_enable = TRUE;
-  exint_init_struct.line_mode = EXINT_LINE_INTERRUPT;
-  exint_init_struct.line_select = EXINT_LINE_3;
-  exint_init_struct.line_polarity = EXINT_TRIGGER_BOTH_EDGE;
-  exint_init(&exint_init_struct);
-  exint_flag_clear(EXINT_LINE_3);
-  rx_edge_last_cycles = lcdm_tjc_cycles();
-  nvic_irq_enable(EXINT3_IRQn, 1U, 0U);
-  rx_exint_enabled = 1U;
-#else
-  (void)exint_init_struct;
-  rx_exint_enabled = 0U;
-#endif
-}
-
-void lcdm_tjc_rx_falling_edge_isr(void)
-{
-  uint32_t head;
-  uint32_t cycles;
-  uint32_t delta;
-  uint8_t level;
-  uint8_t index;
-
-  if(rx_exint_enabled == 0U) {
-    return;
-  }
-
-  head = rx_edge_head;
-  cycles = lcdm_tjc_cycles();
-  level = gpio_input_data_bit_read(LCDM_TJC_GPIO, LCDM_TJC_RX_PIN) != RESET;
-  delta = cycles - rx_edge_last_cycles;
-  rx_edge_last_cycles = cycles;
-
-  rx_edge_cycles[head & LCDM_TJC_RX_EDGE_MASK] = cycles;
-  rx_edge_levels[head & LCDM_TJC_RX_EDGE_MASK] = level;
-  rx_edge_head = head + 1U;
-
-  index = g_lcdm_tjc_rx_edge_debug_index & 0x0FU;
-  g_lcdm_tjc_rx_edge_debug_levels[index] = level;
-  g_lcdm_tjc_rx_edge_debug_deltas[index] = (delta > 0xFFFFU) ? 0xFFFFU : (uint16_t)delta;
-  g_lcdm_tjc_rx_edge_debug_index++;
-  g_lcdm_tjc_exint_count++;
-}
-
-static void lcdm_tjc_write_bytes(const uint8_t *data, uint16_t len)
-{
-  uint16_t i;
-
-  if(data == 0 || len == 0U) {
-    return;
-  }
-
-  for(i = 0U; i < len; i++) {
-    lcdm_tjc_write_byte(data[i]);
-  }
-}
-
-static void lcdm_tjc_send_cmd_at_active_baud(const char *cmd)
+static void send_end(void)
 {
   static const uint8_t end_bytes[3] = {0xFFU, 0xFFU, 0xFFU};
+  uint8_t i;
+  uint32_t timeout;
+
+  for(i = 0U; i < sizeof(end_bytes); i++) {
+    send_byte(end_bytes[i]);
+  }
+
+  timeout = 100000U;
+  while(usart_flag_get(LCDM_TJC_USART, USART_TDC_FLAG) == RESET) {
+    if(timeout == 0U) {
+      g_lcdm_tjc_tx_error_count++;
+      return;
+    }
+    timeout--;
+  }
+}
+
+static void send_cmd(const char *cmd)
+{
+  const uint8_t *bytes = (const uint8_t *)cmd;
+  uint8_t gap_ms;
 
   if(cmd == 0) {
     return;
   }
 
-  lcdm_tjc_write_bytes((const uint8_t *)cmd, (uint16_t)strlen(cmd));
-  lcdm_tjc_write_bytes(end_bytes, sizeof(end_bytes));
-  g_lcdm_tjc_tx_cmd_count++;
-#if LCDM_TJC_CAPTURE_AFTER_TX
-  lcdm_tjc_capture_rx_after_tx(30000U);
-#endif
-  if(LCDM_TJC_CMD_GAP_MS != 0U) {
-    lcdm_tjc_delay_ms(LCDM_TJC_CMD_GAP_MS);
+  while(*bytes != 0U) {
+    send_byte(*bytes);
+    bytes++;
   }
+  g_lcdm_tjc_tx_cmd_count++;
+  send_end();
+
+  for(gap_ms = 0U; gap_ms < LCDM_TJC_CMD_GAP_MS; gap_ms++) {
+    poll_rx_bytes();
+    lcdm_tjc_delay_ms(1U);
+  }
+  poll_rx_bytes();
 }
 
-static void lcdm_tjc_send_baud_cmds(uint32_t source_baud, uint32_t target_baud)
+static void process_packet(const uint8_t *packet, uint8_t len)
 {
-  char cmd[24];
+  uint8_t i;
 
-  lcdm_tjc_set_active_baud(source_baud);
-  lcdm_tjc_send_cmd_at_active_baud("bkcmd=0");
-  (void)snprintf(cmd, sizeof(cmd), "bauds=%lu", (unsigned long)target_baud);
-  lcdm_tjc_send_cmd_at_active_baud(cmd);
-  (void)snprintf(cmd, sizeof(cmd), "baud=%lu", (unsigned long)target_baud);
-  lcdm_tjc_send_cmd_at_active_baud(cmd);
-  lcdm_tjc_delay_ms(50U);
-}
-
-static void lcdm_tjc_try_recovery_baud(uint32_t source_baud, uint32_t target_baud)
-{
-  if(source_baud == 0U ||
-     ((source_baud == target_baud) && (target_baud != LCDM_TJC_BAUDRATE)) ||
-     (source_baud == LCDM_TJC_BAUDRATE)) {
+  if(len == 0U) {
     return;
   }
-  lcdm_tjc_send_baud_cmds(source_baud, target_baud);
+
+  g_lcdm_tjc_rx_packet_count++;
+  g_lcdm_tjc_last_packet_len = len;
+  g_lcdm_tjc_last_packet0 = packet[0];
+  g_lcdm_tjc_last_packet1 = (len > 1U) ? packet[1] : 0U;
+  g_lcdm_tjc_last_packet2 = (len > 2U) ? packet[2] : 0U;
+  g_lcdm_tjc_last_event_type = packet[0];
+
+  if((len >= 4U) && (packet[0] == 0x65U)) {
+    g_lcdm_tjc_last_page_id = packet[1];
+    g_lcdm_tjc_last_component_id = packet[2];
+    g_lcdm_tjc_last_touch_event = packet[3];
+    current_page = packet[1];
+    g_lcdm_tjc_debug_page = current_page;
+    return;
+  }
+
+  if((len >= 6U) && (packet[0] == 0x67U)) {
+    g_lcdm_tjc_last_x = (uint16_t)(((uint16_t)packet[1] << 8) | packet[2]);
+    g_lcdm_tjc_last_y = (uint16_t)(((uint16_t)packet[3] << 8) | packet[4]);
+    g_lcdm_tjc_last_touch_event = packet[5];
+    return;
+  }
+
+  if((len >= 5U) && (packet[0] == 0x71U)) {
+    g_lcdm_tjc_last_number = ((uint32_t)packet[1]) |
+                             ((uint32_t)packet[2] << 8) |
+                             ((uint32_t)packet[3] << 16) |
+                             ((uint32_t)packet[4] << 24);
+    return;
+  }
+
+  if((len >= 6U) && (memcmp(packet, "page=", 5U) == 0)) {
+    current_page = (uint8_t)(packet[5] - (uint8_t)'0');
+    g_lcdm_tjc_debug_page = current_page;
+    refresh_requested = 1U;
+    return;
+  }
+
+  if((len >= 7U) && (memcmp(packet, "refresh", 7U) == 0)) {
+    refresh_requested = 1U;
+  }
+
+  for(i = 0U; i < len; i++) {
+    if((packet[i] < 0x20U) || (packet[i] > 0x7EU)) {
+      return;
+    }
+  }
 }
 
-static void lcdm_tjc_force_target_baud(void)
+static void enqueue_ready_packet(const uint8_t *packet, uint8_t len)
 {
-  lcdm_tjc_try_recovery_baud(9600U, LCDM_TJC_BAUDRATE);
-  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD1, LCDM_TJC_BAUDRATE);
-  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD2, LCDM_TJC_BAUDRATE);
-  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD3, LCDM_TJC_BAUDRATE);
-  lcdm_tjc_send_baud_cmds(LCDM_TJC_BAUDRATE, LCDM_TJC_BAUDRATE);
-  lcdm_tjc_set_active_baud(LCDM_TJC_BAUDRATE);
-  lcdm_tjc_send_cmd_at_active_baud("bkcmd=0");
-  lcdm_tjc_delay_ms(80U);
+  uint8_t slot;
+
+  if((packet == 0) || (len == 0U)) {
+    return;
+  }
+
+  if(len > LCDM_TJC_RX_PACKET_MAX) {
+    len = LCDM_TJC_RX_PACKET_MAX;
+  }
+
+  if(ready_count >= LCDM_TJC_RX_QUEUE_DEPTH) {
+    ready_tail = (uint8_t)((ready_tail + 1U) % LCDM_TJC_RX_QUEUE_DEPTH);
+    ready_count--;
+    g_lcdm_tjc_rx_queue_overflow_count++;
+  }
+
+  slot = ready_head;
+  memcpy(ready_packet[slot], packet, len);
+  ready_len[slot] = len;
+  ready_head = (uint8_t)((ready_head + 1U) % LCDM_TJC_RX_QUEUE_DEPTH);
+  ready_count++;
+}
+
+static void store_raw_debug(uint8_t value)
+{
+  g_lcdm_tjc_last_raw7 = g_lcdm_tjc_last_raw6;
+  g_lcdm_tjc_last_raw6 = g_lcdm_tjc_last_raw5;
+  g_lcdm_tjc_last_raw5 = g_lcdm_tjc_last_raw4;
+  g_lcdm_tjc_last_raw4 = g_lcdm_tjc_last_raw3;
+  g_lcdm_tjc_last_raw3 = g_lcdm_tjc_last_raw2;
+  g_lcdm_tjc_last_raw2 = g_lcdm_tjc_last_raw1;
+  g_lcdm_tjc_last_raw1 = g_lcdm_tjc_last_raw0;
+  g_lcdm_tjc_last_raw0 = value;
+}
+
+static void store_rx_byte(uint8_t value)
+{
+  g_lcdm_tjc_rx_byte_count++;
+  store_raw_debug(value);
+
+  if(value == 0xFFU) {
+    rx_ff_count++;
+    if(rx_ff_count >= 3U) {
+      process_packet(rx_packet, rx_len);
+      if(rx_len != 0U) {
+        enqueue_ready_packet(rx_packet, rx_len);
+      }
+      rx_reset();
+    }
+    return;
+  }
+
+  rx_ff_count = 0U;
+  if(rx_len < sizeof(rx_packet)) {
+    rx_packet[rx_len] = value;
+    rx_len++;
+  } else {
+    rx_reset();
+    g_lcdm_tjc_rx_overflow_count++;
+  }
+}
+
+static void poll_rx_bytes(void)
+{
+  uint16_t guard = 256U;
+
+  while(guard != 0U) {
+    uint8_t has_data = (usart_flag_get(LCDM_TJC_USART, USART_RDBF_FLAG) != RESET) ? 1U : 0U;
+    uint8_t has_error =
+      ((usart_flag_get(LCDM_TJC_USART, USART_PERR_FLAG) != RESET) ||
+       (usart_flag_get(LCDM_TJC_USART, USART_FERR_FLAG) != RESET) ||
+       (usart_flag_get(LCDM_TJC_USART, USART_NERR_FLAG) != RESET) ||
+       (usart_flag_get(LCDM_TJC_USART, USART_ROERR_FLAG) != RESET)) ? 1U : 0U;
+
+    if((has_data == 0U) && (has_error == 0U)) {
+      break;
+    }
+
+    if(has_error != 0U) {
+      g_lcdm_tjc_uart_error_count++;
+    }
+
+    if(has_data != 0U) {
+      volatile uint32_t status = LCDM_TJC_USART->sts;
+      uint8_t value = (uint8_t)LCDM_TJC_USART->dt;
+      (void)status;
+      store_rx_byte(value);
+    } else if(has_error != 0U) {
+      usart_flag_clear(LCDM_TJC_USART,
+                       USART_PERR_FLAG | USART_FERR_FLAG | USART_NERR_FLAG | USART_ROERR_FLAG);
+    }
+    guard--;
+  }
 }
 
 void lcdm_tjc_init(void)
 {
-  gpio_init_type gpio_init_struct;
+  current_page = 0U;
+  refresh_requested = 1U;
+  ready_head = 0U;
+  ready_tail = 0U;
+  ready_count = 0U;
+  rx_reset();
 
-  lcdm_tjc_timebase_init();
-  lcdm_tjc_set_active_baud(LCDM_TJC_BAUDRATE);
-
-  crm_periph_clock_enable(LCDM_TJC_GPIO_CLOCK, TRUE);
-  gpio_pin_mux_config(LCDM_TJC_GPIO, GPIO_PINS_SOURCE3, GPIO_MUX_0);
-  gpio_pin_mux_config(LCDM_TJC_GPIO, GPIO_PINS_SOURCE5, GPIO_MUX_0);
-
-  gpio_default_para_init(&gpio_init_struct);
-  gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
-  gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
-  gpio_init_struct.gpio_mode = GPIO_MODE_OUTPUT;
-  gpio_init_struct.gpio_pins = LCDM_TJC_TX_PIN;
-  gpio_init_struct.gpio_pull = GPIO_PULL_UP;
-  gpio_bits_set(LCDM_TJC_GPIO, LCDM_TJC_TX_PIN);
-  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
-
-#if LCDM_TJC_USE_RESET_PIN
-  gpio_init_struct.gpio_pins = LCDM_TJC_RESET_PIN;
-  gpio_bits_set(LCDM_TJC_GPIO, LCDM_TJC_RESET_PIN);
-  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
-#endif
-
-  gpio_init_struct.gpio_mode = GPIO_MODE_INPUT;
-  gpio_init_struct.gpio_pins = LCDM_TJC_RX_PIN;
-  gpio_init_struct.gpio_pull = GPIO_PULL_UP;
-  gpio_init(LCDM_TJC_GPIO, &gpio_init_struct);
-
-  rx_len = 0U;
-  rx_ff_count = 0U;
-  rx_edge_head = 0U;
-  rx_edge_tail = 0U;
+  lcdm_tjc_usart_config(LCDM_TJC_BAUDRATE);
   lcdm_tjc_delay_ms(LCDM_TJC_POWER_ON_WAIT_MS);
-  lcdm_tjc_force_target_baud();
-#if LCDM_TJC_TX_FOREVER_DIAG
-  while(1) {
-    lcdm_tjc_send_cmd_at_active_baud("bkcmd=0");
-    lcdm_tjc_send_cmd_at_active_baud("dim=100");
-    lcdm_tjc_send_cmd_at_active_baud("cls 63488");
-    lcdm_tjc_delay_ms(250U);
-    lcdm_tjc_send_cmd_at_active_baud("cls 2016");
-    lcdm_tjc_delay_ms(250U);
-    lcdm_tjc_send_cmd_at_active_baud("cls 31");
-    lcdm_tjc_delay_ms(250U);
+}
+
+void lcdm_tjc_set_baudrate(uint32_t baudrate)
+{
+  ready_head = 0U;
+  ready_tail = 0U;
+  ready_count = 0U;
+  rx_reset();
+  lcdm_tjc_usart_config(baudrate);
+}
+
+static void lcdm_tjc_send_baud_cmds(uint32_t source_baudrate, uint32_t target_baudrate)
+{
+  char cmd[32];
+
+  lcdm_tjc_set_baudrate(source_baudrate);
+  send_cmd("bkcmd=0");
+  (void)snprintf(cmd, sizeof(cmd), "bauds=%lu", (unsigned long)target_baudrate);
+  send_cmd(cmd);
+  (void)snprintf(cmd, sizeof(cmd), "baud=%lu", (unsigned long)target_baudrate);
+  send_cmd(cmd);
+  lcdm_tjc_delay_ms(50U);
+}
+
+static void lcdm_tjc_try_recovery_baud(uint32_t source_baudrate, uint32_t target_baudrate)
+{
+  if((source_baudrate == 0U) ||
+     ((source_baudrate == target_baudrate) && (target_baudrate != LCDM_TJC_BAUDRATE)) ||
+     (source_baudrate == active_baudrate)) {
+    return;
   }
-#endif
-  lcdm_tjc_rx_exint_config();
+  lcdm_tjc_send_baud_cmds(source_baudrate, target_baudrate);
+}
+
+void lcdm_tjc_force_baudrate(uint32_t target_baudrate)
+{
+  if(target_baudrate == 0U) {
+    target_baudrate = LCDM_TJC_BAUDRATE;
+  }
+
+  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD1, target_baudrate);
+  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD2, target_baudrate);
+  lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD3, target_baudrate);
+  lcdm_tjc_send_baud_cmds(target_baudrate, target_baudrate);
+  lcdm_tjc_set_baudrate(target_baudrate);
+  send_cmd("bkcmd=0");
+  lcdm_tjc_delay_ms(80U);
+}
+
+uint8_t lcdm_tjc_probe(uint8_t attempts)
+{
+  uint8_t attempt;
+
+  if(attempts == 0U) {
+    attempts = LCDM_TJC_PROBE_ATTEMPTS;
+  }
+
+  lcdm_tjc_init();
+  for(attempt = 0U; attempt < attempts; attempt++) {
+    uint8_t wait_step;
+    send_cmd("connect");
+    for(wait_step = 0U; wait_step < LCDM_TJC_PROBE_WAIT_MS; wait_step++) {
+      lcdm_tjc_event_t event;
+      if(lcdm_tjc_poll_event(&event) != 0U) {
+        return 1U;
+      }
+      lcdm_tjc_delay_ms(1U);
+    }
+  }
+
+  return 0U;
+}
+
+void lcdm_tjc_rx_falling_edge_isr(void)
+{
+}
+
+void lcdm_tjc_usart_irq_handler(void)
+{
+  uint16_t guard = 32U;
+
+  while(guard != 0U) {
+    uint32_t status = LCDM_TJC_USART->sts;
+    uint8_t has_data = ((status & USART_RDBF_FLAG) != 0U) ? 1U : 0U;
+    uint8_t has_error =
+      ((status & (USART_PERR_FLAG | USART_FERR_FLAG | USART_NERR_FLAG | USART_ROERR_FLAG)) != 0U) ? 1U : 0U;
+
+    if((has_data == 0U) && (has_error == 0U)) {
+      break;
+    }
+
+    if(has_error != 0U) {
+      g_lcdm_tjc_uart_error_count++;
+    }
+
+    if(has_data != 0U) {
+      store_rx_byte((uint8_t)LCDM_TJC_USART->dt);
+    } else {
+      volatile uint32_t dummy = LCDM_TJC_USART->dt;
+      (void)dummy;
+    }
+    guard--;
+  }
 }
 
 void lcdm_tjc_send_cmd(const char *cmd)
 {
-  lcdm_tjc_send_cmd_at_active_baud(cmd);
+  send_cmd(cmd);
 }
 
 void lcdm_tjc_set_text(const char *obj, const char *text)
@@ -735,7 +504,7 @@ void lcdm_tjc_set_text(const char *obj, const char *text)
   }
 
   (void)snprintf(cmd, sizeof(cmd), "%s.txt=\"%s\"", obj, text);
-  lcdm_tjc_send_cmd(cmd);
+  send_cmd(cmd);
 }
 
 void lcdm_tjc_set_num(const char *obj, int32_t value)
@@ -747,71 +516,96 @@ void lcdm_tjc_set_num(const char *obj, int32_t value)
   }
 
   (void)snprintf(cmd, sizeof(cmd), "%s.val=%ld", obj, (long)value);
-  lcdm_tjc_send_cmd(cmd);
+  send_cmd(cmd);
 }
 
 void lcdm_tjc_page(uint8_t page_id)
 {
   char cmd[16];
 
+  current_page = page_id;
+  g_lcdm_tjc_debug_page = current_page;
+  refresh_requested = 1U;
   (void)snprintf(cmd, sizeof(cmd), "page %u", (unsigned int)page_id);
-  lcdm_tjc_send_cmd(cmd);
-}
-
-static void poll_rx_bytes(void)
-{
-  uint8_t retry;
-
-  if(rx_exint_enabled != 0U) {
-    lcdm_tjc_decode_rx_edges();
-    return;
-  }
-
-  for(retry = 0U; retry < 8U && rx_ff_count < 3U; retry++) {
-    if(lcdm_tjc_read_next_byte((rx_len != 0U || rx_ff_count != 0U) ? (baud_to_us_ceil(active_baudrate) * 2U) : LCDM_TJC_RX_POLL_US) == 0U) {
-      break;
-    }
-  }
+  send_cmd(cmd);
 }
 
 uint8_t lcdm_tjc_poll_event(lcdm_tjc_event_t *event)
 {
   uint8_t i;
   uint8_t len;
+  uint8_t packet[LCDM_TJC_RX_PACKET_MAX];
+  uint8_t slot;
 
   if(event == 0) {
     return 0U;
   }
 
   event->type = LCDM_TJC_EVENT_NONE;
+  event->number = 0U;
   poll_rx_bytes();
 
-  if(rx_ff_count < 3U) {
+  if(ready_count == 0U) {
     return 0U;
   }
 
-  len = rx_len;
-  rx_len = 0U;
-  rx_ff_count = 0U;
+  __disable_irq();
+  if(ready_count == 0U) {
+    __enable_irq();
+    return 0U;
+  }
+  slot = ready_tail;
+  len = ready_len[slot];
+  if(len > LCDM_TJC_RX_PACKET_MAX) {
+    len = LCDM_TJC_RX_PACKET_MAX;
+  }
+  memcpy(packet, ready_packet[slot], len);
 
-  g_lcdm_tjc_rx_packet_count++;
-  g_lcdm_tjc_last_packet_len = len;
-  g_lcdm_tjc_last_packet0 = (len > 0U) ? rx_packet[0] : 0U;
-  g_lcdm_tjc_last_packet1 = (len > 1U) ? rx_packet[1] : 0U;
-  g_lcdm_tjc_last_packet2 = (len > 2U) ? rx_packet[2] : 0U;
+  ready_len[slot] = 0U;
+  ready_tail = (uint8_t)((ready_tail + 1U) % LCDM_TJC_RX_QUEUE_DEPTH);
+  ready_count--;
+  __enable_irq();
 
-  if(len >= 4U && rx_packet[0] == 0x65U) {
+  if((len >= 4U) && (packet[0] == 0x65U)) {
     event->type = LCDM_TJC_EVENT_TOUCH;
-    event->page_id = rx_packet[1];
-    event->component_id = rx_packet[2];
-    event->touch_event = rx_packet[3];
+    event->page_id = packet[1];
+    event->component_id = packet[2];
+    event->touch_event = packet[3];
+    event->x = 0U;
+    event->y = 0U;
+    event->number = 0U;
     event->len = 0U;
     event->ascii[0] = '\0';
     return 1U;
   }
 
-  if(len == 0U) {
-    return 0U;
+  if((len >= 6U) && (packet[0] == 0x67U)) {
+    event->type = LCDM_TJC_EVENT_TOUCH_COORD;
+    event->page_id = current_page;
+    event->component_id = 0U;
+    event->touch_event = packet[5];
+    event->x = (uint16_t)(((uint16_t)packet[1] << 8) | packet[2]);
+    event->y = (uint16_t)(((uint16_t)packet[3] << 8) | packet[4]);
+    event->number = 0U;
+    event->len = 0U;
+    event->ascii[0] = '\0';
+    return 1U;
+  }
+
+  if((len >= 5U) && (packet[0] == 0x71U)) {
+    event->type = LCDM_TJC_EVENT_NUMBER;
+    event->page_id = current_page;
+    event->component_id = 0U;
+    event->touch_event = 0U;
+    event->x = 0U;
+    event->y = 0U;
+    event->number = ((uint32_t)packet[1]) |
+                    ((uint32_t)packet[2] << 8) |
+                    ((uint32_t)packet[3] << 16) |
+                    ((uint32_t)packet[4] << 24);
+    event->len = 0U;
+    event->ascii[0] = '\0';
+    return 1U;
   }
 
   if(len >= LCDM_TJC_RX_PACKET_MAX) {
@@ -819,7 +613,7 @@ uint8_t lcdm_tjc_poll_event(lcdm_tjc_event_t *event)
   }
 
   for(i = 0U; i < len; i++) {
-    event->ascii[i] = (char)rx_packet[i];
+    event->ascii[i] = (char)packet[i];
   }
   event->ascii[len] = '\0';
   event->len = len;

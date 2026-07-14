@@ -18,9 +18,9 @@ complete IO scanning, position coding, and Raspberry Pi communication.
 
 | Product path | Host/control model | IO mux control | Display/terminal role | Firmware impact |
 |---|---|---|---|---|
-| Basic tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | LEDM/TM1637 on PA9/PA10 shared role connector; PB4 buzzer for PASS/NG prompt | Uses `FIRST_GEN_4051_LOCAL`, learned Flash matrix, and local PASS/NG indication |
-| LCDM tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | TJC LCDM on PB3/PB5; PB4 buzzer for PASS/NG prompt | Same test core as basic tester, different display page set |
-| Print host | Line edge controller | No local scan required except diagnostics | TJC LCDM on PB3/PB5; PA9/PA10 used as printer USART/adapter; PB4 buzzer may be used for alarms | Manages binding, print queue, local cache, WiFi/MAS sync |
+| Basic tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | LEDM/TM1637 on PA9/PA10 display connector; PB4 buzzer for PASS/NG prompt | Uses `FIRST_GEN_4051_LOCAL`, learned Flash matrix, and local PASS/NG indication |
+| LCDM tester | Single MCU local workflow | Direct AT32 GPIO control of CD4051 address/enable lines | TJC LCDM on PA9/PA10 USART1 display connector; PB4 buzzer for PASS/NG prompt | Same test core as basic tester, different display page set |
+| Print host | Line edge controller | No local scan required except diagnostics | TJC LCDM on PA9/PA10; printer port on PB5/PB3; PB4 buzzer may be used for alarms | Manages binding, print queue, local cache, WiFi/MAS sync |
 | Second-gen Raspberry Pi board | Raspberry Pi sends commands over RS485 | Existing direct GPIO 4051 mux control remains the default | Raspberry Pi drives LCD/screen and high-level UI | Needs RS485 transport and command dispatcher; AT32 acts as scan/IO slave |
 
 The second-gen product must not be treated as an autonomous scanner. The AT32
@@ -31,15 +31,15 @@ Raspberry Pi side unless a fallback standalone mode is explicitly selected.
 ## Device Role Configuration
 
 The unified firmware must not decide print host versus tester only by probing
-LCDM. High-end testers and print hosts can both have a TJC LCDM on PB3/PB5.
+LCDM. High-end testers and print hosts can both have a TJC LCDM on PA9/PA10.
 The role is a stored device configuration, written by factory tooling,
 DEBUG_TTL, LCDM maintenance page, WiFi maintenance command, or line pairing.
 
 | Stored role | Meaning | Display | PA9/PA10 use |
 |---|---|---|---|
 | `TESTER_BASIC` | Standard tester station | LEDM/TM1637 | LEDM GPIO/UART only |
-| `TESTER_LCDM` | High-end tester station | TJC LCDM | Not used for printing; may remain idle or reserved |
-| `PRINT_HOST` | Line print master / edge controller | TJC LCDM | Printer USART/adapter |
+| `TESTER_LCDM` | High-end tester station | TJC LCDM | LCDM USART1 |
+| `PRINT_HOST` | Line print master / edge controller | TJC LCDM | LCDM USART1; printer uses PB5/PB3 |
 | `UNCONFIGURED` | New or invalid device config | Maintenance only | Safe idle |
 
 Required stored fields: `device_role`, `display_type`, `device_uid`,

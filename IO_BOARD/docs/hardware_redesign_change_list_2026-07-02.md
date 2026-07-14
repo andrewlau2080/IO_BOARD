@@ -2,13 +2,13 @@
 
 目的：给重新设计原理图和 PCB layout 使用。当前最终核对依据以 `SCH_FIXTURE_2026-07-07-N.pdf` 为准；`SCH_FIXTURE_2026-07-07.pdf`、`SCH_FIXTURE_2026-07-05.pdf` 和旧 `SCH_FIXTURE_2026-06-30.pdf` 只作历史对照。最终完整核对表见 `SCH_FIXTURE_2026-07-07_IO核对与PCB检查表.md`。
 
-产品规划：所有功能集中在同一块通用 PCB 上，测试机/打印主机角色由固件配置和绑定资料判定。`PA9/PA10` 只保留一个共用通讯接插件：普通测试机角色外接 LEDM，打印主机角色外接打印机/通讯转换器，不再画两个并联外设接口。2026-07-09 新增高档测试机也可使用 LCDM，因此不能再用“LCDM 有响应”直接判定打印主机。
+产品规划：所有功能集中在同一块通用 PCB 上，测试机/打印主机角色由固件配置和绑定资料判定。2026-07-12 起，`PA9/PA10` 定义为显示共用口：上电先按 LCDM 串口协议多次探测，若有 LCDM 回应则进入 LCDM 显示模式；若无回应则改为 LEDM/TM1637 模式。普通测试机和高档测试机同一时间只装 LEDM 或 LCDM 其中一种，不再要求二者共存。打印主机同样使用 LCDM 做标签输入/参数设置，打印机通讯改由 `PB5/PB3` 独立接口输出。
 
 ## 总体原则
 
 | 序号 | 项目 | 结论 | 原因/说明 | 优先级 |
 |---:|---|---|---|---|
-| 1 | 通用 PCB | 可以同一 PCB 覆盖测试机与打印主机 | 固件可统一；PA9/PA10 按一个共用通讯接插件处理，现场按角色插 LEDM 或打印机通讯线 | 必须 |
+| 1 | 通用 PCB | 可以同一 PCB 覆盖测试机与打印主机 | 固件可统一；PA9/PA10 作为 LEDM/LCDM 显示共用口，PB5/PB3 作为打印机通讯口 | 必须 |
 | 2 | 电平 | 所有 MCU IO 外部信号必须限制在 0-3.3V | AT32F455 GPIO 不允许直接承受 5V 输入；4051 也建议 3.3V 供电 | 必须 |
 | 3 | 测试点 | IR_TX、IR_RX、LEDM_CLK/TX、LEDM_DIO/RX、SWDIO、SWCLK、NRST 必须加测试点 | 本轮调试证明没有测试点会严重拖慢定位 | 必须 |
 | 4 | 2 kHz 蜂鸣器 | `PB4=BUZZER_2K`，LQFP100 Pin 90 | 高电平有效，默认低电平关闭；建议用三极管/MOSFET 驱动有源蜂鸣器 | 必须 |
@@ -43,25 +43,25 @@
 
 | 序号 | 信号 | MCU 引脚 | 建议连接 | 原因/说明 | 优先级 |
 |---:|---|---|---|---|---|
-| 1 | 共用通讯口 TX / LEDM_CLK 或 LEDM_TX | PA9 | 只接到一个共用接插件；普通测试机接 LEDM，打印主机接打印机/通讯转换器 | 同一实物不会同时插两种外设，避免 PA9 分叉并接 | 必须 |
-| 2 | 共用通讯口 RX / LEDM_DIO 或 LEDM_RX | PA10 | 只接到同一个共用接插件；普通测试机接 LEDM，打印主机接打印机/通讯转换器 | 同一实物不会同时插两种外设，避免 PA10 分叉并接 | 必须 |
-| 3 | 共用接插件电源 | 3.3V/GND | 建议 4 pin：3.3V、GND、PA9/TX、PA10/RX；丝印写角色通讯口，不只写 LEDM 或 PRINTER | 选 3.3V 可用 LEDM；打印通讯转换器需确认 3.3V TTL 兼容 | 必须 |
-| 4 | 上拉 | PA9/PA10 | 若测试机外接 TM1637，可由模块自带或在模块侧上拉；主板上不建议固定加影响 USART 的上拉 | 避免打印主机 USART 模式被不必要外设电路影响 | 建议 |
+| 1 | 显示共用口 TX / LEDM_CLK / LCDM_RX | PA9 | 只接到一个显示共用接插件；普通测试机接 LEDM，高档测试机或打印主机接 LCDM | 同一实物只装 LEDM 或 LCDM 其中一种，避免 PA9 分叉并接 | 必须 |
+| 2 | 显示共用口 RX / LEDM_DIO / LCDM_TX | PA10 | 只接到同一个显示共用接插件；LEDM 模式为 TM1637 DIO，LCDM 模式为 USART1_RX | 上电先按 LCDM 协议探测，无回应再切 LEDM 模式 | 必须 |
+| 3 | 显示共用接插件电源 | 3.3V/GND | 建议 4 pin：3.3V、GND、PA9/TX、PA10/RX；丝印写 DISPLAY，不只写 LEDM 或 LCDM | LCDM 若为 5V 供电但串口非 3.3V 兼容，必须加电平转换 | 必须 |
+| 4 | 上拉 | PA9/PA10 | LEDM/TM1637 可由模块侧上拉；主板上不建议固定加过强上拉影响 USART1 | 兼容 LCDM 硬件 USART 和 TM1637 GPIO 两种模式 | 建议 |
 | 5 | 按键 | TM1637 键盘 | K1-K4 使用 TM1637 键值，不建议另接 PC4-PC9 作为主按键 | 当前程序主要按 TM1637 键值定义：K1/K2/K3/K4 | 必须 |
-| 6 | USART1 角色复用 | PA9/PA10 | 测试机固件可按 LEDM/TM1637 使用；打印主机固件按 USART1 打印通讯使用 | 共用同一接插件，不属于两个接口冲突 | 必须 |
-| 7 | 高档测试机 LCDM | PB3/PB5 | 使用 TJC LCDM，与打印主机同一 LCDM 电气接口 | LCDM 存在不再代表打印主机，只代表显示类型 | 必须 |
+| 6 | USART1 角色复用 | PA9/PA10 | LCDM 模式按 USART1 使用；LEDM 模式按 GPIO 模拟 TM1637 使用 | 上电检测只检测 LCDM 协议，失败后进入 LEDM 模式 | 必须 |
+| 7 | 打印机通讯口 | PB5=PRINTER_TX、PB3=PRINTER_RX | 打印主机角色通过该接口连接打印机串口/RS232/RS485 转换器 | 标签内容由 LCDM 输入到 AT32，AT32 再从 PB5/PB3 发给打印机 | 必须 |
 
 上电角色判定：
 
 | 步骤 | 判定 | 后续动作 |
 |---:|---|---|
-| 1 | 读取本机 Flash 配置 | `TESTER_BASIC`、`TESTER_LCDM`、`PRINT_HOST`、`UNCONFIGURED` |
-| 2 | `TESTER_BASIC` | 初始化 4051 扫描、LEDM 显示和测试流程；PA9/PA10 按 LEDM/TM1637 使用 |
-| 3 | `TESTER_LCDM` | 初始化 4051 扫描、LCDM 显示和测试流程；PB3/PB5 按 LCDM 使用 |
-| 4 | `PRINT_HOST` | 初始化 LCDM、打印机通讯、WiFi/MAS 和本地缓存；PA9/PA10 按打印机 USART 使用 |
-| 5 | `UNCONFIGURED` 或配置 CRC 错误 | 进入未配置安全模式，不自动测试，不发送打印命令 |
+| 1 | PA9/PA10 按 LCDM USART1 初始化 | 连续 3-5 次发送 LCDM 握手命令 |
+| 2 | LCDM 有正确回应 | 锁定 `DISPLAY_LCDM`；PA9/PA10 保持 USART1 LCDM |
+| 3 | LCDM 多次无回应 | 锁定 `DISPLAY_LEDM`；PA9/PA10 改为 TM1637/LEDM GPIO 时序 |
+| 4 | 读取本机 Flash 角色配置 | 区分 `TESTER_LEDM`、`TESTER_LCDM`、`PRINT_HOST`、`UNCONFIGURED` |
+| 5 | 角色配置缺失或 CRC 错误 | LCDM 模式可进入维护选择页；无 LCDM 时进入安全模式或 LEDM 错误提示 |
 
-角色锁定后本次运行不再自动切换；LEDM/LCDM 探测只用于判断显示外设是否在线，不作为角色唯一依据。当前不建议增加单独检测脚，除非量产要求完全免配置；如需要硬件 BOM ID，应另行从备用脚池评估。
+显示类型锁定后本次运行不再自动切换。LCDM 有回应只代表显示类型是 LCDM，不能单独代表打印主机；打印主机和高档测试机都可能使用 LCDM。设备角色仍以 Flash 配置、SPI NOR Flash、PB5/PB3 打印机接口检测和 LCDM 维护页面选择为辅助依据。
 
 蜂鸣器节奏：
 
@@ -96,13 +96,13 @@
 | 序号 | 模块 | MCU 引脚/接口 | 建议修改 | 原因/说明 | 优先级 |
 |---:|---|---|---|---|---|
 | 1 | LCDM 品牌/类型 | TJC 陶晶驰串口 HMI | 与 MOTOR / Steering Engine 项目使用同一品牌/协议方向；不要按裸 SPI LCDM 当作首选 | 屏幕自己处理触摸、键盘、字体和页面，MCU 只收发变量/命令 | 必须 |
-| 2 | LCDM 串口 | `PB3=LCDM_TX`、`PB5=LCDM_RX` | 按 2026-07-07-N 图纸接 `J_LCDM_TJC`：VCC、GND、LCDM_RX、LCDM_TX；MCU TX 接屏 RX，MCU RX 接屏 TX | TJC 不要求固定硬件 USART；使用软件 UART，避免占用 `PA9/PA10`，且不占用 `PA2/ADC2_IN2` 或封装未确认的 `PH2` | 必须 |
+| 2 | LCDM 串口 | `PA9=USART1_TX`、`PA10=USART1_RX` | 接显示共用口：MCU TX 接 LCDM RX，MCU RX 接 LCDM TX；上电先探测 LCDM 协议 | 使用硬件 USART1，减少 LCDM 驱动对扫描流程的时序干涉 | 必须 |
 | 3 | LCDM 电源/电平 | 按屏模块要求供电，串口 3.3V 兼容 | 若屏为 5V 供电但串口不是 3.3V 兼容，必须加电平转换 | AT32 GPIO 不能直接承受 5V 输入 | 必须 |
-| 4 | 旧裸屏接口 | PB3/SCK、PB5/MOSI、PB4/RESET、PB6/CMD、PB7/CS、PB8/BL | 2026-07-09 规划为：PB3/PB5=TJC LCDM，PB4=BUZZER_2K，PB6/PB7=IR，PB8=HALL_SW；旧裸屏接口不再作为当前方案 | 若最终改回裸屏，固件要另写 SPI LCD + 触摸 + 软键盘，并重分配蜂鸣器/IR/感应触发脚 | 建议 |
-| 5 | 打印机 RS485/串口 | `PA9=USART1_TX`、`PA10=USART1_RX` 共用通讯接插件 | 打印主机角色通过同一接插件连接打印机串口/RS485 转换器；如用 RS485，转换器侧处理 A/B、终端电阻、屏蔽地 | 测试机角色同一接插件接 LEDM；PCB 不再增加第二个 PA9/PA10 接口 | 必须 |
+| 4 | 旧裸屏接口 | PB3/SCK、PB5/MOSI、PB4/RESET、PB6/CMD、PB7/CS、PB8/BL | 2026-07-12 新基准为：PA9/PA10=TJC LCDM 或 LEDM 显示共用口，PB5/PB3=打印机通讯，PB4=BUZZER_2K，PB6/PB7=IR，PB8=HALL_SW；旧裸屏接口不再作为当前方案 | 若最终改回裸屏，固件要另写 SPI LCD + 触摸 + 软键盘，并重分配蜂鸣器/IR/感应触发脚 | 建议 |
+| 5 | 打印机 RS485/串口 | `PB5=PRINTER_TX`、`PB3=PRINTER_RX` | 打印主机角色连接打印机串口/RS232/RS485 转换器；如用 RS485，转换器侧处理 A/B、终端电阻、屏蔽地 | PA9/PA10 已作为 LEDM/LCDM 显示共用口，打印机必须独立到 PB5/PB3 | 必须 |
 | 6 | RS485 方向控制 | 待重新分配 | `PA1` 已为 `DEBUG_TTL_RX`，不得再作为 DE/RE；如半双工 RS485 必须要方向控制，需从最终空闲脚重新指定 | 后续不同收发器/协议可能需要方向控制，但不能占用 DEBUG_TTL | 建议 |
 | 7 | 打印机参数调试 | LCDM | LCDM 可设置打印波特率、协议、标签内容和打印参数 | 后续兼容不同机型 | 建议 |
-| 8 | WiFi/无线模块 | `PC3=WIFI_TX`、`PB9=WIFI_RX`、`WIFI_EN/WIFI_BOOT` 不接 AT32 | 按 `docs/wifi_module_pcb_connection_plan.md` 接 07-07-N 图纸中的 `ESP32-C3-WROOM-02U-N4`；`PC3` 接 ESP32 `RXD`，`PB9` 接 ESP32 `TXD`；EN/BOOT 只做 10k 上拉和测试点/按键 | 避开 `PA1/PA3(DEBUG_TTL)`、`PA2`、`PH2`、`PD8/OUT_BMUX_EN0`、`PA9/PA10`、LCDM、IR、HALL 和按键脚；第一版按 GPIO 软件 UART/网络协处理器设计 | 必须 |
+| 8 | WiFi/无线模块 | `PC3=WIFI_TX`、`PB9=WIFI_RX`、`WIFI_EN/WIFI_BOOT` 不接 AT32 | 按 `docs/wifi_module_pcb_connection_plan.md` 接 07-07-N 图纸中的 `ESP32-C3-WROOM-02U-N4`；`PC3` 接 ESP32 `RXD`，`PB9` 接 ESP32 `TXD`；EN/BOOT 只做 10k 上拉和测试点/按键 | 避开 `PA1/PA3(DEBUG_TTL)`、`PA2`、`PH2`、`PD8/OUT_BMUX_EN0`、`PA9/PA10` 显示口、`PB5/PB3` 打印口、IR、HALL 和按键脚；第一版按 GPIO 软件 UART/网络协处理器设计 | 必须 |
 | 9 | 打印主机本地缓存 | `PB13/PB14/PB15 + PA6` 接 SPI NOR Flash | WiFi 模块 4 MB Flash 不作为生产追溯缓存；打印主机建议预留 SPI NOR Flash，16 MB 起步，推荐 32 MB 或 64 MB；长时间断网可预留 microSD/eMMC | MAS 断线时每条线 10 台测试机记录要保存在打印主机内，不能依赖 WiFi 模块 Flash | 必须 |
 | 10 | 禁止复用 | `PA2=ADC2_IN2` | `PA2` 保留给 B 区扫描输入检测，不得再接 LCDM/打印机/无线模块 | 避免破坏 48+48 扫描检测路径 | 必须 |
 | 11 | 禁止复用 | `PH2` | `PH2` 不写入 AT32F455VET7 LQFP100 最终 IO 规格，除非重新用封装 pinout 证明它是可落板脚 | 避免 WorkBench 信号名和实际 QFP100 封装不一致导致画图错误 | 必须 |
@@ -142,12 +142,12 @@
 
 | 功能 | 当前固件引脚 | 备注 |
 |---|---|---|
-| 共用角色通讯口 / LEDM/TM1637 | PA9=TX/CLK、PA10=RX/DIO | PCB 只留一个接插件；测试机接 LEDM，固件可按 GPIO 时序和 TM1637 键值使用 |
+| 显示共用口 / LEDM 或 LCDM | PA9=USART1_TX/LEDM_CLK、PA10=USART1_RX/LEDM_DIO | 上电先按 LCDM 协议探测；有回应保持 LCDM USART1，无回应切换 LEDM/TM1637 GPIO |
 | 感应打印触发 | PB8=HALL_SW | 输入上拉，低电平有效；PC7 保留按键 |
-| 打印端 LCDM | PB3=LCDM_TX、PB5=LCDM_RX | TJC/陶晶驰串口 HMI，软件 UART，默认 9600 8N1 |
-| 高档测试机 LCDM | PB3=LCDM_TX、PB5=LCDM_RX | 与打印端同一电气接口；通过 Flash 角色配置区分 `TESTER_LCDM` 和 `PRINT_HOST` |
+| 打印端 LCDM | PA9=LCDM_TX、PA10=LCDM_RX | TJC/陶晶驰串口 HMI，硬件 USART1，默认 115200 8N1；标签字段由 LCDM 输入到 AT32 |
+| 高档测试机 LCDM | PA9=LCDM_TX、PA10=LCDM_RX | 与打印端同一显示接口；通过 Flash 角色配置区分 `TESTER_LCDM` 和 `PRINT_HOST` |
 | 2 kHz 蜂鸣器 | PB4=BUZZER_2K | 高电平有效；PASS 长响，NG 短响两下 |
-| 打印机通讯 | PA9=USART1_TX、PA10=USART1_RX | 打印主机角色使用同一共用接插件；不另画第二个 PA9/PA10 接口 |
+| 打印机通讯 | PB5=PRINTER_TX、PB3=PRINTER_RX | 打印主机角色使用独立打印口；AT32 生成 ZPL/TSPL/ESC/POS 后发送给打印机/转换器 |
 | IR 打印测试 | PB6=IR_TX、PB7=IR_RX | 按 2026-07-07-N 图纸更新；正式建议硬件 PWM 载波 |
 | WiFi/无线模块 | PC3=WIFI_TX、PB9=WIFI_RX；WIFI_EN/WIFI_BOOT 不接 AT32 | 07-07-N 图纸为 ESP32-C3-WROOM-02U-N4，连接规格见 `docs/wifi_module_pcb_connection_plan.md`；`PA1/PA3/PD8` 禁止使用 |
 | 打印主机 SPI NOR Flash | PB13=FLASH_SPI_SCK、PB14=FLASH_SPI_MISO、PB15=FLASH_SPI_MOSI、PA6=FLASH_CS_N | 25Q 系列 SPI NOR；`WP#`/`HOLD#` 第一版上拉，不占 MCU；`PB12` 已为 `OUT_BMUX_C2`，不得作为 Flash 片选 |

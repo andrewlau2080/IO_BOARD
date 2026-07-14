@@ -1,0 +1,361 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>高档测试机 LCDM 显示元素表</title>
+  <style>
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.35;
+      color: #111111;
+    }
+    h1 {
+      font-size: 20pt;
+      margin: 0 0 14pt;
+      text-align: center;
+    }
+    h2 {
+      font-size: 15pt;
+      margin: 18pt 0 8pt;
+      border-bottom: 1px solid #888888;
+      padding-bottom: 3pt;
+    }
+    h3 {
+      font-size: 12.5pt;
+      margin: 12pt 0 6pt;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 6pt 0 12pt;
+    }
+    th, td {
+      border: 1px solid #777777;
+      padding: 5pt 6pt;
+      vertical-align: top;
+    }
+    th {
+      background: #d9eaf7;
+      font-weight: bold;
+      text-align: left;
+    }
+    .note {
+      background: #fff4cc;
+      border: 1px solid #d6b656;
+      padding: 8pt;
+      margin: 8pt 0 12pt;
+    }
+    .code {
+      font-family: Menlo, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>高档测试机 LCDM 显示元素表</h1>
+
+  <div class="note">
+    本文件是第一份 Word 规格表，只定义 LCDM 屏幕上要显示的全部元素，包括固定元素、会变化的元素、K1-K4 按键元素、以及不同测试状态下动态元素显示什么。坐标和通讯逻辑分别由后续两个文件定义。
+  </div>
+
+  <h2>1. 页面</h2>
+  <table>
+    <tr>
+      <th>页面 ID</th>
+      <th>页面名称</th>
+      <th>用途</th>
+      <th>显示规则</th>
+    </tr>
+    <tr>
+      <td>0</td>
+      <td class="code">tester_main</td>
+      <td>高档测试机主界面</td>
+      <td>第一版只使用这一页；上电后由 MCU 全屏绘制界面，不依赖屏内旧项目控件。</td>
+    </tr>
+  </table>
+
+  <h2>2. 固定显示元素</h2>
+  <table>
+    <tr>
+      <th>元素 ID</th>
+      <th>元素名称</th>
+      <th>类型</th>
+      <th>固定显示内容</th>
+      <th>用途</th>
+      <th>刷新方式</th>
+    </tr>
+    <tr>
+      <td class="code">screen_bg</td>
+      <td>全屏背景</td>
+      <td>色块</td>
+      <td>白色背景</td>
+      <td>覆盖屏幕原内容，防止露出旧控件。</td>
+      <td>全屏绘制时刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">title_bar</td>
+      <td>标题栏背景</td>
+      <td>色块</td>
+      <td>深蓝色横条</td>
+      <td>页面顶部标题区。</td>
+      <td>全屏绘制时刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">title_text</td>
+      <td>标题文字</td>
+      <td>文本</td>
+      <td class="code">WIRE TESTER LCDM</td>
+      <td>显示设备/界面名称。</td>
+      <td>全屏绘制时刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">role_text</td>
+      <td>角色文字</td>
+      <td>文本</td>
+      <td class="code">TESTER</td>
+      <td>显示当前为测试机界面。</td>
+      <td>全屏绘制时刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">status_panel</td>
+      <td>主状态背景</td>
+      <td>色块</td>
+      <td>浅色背景</td>
+      <td>承载状态文字和主显示文字。</td>
+      <td>全屏绘制时刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">key_band</td>
+      <td>按键带背景</td>
+      <td>色块</td>
+      <td>K1-K4 四段按键背景</td>
+      <td>承载四个触摸按键。</td>
+      <td>全屏绘制时刷新；按键按下/松开时局部刷新对应按键。</td>
+    </tr>
+    <tr>
+      <td class="code">ledm_panel</td>
+      <td>LEDM 兼容显示背景</td>
+      <td>色块</td>
+      <td>白色区域</td>
+      <td>显示原 LEDM/TM1637 的 6 字符兼容内容。</td>
+      <td>全屏绘制时刷新；内容变化时先清背景再写文字。</td>
+    </tr>
+    <tr>
+      <td class="code">detail_panel</td>
+      <td>详情背景</td>
+      <td>色块</td>
+      <td>白色区域</td>
+      <td>显示点位、数量、故障原因或测试进度。</td>
+      <td>全屏绘制时刷新；详情变化时局部刷新。</td>
+    </tr>
+    <tr>
+      <td class="code">sub_panel</td>
+      <td>辅助提示背景</td>
+      <td>色块</td>
+      <td>白色区域</td>
+      <td>显示操作提示或触摸调试信息。</td>
+      <td>全屏绘制时刷新；提示变化时局部刷新。</td>
+    </tr>
+  </table>
+
+  <h2>3. 会变化的显示元素</h2>
+  <table>
+    <tr>
+      <th>元素 ID</th>
+      <th>元素名称</th>
+      <th>类型</th>
+      <th>可能显示内容</th>
+      <th>数据来源</th>
+      <th>变化条件</th>
+    </tr>
+    <tr>
+      <td class="code">state_text</td>
+      <td>状态文字</td>
+      <td>文本</td>
+      <td class="code">READY / SELF / AUTO / LEARN / PASS / NG</td>
+      <td>固件状态机。</td>
+      <td>待机、自检、自动测试、学习、PASS、NG 等状态切换时变化。</td>
+    </tr>
+    <tr>
+      <td class="code">main_text</td>
+      <td>主显示文字</td>
+      <td>文本</td>
+      <td class="code">AUTO TEST / SELF TEST / LEARN MODE / PASS / NG</td>
+      <td>固件状态机。</td>
+      <td>状态切换时变化，用于给操作者看当前主状态。</td>
+    </tr>
+    <tr>
+      <td class="code">ledm_text</td>
+      <td>LEDM 兼容显示</td>
+      <td>文本</td>
+      <td class="code">AUTO / A01b01 / PASS / 001002 / LEArn</td>
+      <td>原 LEDM 显示模型。</td>
+      <td>测试点位、测试结果、学习流程或状态变化时变化。</td>
+    </tr>
+    <tr>
+      <td class="code">detail_text</td>
+      <td>详情文字</td>
+      <td>文本</td>
+      <td class="code">PROFILE DB50 / OUT001 IN002 / OK 092/092 / TOTAL 092 OK</td>
+      <td>测试流程和点位资料。</td>
+      <td>测试进度、当前 OUT/IN 点位、故障详情或结果统计变化时变化。</td>
+    </tr>
+    <tr>
+      <td class="code">sub_text</td>
+      <td>辅助提示文字</td>
+      <td>文本</td>
+      <td class="code">K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK</td>
+      <td>当前状态提示。</td>
+      <td>不同状态下显示对应操作提示。</td>
+    </tr>
+    <tr>
+      <td class="code">touch_debug_text</td>
+      <td>触摸调试文字</td>
+      <td>文本</td>
+      <td class="code">T 060,140 -> K1 DOWN</td>
+      <td>LCDM 触摸解析结果。</td>
+      <td>调试阶段收到触摸坐标、组件触摸或 ASCII 命令时，可临时覆盖辅助提示文字。</td>
+    </tr>
+  </table>
+
+  <h2>4. K1-K4 按键显示元素</h2>
+  <table>
+    <tr>
+      <th>元素 ID</th>
+      <th>按键</th>
+      <th>上排显示</th>
+      <th>下排显示</th>
+      <th>显示状态</th>
+      <th>动作含义</th>
+      <th>固件内部键值</th>
+    </tr>
+    <tr>
+      <td class="code">key_k1</td>
+      <td>K1</td>
+      <td class="code">K1</td>
+      <td class="code">SELF/LEARN</td>
+      <td>普通：深灰背景；按下：蓝色背景。</td>
+      <td>短按自检；长按约 3 秒进入学习。</td>
+      <td class="code">FIRST_GEN_KEY_SET</td>
+    </tr>
+    <tr>
+      <td class="code">key_k2</td>
+      <td>K2</td>
+      <td class="code">K2</td>
+      <td class="code">AUTO</td>
+      <td>普通：深灰背景；按下：蓝色背景。</td>
+      <td>自动测试。</td>
+      <td class="code">FIRST_GEN_KEY_CLEAR</td>
+    </tr>
+    <tr>
+      <td class="code">key_k3</td>
+      <td>K3</td>
+      <td class="code">K3</td>
+      <td class="code">RESET</td>
+      <td>普通：深灰背景；按下：蓝色背景。</td>
+      <td>复位到待机，测试重来。</td>
+      <td class="code">FIRST_GEN_KEY_PLUS</td>
+    </tr>
+    <tr>
+      <td class="code">key_k4</td>
+      <td>K4</td>
+      <td class="code">K4</td>
+      <td class="code">OK/SAVE</td>
+      <td>普通：深灰背景；按下：蓝色背景。</td>
+      <td>确认/保存；调试阶段可切 PASS。</td>
+      <td class="code">FIRST_GEN_KEY_MINUS</td>
+    </tr>
+  </table>
+
+  <h2>5. 状态变化时的显示内容</h2>
+  <table>
+    <tr>
+      <th>状态 ID</th>
+      <th>场景</th>
+      <th>state_text</th>
+      <th>main_text</th>
+      <th>ledm_text</th>
+      <th>detail_text</th>
+      <th>sub_text</th>
+    </tr>
+    <tr>
+      <td class="code">READY</td>
+      <td>待机</td>
+      <td class="code">READY</td>
+      <td class="code">AUTO TEST</td>
+      <td class="code">AUTO</td>
+      <td class="code">PROFILE DB50</td>
+      <td class="code">K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK</td>
+    </tr>
+    <tr>
+      <td class="code">SELF</td>
+      <td>自检</td>
+      <td class="code">SELF</td>
+      <td class="code">SELF TEST</td>
+      <td class="code">Axxbxx</td>
+      <td class="code">OUTxxx INxxx</td>
+      <td class="code">CHECKING...  K3 RESET</td>
+    </tr>
+    <tr>
+      <td class="code">AUTO</td>
+      <td>自动测试</td>
+      <td class="code">AUTO</td>
+      <td class="code">AUTO TEST</td>
+      <td class="code">Axxbxx</td>
+      <td class="code">OK xxx/092</td>
+      <td class="code">RUNNING  K3 RESET</td>
+    </tr>
+    <tr>
+      <td class="code">LEARN</td>
+      <td>学习</td>
+      <td class="code">LEARN</td>
+      <td class="code">LEARN MODE</td>
+      <td class="code">LEArn</td>
+      <td class="code">OUT048 IN048</td>
+      <td class="code">HOLD K1 3S  K4 SAVE</td>
+    </tr>
+    <tr>
+      <td class="code">PASS</td>
+      <td>通过</td>
+      <td class="code">PASS</td>
+      <td class="code">PASS</td>
+      <td class="code">PASS</td>
+      <td class="code">TOTAL 092 OK</td>
+      <td class="code">PRINT READY  REMOVE HARNESS</td>
+    </tr>
+    <tr>
+      <td class="code">NG</td>
+      <td>不良</td>
+      <td class="code">NG</td>
+      <td class="code">NG</td>
+      <td class="code">001002</td>
+      <td class="code">OUT001 IN002</td>
+      <td class="code">SHORT CIRCUIT  K3 RESET</td>
+    </tr>
+  </table>
+
+  <h2>6. 显示实现边界</h2>
+  <table>
+    <tr>
+      <th>项目</th>
+      <th>规则</th>
+    </tr>
+    <tr>
+      <td>显示来源</td>
+      <td>所有可见内容都必须来自本文件的元素表。</td>
+    </tr>
+    <tr>
+      <td>动态变化</td>
+      <td>动态元素只由固件状态机、测试流程、LEDM 兼容显示模型和触摸调试结果更新。</td>
+    </tr>
+    <tr>
+      <td>旧控件</td>
+      <td>高档测试机界面不显示屏内旧项目控件；如旧控件露出，属于错误状态，应全屏重绘或修改屏端基础页为空白。</td>
+    </tr>
+    <tr>
+      <td>下一份文件</td>
+      <td>每个元素的精确 X/Y/W/H 坐标在第二份 Word 坐标表中定义。</td>
+    </tr>
+  </table>
+</body>
+</html>

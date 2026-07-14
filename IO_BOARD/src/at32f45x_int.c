@@ -25,6 +25,7 @@
 
 /* includes ------------------------------------------------------------------*/
 #include "at32f45x_int.h"
+#include "lcdm_tjc.h"
 
 /** @addtogroup AT32F455_periph_template
   * @{
@@ -133,6 +134,11 @@ void PendSV_Handler(void)
   */
 void SysTick_Handler(void)
 {
+}
+
+void USART1_IRQHandler(void)
+{
+  lcdm_tjc_usart_irq_handler();
 }
 
 /**

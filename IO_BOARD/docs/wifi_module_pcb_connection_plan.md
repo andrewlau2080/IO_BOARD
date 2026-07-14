@@ -62,7 +62,7 @@ ESP32-C3-WROOM-02/02U 模块上的 4 MB Flash 不作为打印主机的生产记�
 
 本轮不把 `PB13/PB14/PB15/PA6` 写成 WiFi 脚，因为它们已规划给 SPI NOR Flash。`PB4` 已规划给 2 kHz 蜂鸣器，不再作为备用。`PA7/PA15` 仍只作为谨慎备用脚池。`WIFI_EN/WIFI_BOOT` 直接上拉是可行的，第一版不强制占用 MCU。
 
-不使用这些脚连接 WiFi：`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，`PA2` 已用于 `ADC2_IN2`，`PA6/PB13/PB14/PB15` 已用于 SPI NOR Flash，`PB4=BUZZER_2K`，`PD8` 保留给 `OUT_BMUX_EN0`，`PH2/PH3` 不写入 LQFP100 最终规格，`PA9/PA10` 留给一个共用角色通讯接插件，测试机接 LEDM 或打印主机接打印机通讯，`PB3/PB5` 留给 LCDM，`PB6/PB7` 留给 IR，`PB8` 留给 `HALL_SW`，`PC4..PC9` 留给按键。
+不使用这些脚连接 WiFi：`PA1=DEBUG_TTL_RX`、`PA3=DEBUG_TTL_TX`，`PA2` 已用于 `ADC2_IN2`，`PA6/PB13/PB14/PB15` 已用于 SPI NOR Flash，`PB4=BUZZER_2K`，`PD8` 保留给 `OUT_BMUX_EN0`，`PH2/PH3` 不写入 LQFP100 最终规格，`PA9/PA10` 留给 LEDM/LCDM 显示共用口，`PB3/PB5` 留给打印主机打印机通讯口，`PB6/PB7` 留给 IR，`PB8` 留给 `HALL_SW`，`PC4..PC9` 留给按键。
 
 ### 本轮禁止/待核定脚位
 

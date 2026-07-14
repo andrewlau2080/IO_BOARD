@@ -3,6 +3,7 @@
 #include "first_gen_4051_scan.h"
 #include "io_board.h"
 #include "ir_remote.h"
+#include "lcdm_tjc_verify.h"
 #include "line_comm_bridge.h"
 #include "print_terminal.h"
 #include "rpi_rs485_legacy.h"
@@ -17,6 +18,7 @@
 #define IO_APP_MODE_MUX_A_DIAG            7
 #define IO_APP_MODE_PRINT_TERMINAL        8
 #define IO_APP_MODE_UNIFIED               9
+#define IO_APP_MODE_LCDM_TJC_VERIFY       10
 
 #define UNIFIED_PRODUCT_RPI_RS485_LEGACY     IO_APP_MODE_RPI_RS485_LEGACY
 #define UNIFIED_PRODUCT_FIRST_GEN_4051_LOCAL IO_APP_MODE_FIRST_GEN_4051_LOCAL
@@ -301,6 +303,16 @@ int main(void)
   while(1)
   {
     print_terminal_service();
+  }
+#elif IO_APP_MODE == IO_APP_MODE_LCDM_TJC_VERIFY
+  system_core_clock_update();
+  delay_init();
+  io_board_init();
+  lcdm_tjc_verify_init();
+
+  while(1)
+  {
+    lcdm_tjc_verify_service();
   }
 #elif IO_APP_MODE == IO_APP_MODE_UNIFIED
   {
