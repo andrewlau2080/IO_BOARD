@@ -62,6 +62,7 @@ typedef struct {
   lcdm_state_id_t state;
   uint8_t active_key;
   bool k1_long_done;
+  bool redraw_pending;
   char state_cache[16];
   char main_cache[24];
   char ledm_cache[8];
@@ -125,6 +126,7 @@ static void lcdm_runtime_init_cmds(void)
 {
   lcdm_tjc_send_cmd("bkcmd=0");
   lcdm_tjc_send_cmd("dim=100");
+  lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
 }
 
@@ -215,8 +217,14 @@ static void draw_full_frame(void)
   send_fill(16U, 226U, 448U, 28U, LCDM_WHITE);
 
   clear_text_cache();
+  lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
   g_lcdm_motor_page = 0U;
+}
+
+static void request_full_redraw(void)
+{
+  ui.redraw_pending = true;
 }
 
 static void set_text_cached(char *cache,
@@ -599,6 +607,10 @@ static void process_events(void)
       g_lcdm_motor_last_y = event.page_id;
       g_lcdm_motor_last_event = event.touch_event;
       show_component_debug(event.page_id, event.component_id, event.touch_event, key);
+      if(key == LCDM_KEY_NONE) {
+        request_full_redraw();
+        continue;
+      }
       handle_key_event(key, event.touch_event);
     } else if(event.type == LCDM_TJC_EVENT_ASCII) {
       key = key_from_ascii(event.ascii, &touch_event);
@@ -607,6 +619,10 @@ static void process_events(void)
       g_lcdm_motor_last_y = 0U;
       g_lcdm_motor_last_event = touch_event;
       show_ascii_debug(event.ascii, key, touch_event);
+      if(key == LCDM_KEY_NONE) {
+        request_full_redraw();
+        continue;
+      }
       handle_key_event(key, touch_event);
     } else {
       /* No action. */
@@ -640,6 +656,11 @@ void lcdm_motor_ui_init(void)
 void lcdm_motor_ui_service(void)
 {
   process_events();
+  if(ui.redraw_pending) {
+    ui.redraw_pending = false;
+    draw_full_frame();
+    render_current_status();
+  }
   delay_ms(1U);
 
   ui.elapsed_ms++;
