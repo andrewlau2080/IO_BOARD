@@ -364,15 +364,6 @@ static uint8_t key_from_raw_coord(uint16_t raw_x, uint16_t raw_y, uint16_t *mapp
     return key;
   }
 
-  if((raw_x < LCDM_H) && (raw_y < LCDM_W)) {
-    key = key_from_coord(raw_y, raw_x);
-    if(key != LCDM_KEY_NONE) {
-      *mapped_x = raw_y;
-      *mapped_y = raw_x;
-      return key;
-    }
-  }
-
   *mapped_x = raw_x;
   *mapped_y = raw_y;
   return LCDM_KEY_NONE;

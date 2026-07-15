@@ -296,17 +296,7 @@ static uint8_t lcdm_coord_to_key_direct(uint16_t x, uint16_t y)
 
 static uint8_t lcdm_coord_to_key(uint16_t x, uint16_t y)
 {
-  uint8_t key = lcdm_coord_to_key_direct(x, y);
-
-  if(key != FIRST_GEN_KEY_NONE) {
-    return key;
-  }
-
-  if((x < LCDM_H) && (y < LCDM_W)) {
-    return lcdm_coord_to_key_direct(y, x);
-  }
-
-  return FIRST_GEN_KEY_NONE;
+  return lcdm_coord_to_key_direct(x, y);
 }
 
 static void lcdm_raw_show_touch(uint16_t x, uint16_t y, uint8_t key)
