@@ -369,84 +369,6 @@ static uint8_t key_from_raw_coord(uint16_t raw_x, uint16_t raw_y, uint16_t *mapp
   return LCDM_KEY_NONE;
 }
 
-static uint8_t key_from_component(uint8_t component_id)
-{
-  switch(component_id) {
-  case 1U:
-  case 11U:
-    return LCDM_KEY_K1;
-  case 2U:
-  case 12U:
-    return LCDM_KEY_K2;
-  case 3U:
-  case 13U:
-    return LCDM_KEY_K3;
-  case 4U:
-  case 14U:
-    return LCDM_KEY_K4;
-  default:
-    return LCDM_KEY_NONE;
-  }
-}
-
-static uint8_t key_from_ascii(const char *text, uint8_t *touch_event)
-{
-  if(touch_event != 0) {
-    *touch_event = 1U;
-  }
-  if(text == 0) {
-    return LCDM_KEY_NONE;
-  }
-
-  if((strcmp(text, "K1_UP") == 0) || (strcmp(text, "key=K1_UP") == 0)) {
-    if(touch_event != 0) {
-      *touch_event = 0U;
-    }
-    return LCDM_KEY_K1;
-  }
-  if((strcmp(text, "K2_UP") == 0) || (strcmp(text, "key=K2_UP") == 0)) {
-    if(touch_event != 0) {
-      *touch_event = 0U;
-    }
-    return LCDM_KEY_K2;
-  }
-  if((strcmp(text, "K3_UP") == 0) || (strcmp(text, "key=K3_UP") == 0)) {
-    if(touch_event != 0) {
-      *touch_event = 0U;
-    }
-    return LCDM_KEY_K3;
-  }
-  if((strcmp(text, "K4_UP") == 0) || (strcmp(text, "key=K4_UP") == 0)) {
-    if(touch_event != 0) {
-      *touch_event = 0U;
-    }
-    return LCDM_KEY_K4;
-  }
-
-  if((strcmp(text, "K1") == 0) || (strcmp(text, "key=K1") == 0) ||
-     (strcmp(text, "K1_DOWN") == 0) || (strcmp(text, "key=K1_DOWN") == 0) ||
-     (strcmp(text, "SELF") == 0)) {
-    return LCDM_KEY_K1;
-  }
-  if((strcmp(text, "K2") == 0) || (strcmp(text, "key=K2") == 0) ||
-     (strcmp(text, "K2_DOWN") == 0) || (strcmp(text, "key=K2_DOWN") == 0) ||
-     (strcmp(text, "AUTO") == 0)) {
-    return LCDM_KEY_K2;
-  }
-  if((strcmp(text, "K3") == 0) || (strcmp(text, "key=K3") == 0) ||
-     (strcmp(text, "K3_DOWN") == 0) || (strcmp(text, "key=K3_DOWN") == 0) ||
-     (strcmp(text, "RESET") == 0)) {
-    return LCDM_KEY_K3;
-  }
-  if((strcmp(text, "K4") == 0) || (strcmp(text, "key=K4") == 0) ||
-     (strcmp(text, "K4_DOWN") == 0) || (strcmp(text, "key=K4_DOWN") == 0) ||
-     (strcmp(text, "OK") == 0) || (strcmp(text, "SAVE") == 0)) {
-    return LCDM_KEY_K4;
-  }
-
-  return LCDM_KEY_NONE;
-}
-
 static void set_active_key(uint8_t key)
 {
   uint8_t old_key = ui.active_key;
@@ -592,29 +514,21 @@ static void process_events(void)
       show_coord_debug(event.x, event.y, mapped_x, mapped_y, event.touch_event, key);
       handle_key_event(key, event.touch_event);
     } else if(event.type == LCDM_TJC_EVENT_TOUCH) {
-      key = key_from_component(event.component_id);
       g_lcdm_motor_touch_count++;
       g_lcdm_motor_last_x = (uint16_t)event.component_id;
       g_lcdm_motor_last_y = event.page_id;
       g_lcdm_motor_last_event = event.touch_event;
-      show_component_debug(event.page_id, event.component_id, event.touch_event, key);
-      if(key == LCDM_KEY_NONE) {
-        request_full_redraw();
-        continue;
-      }
-      handle_key_event(key, event.touch_event);
+      show_component_debug(event.page_id, event.component_id, event.touch_event, LCDM_KEY_NONE);
+      request_full_redraw();
+      continue;
     } else if(event.type == LCDM_TJC_EVENT_ASCII) {
-      key = key_from_ascii(event.ascii, &touch_event);
       g_lcdm_motor_touch_count++;
       g_lcdm_motor_last_x = 0U;
       g_lcdm_motor_last_y = 0U;
       g_lcdm_motor_last_event = touch_event;
-      show_ascii_debug(event.ascii, key, touch_event);
-      if(key == LCDM_KEY_NONE) {
-        request_full_redraw();
-        continue;
-      }
-      handle_key_event(key, touch_event);
+      show_ascii_debug(event.ascii, LCDM_KEY_NONE, touch_event);
+      request_full_redraw();
+      continue;
     } else {
       /* No action. */
     }
