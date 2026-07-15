@@ -166,6 +166,7 @@ static uint8_t expected_harness_find_next_problem(uint16_t start_out,
                                                   uint16_t *problem_in);
 static uint8_t panel_printed_hold_service(void);
 static void first_gen_ir_sync_print_test_service(void);
+static void display_auto_idle(void);
 
 static void buzzer_stop(void)
 {
@@ -580,22 +581,12 @@ static void panel_display_scan_step(void)
 
 static void panel_display_scan_service(void)
 {
-  if(panel_display_state != FIRST_GEN_DISPLAY_SCAN) {
-    panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
-  } else {
-    panel_scan_tick++;
-  }
-
-  if(panel_scan_tick < FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS) {
+  if(panel_display_state == FIRST_GEN_DISPLAY_SCAN) {
     return;
   }
 
-  panel_scan_tick = 0U;
-  panel_scan_phase++;
-  if(panel_scan_phase >= 3U) {
-    panel_scan_phase = 0U;
-  }
-  panel_display_scan_step();
+  display_auto_idle();
+  panel_display_state = FIRST_GEN_DISPLAY_SCAN;
 }
 
 static void display_self_pass(void)
@@ -817,6 +808,13 @@ static void display_error_code(uint16_t point)
 
 static void panel_reset_to_zero(void)
 {
+  if(panel_auto_enabled == 0U &&
+     g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_RESET &&
+     panel_waiting_for_reconnect == 0U &&
+     g_first_gen_learn_pending == 0U) {
+    return;
+  }
+
   panel_operation_interrupted = 1U;
   panel_waiting_for_reconnect = 0U;
   panel_idle_ms = 0U;
@@ -859,6 +857,10 @@ static void panel_run_self_test(void)
 
 static void panel_start_auto_test(void)
 {
+  if(panel_auto_enabled != 0U && g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    return;
+  }
+
   panel_operation_interrupted = 1U;
   panel_waiting_for_reconnect = 0U;
   panel_idle_ms = 0U;
