@@ -65,18 +65,17 @@ FF FF FF
 | 9 | `key_k2` | `fill` + 两条 `xstr` |
 | 10 | `key_k3` | `fill` + 两条 `xstr` |
 | 11 | `key_k4` | `fill` + 两条 `xstr` |
-| 12 | `ledm_panel` / `ledm_text` | `fill` + `xstr` |
-| 13 | `detail_panel` / `detail_text` | `fill` + `xstr` |
-| 14 | `sub_panel` / `sub_text` | `fill` + `xstr` |
-| 15 | - | `sendxy=1` |
+| 12 | `ledm_panel` + `detail_panel` / `result_text` | `fill` + `xstr` |
+| 13 | `sub_panel` / `sub_text` | `fill` + `xstr` |
+| 14 | - | `sendxy=1` |
 
 ## 局部刷新规则
 
 | 变化 | 刷新对象 | 备注 |
 |---|---|---|
-| 状态变化 | `state_text`、`main_text`、`sub_text` | 按状态表更新 |
-| LEDM 内容变化 | `ledm_text` | 先清 `ledm_panel` 再写文字 |
-| 点位/结果变化 | `detail_text` | 先清 `detail_panel` 再写文字 |
+| 状态变化 | `state_text`、`main_text`、`sub_text` | 按状态表更新，固定左到右显示 |
+| 点位/结果变化 | `result_text` | 只显示一组结果，覆盖 `ledm_panel + detail_panel` 整行 |
+| PASS/打印状态变化 | `pass_result` + `print_state` | PASS 后左 1/3 显示闪烁 PASS，右 2/3 显示 `PRINT READY/PRINTING/PRINTED` |
 | 按键按下 | 对应 `key_kx` | 背景改 `BLUE` |
 | 按键松开 | 对应 `key_kx` | 背景改 `DARK_GRAY` |
 | 屏幕露出旧控件 | 全屏绘制 | 属于错误恢复，不改变业务状态 |
@@ -99,19 +98,18 @@ FF FF FF
 | 2 | 解析 `raw_x = xH << 8 | xL` |
 | 3 | 解析 `raw_y = yH << 8 | yL` |
 | 4 | 保存原始坐标到调试变量 |
-| 5 | 按坐标表先尝试 `(raw_x, raw_y)` |
-| 6 | 如果不能命中，再按坐标方向兼容表尝试 `(raw_y, raw_x)` |
+| 5 | 只按横屏原始坐标 `(raw_x, raw_y)` 查 K1-K4 坐标表 |
+| 6 | 未命中时只显示调试信息，不执行业务动作，不触发旧控件 |
 | 7 | 命中 K1-K4 后更新按键状态并执行业务动作 |
-| 8 | 未命中时只显示调试信息，不执行业务动作，不触发旧控件 |
 
 K1-K4 命中表固定如下：
 
 | 按键 | X 范围 | Y 范围 | 固件内部键值 |
 |---|---|---|---|
-| K1 | `0..119` | `112..169` | `FIRST_GEN_KEY_SET` |
-| K2 | `120..239` | `112..169` | `FIRST_GEN_KEY_CLEAR` |
-| K3 | `240..359` | `112..169` | `FIRST_GEN_KEY_PLUS` |
-| K4 | `360..479` | `112..169` | `FIRST_GEN_KEY_MINUS` |
+| K1 | `0..119` | `214..271` | `FIRST_GEN_KEY_SET` |
+| K2 | `120..239` | `214..271` | `FIRST_GEN_KEY_CLEAR` |
+| K3 | `240..359` | `214..271` | `FIRST_GEN_KEY_PLUS` |
+| K4 | `360..479` | `214..271` | `FIRST_GEN_KEY_MINUS` |
 
 ## 触摸事件语义
 

@@ -25,5 +25,6 @@ void first_gen_display_clear(void);
 uint8_t first_gen_display_key_read_raw(void);
 void first_gen_display_write_raw6(const uint8_t segments[FIRST_GEN_DISPLAY_DIGITS]);
 void first_gen_display_write_text6(const char text[FIRST_GEN_DISPLAY_DIGITS]);
+void first_gen_display_write_learn_summary(uint16_t out_count, uint16_t in_count, uint32_t total);
 
 #endif

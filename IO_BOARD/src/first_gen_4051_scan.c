@@ -658,55 +658,14 @@ static void display_current_idle_state(void)
   }
 }
 
-static void display_saved(void)
-{
-  char text[FIRST_GEN_DISPLAY_DIGITS] = {'S', 'A', 'U', 'E', 'd', ' '};
-
-  first_gen_display_write_text6(text);
-}
-
-static void display_learn_total(uint32_t total)
-{
-  char text[FIRST_GEN_DISPLAY_DIGITS];
-
-  if(total > 99UL) {
-    total = 99UL;
-  }
-
-  text[0] = 't';
-  text[1] = 'o';
-  text[2] = 't';
-  text[3] = '-';
-  text[4] = (char)('0' + ((total / 10UL) % 10UL));
-  text[5] = (char)('0' + (total % 10UL));
-  first_gen_display_write_text6(text);
-}
-
-static void display_learn_total_flash_twice(uint32_t total)
-{
-  uint8_t i;
-
-  for(i = 0U; i < 2U; i++) {
-    display_learn_total(total);
-    delay_ms(100U);
-    first_gen_display_clear();
-    delay_ms(100U);
-  }
-}
-
 static uint8_t panel_wait_learn_confirm(void)
 {
-  uint8_t show_total = 0U;
   uint8_t key;
 
   while(g_first_gen_learn_pending != 0U) {
-    if(show_total == 0U) {
-      display_pair(g_first_gen_learn_out_count, g_first_gen_learn_in_count);
-      show_total = 1U;
-    } else {
-      display_learn_total(g_first_gen_learn_connected_pairs);
-      show_total = 0U;
-    }
+    first_gen_display_write_learn_summary(g_first_gen_learn_out_count,
+                                          g_first_gen_learn_in_count,
+                                          g_first_gen_learn_connected_pairs);
 
     for(uint16_t elapsed_ms = 0U; elapsed_ms < 500U; elapsed_ms += FIRST_GEN_PANEL_KEY_POLL_MS) {
       key = first_gen_display_key_read_raw();
@@ -760,6 +719,13 @@ static void panel_wait_all_keys_released(uint16_t stable_ms)
 static void display_print_ready(void)
 {
   char text[FIRST_GEN_DISPLAY_DIGITS] = {'P', 'r', 'n', 't', ' ', ' '};
+
+  first_gen_display_write_text6(text);
+}
+
+static void display_printing(void)
+{
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'P', 'r', 'i', 'n', 't', 'g'};
 
   first_gen_display_write_text6(text);
 }
@@ -1527,7 +1493,7 @@ static uint8_t panel_service_print_event(void)
   if(print_event_sent == 0U) {
     if(first_gen_ir_send_logic_tx_once() != 0U) {
       print_event_sent = 1U;
-      display_print_ready();
+      display_printing();
     } else {
       g_first_gen_print_poll_reject_counter++;
       print_event_pending = 0U;
@@ -1751,8 +1717,9 @@ static uint8_t first_gen_4051_confirm_learn_save(void)
   g_first_gen_learn_pending = 0U;
   scan_out_point = 1U;
   waiting_on_error = 0U;
-  display_learn_total_flash_twice(g_first_gen_learn_connected_pairs);
-  display_saved();
+  first_gen_display_write_learn_summary(g_first_gen_learn_out_count,
+                                        g_first_gen_learn_in_count,
+                                        g_first_gen_learn_connected_pairs);
   panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
   return 1U;
 }
