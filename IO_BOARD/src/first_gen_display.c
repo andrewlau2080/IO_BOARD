@@ -45,9 +45,6 @@ static char lcdm_raw_ledm_cache[8];
 static char lcdm_raw_detail_cache[28];
 static char lcdm_raw_sub_cache[64];
 static char lcdm_raw_touch_cache[64];
-static char lcdm_last_state[16];
-static char lcdm_last_value[16];
-static uint16_t lcdm_last_color = LCDM_BLUE;
 static uint8_t lcdm_recover_pending;
 
 volatile uint32_t g_first_gen_lcdm_touch_count;
@@ -179,6 +176,26 @@ static void lcdm_raw_draw_keys(void)
   lcdm_raw_draw_key(3U, lcdm_current_key == FIRST_GEN_KEY_MINUS);
 }
 
+static void lcdm_raw_draw_key_by_value(uint8_t key, uint8_t active)
+{
+  switch(key) {
+  case FIRST_GEN_KEY_SET:
+    lcdm_raw_draw_key(0U, active);
+    break;
+  case FIRST_GEN_KEY_CLEAR:
+    lcdm_raw_draw_key(1U, active);
+    break;
+  case FIRST_GEN_KEY_PLUS:
+    lcdm_raw_draw_key(2U, active);
+    break;
+  case FIRST_GEN_KEY_MINUS:
+    lcdm_raw_draw_key(3U, active);
+    break;
+  default:
+    break;
+  }
+}
+
 static void lcdm_raw_draw_test_frame(void)
 {
   lcdm_tjc_send_cmd("bkcmd=0");
@@ -216,8 +233,8 @@ static void lcdm_recover_if_requested(void)
   }
 
   lcdm_recover_pending = 0U;
-  lcdm_raw_draw_test_frame();
-  lcdm_raw_update(lcdm_last_state, lcdm_last_value, lcdm_last_color);
+  lcdm_tjc_send_cmd("tsw 255,0");
+  lcdm_tjc_send_cmd("sendxy=1");
 }
 
 static void lcdm_raw_update(const char *state, const char *value, uint16_t state_color)
@@ -234,10 +251,6 @@ static void lcdm_raw_update(const char *state, const char *value, uint16_t state
   if(value == 0) {
     value = "";
   }
-
-  (void)snprintf(lcdm_last_state, sizeof(lcdm_last_state), "%s", state);
-  (void)snprintf(lcdm_last_value, sizeof(lcdm_last_value), "%s", value);
-  lcdm_last_color = state_color;
 
   if(strncmp(value, "AUTO", 4U) == 0) {
     state_text = "READY";
@@ -324,94 +337,39 @@ static void lcdm_raw_show_touch(uint16_t x, uint16_t y, uint8_t key)
   }
 }
 
-static void lcdm_raw_show_touch_event(const lcdm_tjc_event_t *event, uint8_t key)
-{
-  char text[32];
-  const char *key_name = "---";
-
-  if(event == 0) {
-    return;
-  }
-
-  switch(key) {
-  case FIRST_GEN_KEY_SET: key_name = "K1"; break;
-  case FIRST_GEN_KEY_CLEAR: key_name = "K2"; break;
-  case FIRST_GEN_KEY_PLUS: key_name = "K3"; break;
-  case FIRST_GEN_KEY_MINUS: key_name = "K4"; break;
-  default: break;
-  }
-
-  (void)snprintf(text,
-                 sizeof(text),
-                 "T P=%u C=%u E=%u %s",
-                 (unsigned int)event->page_id,
-                 (unsigned int)event->component_id,
-                 (unsigned int)event->touch_event,
-                 key_name);
-  if(strcmp(lcdm_raw_touch_cache, text) != 0) {
-    (void)snprintf(lcdm_raw_touch_cache, sizeof(lcdm_raw_touch_cache), "%s", text);
-    lcdm_raw_write_cached(lcdm_raw_sub_cache, sizeof(lcdm_raw_sub_cache), 24U, 229U, 432U, 22U, LCDM_BLUE, LCDM_WHITE, 1U, lcdm_raw_touch_cache);
-  }
-}
-
-static void lcdm_raw_show_ascii_event(const lcdm_tjc_event_t *event)
-{
-  char text[32];
-  uint8_t b0 = 0U;
-  uint8_t b1 = 0U;
-  uint8_t b2 = 0U;
-
-  if(event == 0) {
-    return;
-  }
-
-  if(event->len > 0U) {
-    b0 = (uint8_t)event->ascii[0];
-  }
-  if(event->len > 1U) {
-    b1 = (uint8_t)event->ascii[1];
-  }
-  if(event->len > 2U) {
-    b2 = (uint8_t)event->ascii[2];
-  }
-
-  (void)snprintf(text,
-                 sizeof(text),
-                 "R L=%u %02X %02X %02X",
-                 (unsigned int)event->len,
-                 (unsigned int)b0,
-                 (unsigned int)b1,
-                 (unsigned int)b2);
-  if(strcmp(lcdm_raw_touch_cache, text) != 0) {
-    (void)snprintf(lcdm_raw_touch_cache, sizeof(lcdm_raw_touch_cache), "%s", text);
-    lcdm_raw_write_cached(lcdm_raw_sub_cache, sizeof(lcdm_raw_sub_cache), 24U, 229U, 432U, 22U, LCDM_BLUE, LCDM_WHITE, 1U, lcdm_raw_touch_cache);
-  }
-}
-
 static uint8_t lcdm_latch_key(uint8_t key)
 {
+  uint8_t old_key;
+
   if(key == FIRST_GEN_KEY_NONE) {
     return FIRST_GEN_KEY_NONE;
   }
 
+  if(lcdm_current_key == key && lcdm_key_waits_release != 0U) {
+    return key;
+  }
+
+  old_key = lcdm_current_key;
   lcdm_current_key = key;
   g_first_gen_lcdm_last_key = key;
   g_first_gen_lcdm_key_press_count++;
   lcdm_key_hold_reads = 0U;
   lcdm_key_waits_release = 1U;
-  lcdm_raw_draw_keys();
+  lcdm_raw_draw_key_by_value(old_key, 0U);
+  lcdm_raw_draw_key_by_value(key, 1U);
   return key;
 }
 
 static void lcdm_release_key(uint8_t key)
 {
   if((key == FIRST_GEN_KEY_NONE) || (lcdm_current_key == key)) {
+    uint8_t old_key = lcdm_current_key;
     lcdm_current_key = FIRST_GEN_KEY_NONE;
     g_first_gen_lcdm_last_key = FIRST_GEN_KEY_NONE;
     g_first_gen_lcdm_key_release_count++;
     lcdm_key_hold_reads = 0U;
     lcdm_key_waits_release = 0U;
-    lcdm_raw_draw_keys();
+    lcdm_raw_draw_key_by_value(old_key, 0U);
   }
 }
 
@@ -428,9 +386,6 @@ static void lcdm_display_init(void)
   g_first_gen_lcdm_last_key = FIRST_GEN_KEY_NONE;
   g_first_gen_lcdm_last_x = 0U;
   g_first_gen_lcdm_last_y = 0U;
-  (void)snprintf(lcdm_last_state, sizeof(lcdm_last_state), "%s", "READY");
-  (void)snprintf(lcdm_last_value, sizeof(lcdm_last_value), "%s", "AUTO");
-  lcdm_last_color = LCDM_BLUE;
   lcdm_recover_pending = 0U;
   lcdm_tjc_init();
   lcdm_tjc_force_baudrate(LCDM_TJC_BAUDRATE);
@@ -455,14 +410,15 @@ static uint8_t lcdm_display_key_read_raw(void)
     if(event.type == LCDM_TJC_EVENT_TOUCH) {
       g_first_gen_lcdm_last_x = (uint16_t)event.component_id;
       g_first_gen_lcdm_last_y = event.page_id;
-      lcdm_raw_show_touch_event(&event, FIRST_GEN_KEY_NONE);
       lcdm_request_recover();
       continue;
     } else if(event.type == LCDM_TJC_EVENT_TOUCH_COORD) {
       key = lcdm_coord_to_key(event.x, event.y);
       g_first_gen_lcdm_last_x = event.x;
       g_first_gen_lcdm_last_y = event.y;
-      lcdm_raw_show_touch(event.x, event.y, key);
+      if(key == FIRST_GEN_KEY_NONE) {
+        lcdm_raw_show_touch(event.x, event.y, key);
+      }
       if(event.touch_event == 0U) {
         lcdm_release_key(key);
         return FIRST_GEN_KEY_NONE;
@@ -471,7 +427,6 @@ static uint8_t lcdm_display_key_read_raw(void)
         return lcdm_latch_key(key);
       }
     } else if(event.type == LCDM_TJC_EVENT_ASCII) {
-      lcdm_raw_show_ascii_event(&event);
       lcdm_request_recover();
       continue;
     }
