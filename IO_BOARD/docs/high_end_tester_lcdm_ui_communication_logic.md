@@ -74,8 +74,8 @@ FF FF FF
 | 变化 | 刷新对象 | 备注 |
 |---|---|---|
 | 状态变化 | `state_text`、`main_text`、`sub_text` | 按状态表更新，固定左到右显示 |
-| 点位/结果变化 | `result_text` | 只显示一组结果，覆盖 `ledm_panel + detail_panel` 整行 |
-| PASS/打印状态变化 | `pass_result` + `print_state` | PASS 后左 1/3 显示闪烁 PASS，右 2/3 显示 `PRINT READY/PRINTING/PRINTED` |
+| 点位/结果变化 | `result_text` | 只显示一组结果，覆盖结果行 |
+| PASS/打印状态变化 | `pass_result` + `print_state` | PASS 后左 1/3 显示闪烁 PASS，右 2/3 显示打印状态 |
 | 按键按下 | 对应 `key_kx` | 背景改 `BLUE` |
 | 按键松开 | 对应 `key_kx` | 背景改 `DARK_GRAY` |
 | 屏幕露出旧控件 | 全屏绘制 | 属于错误恢复，不改变业务状态 |
@@ -147,12 +147,14 @@ K1 长按学习必须依赖“按下保持时间”，不能把单次坐标包�
 
 | 按键 | 触发条件 | 动作 | 显示结果 |
 |---|---|---|---|
-| K1 | 短按 | 进入自检 | `SELF / SELF TEST / Axxbxx` |
-| K1 | 按住约 3 秒 | 进入学习 | `LEARN / LEARN MODE / LEArn` |
-| K2 | 短按 | 进入自动测试 | `AUTO / AUTO TEST / Axxbxx` |
-| K3 | 短按 | 复位到待机 | `READY / AUTO TEST / AUTO` |
+| K1 | 短按 | 进入自检 | `SELF / SELF TESTING / 001 - 001` |
+| K1 | 按住约 3 秒 | 进入学习 | `LEARN / LEARNING / 001 - 001` |
+| K2 | 短按 | 进入自动测试 | `AUTO / AUTO TESTING / 001 - 001` |
+| K3 | 短按 | 复位到待机 | `READY / WIRE TESTER / STANDARD CABLE` |
 | K4 | 学习状态短按 | 确认/保存学习资料 | `PASS` 或保存提示 |
 | K4 | 非学习状态短按 | 确认当前结果；调试阶段可切 PASS | `PASS` |
+
+测试显示按 47 对组织，合计 94 点；若一页放不下，则分页显示为两页。
 
 ## 固件数据流
 

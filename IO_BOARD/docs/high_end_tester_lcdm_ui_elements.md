@@ -10,7 +10,7 @@
 
 | 页面 ID | 页面名称 | 用途 | 规则 |
 |---:|---|---|---|
-| 0 | `tester_main` | 高档测试机主界面 | 第一版只使用这一页；上电后 MCU 绘制全屏界面 |
+| 0 | `tester_main` | 高档测试机主界面 | 上电后 MCU 绘制全屏界面，单页不足时按两页分段显示 |
 
 ## 固定显示元素
 
@@ -18,8 +18,8 @@
 |---|---|---|---|---|
 | `screen_bg` | 色块 | 全屏背景 | 覆盖屏幕原内容，避免露出旧控件 | 全屏绘制 |
 | `title_bar` | 色块 | 顶部深蓝栏 | 标题区背景 | 全屏绘制 |
-| `title_text` | 文本 | `WIRE TESTER LCDM` | 设备/界面名称 | 全屏绘制 |
-| `role_text` | 文本 | `TESTER` | 当前角色 | 全屏绘制 |
+| `title_text` | 文本 | `STANDARD CABLE` | 设备/界面名称 | 全屏绘制 |
+| `role_text` | 文本 | `WIRE TESTER` | 当前模式标题 | 全屏绘制 |
 | `status_panel` | 色块 | 浅色状态区 | 承载状态和主提示 | 全屏绘制 |
 | `key_band` | 色块 | K1-K4 按键带 | 承载四个触摸按键 | 全屏绘制 |
 | `ledm_panel` | 色块 | LEDM 显示区 | 显示 6 字符兼容内容 | 全屏绘制 |
@@ -31,10 +31,10 @@
 | 元素 ID | 类型 | 示例内容 | 数据来源 | 刷新方式 |
 |---|---|---|---|---|
 | `state_text` | 文本 | `READY` / `SELF` / `AUTO` / `LEARN` / `PASS` / `NG` | 固件状态机 | 状态变化刷新 |
-| `main_text` | 文本 | `AUTO TEST` / `SELF TEST` / `PASS` / `NG` | 固件状态机 | 状态变化刷新 |
-| `ledm_text` | 文本 | `AUTO` / `A01b01` / `PASS` / `001002` | LEDM 兼容显示模型 | 内容变化刷新 |
-| `detail_text` | 文本 | `PROFILE DB50` / `OUT001 IN002` / `OK 092/092` | 测试流程 | 内容变化刷新 |
-| `sub_text` | 文本 | `K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK` | 当前状态提示 | 内容变化刷新 |
+| `main_text` | 文本 | `WIRE TESTER` / `LEARNING` / `AUTO TESTING` / `TEST COMPLETE` | 固件状态机 | 状态变化刷新 |
+| `ledm_text` | 文本 | `001 - 001` / `NNN - NNN` / `PASS` / `NG` | 当前 pair / 结果显示 | 内容变化刷新 |
+| `detail_text` | 文本 | `TOTAL - 047 PAIRS` / `TOTAL - 094 POINTS` / `WAITING FOR PRINTING` | 测试流程 | 内容变化刷新 |
+| `sub_text` | 文本 | `K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK/SAVE` | 当前状态提示 | 内容变化刷新 |
 | `touch_debug_text` | 文本 | `T 060,140 -> K1 DOWN` | LCDM 触摸解析 | 调试阶段覆盖 `sub_text` |
 
 ## 触摸按键元素
@@ -50,12 +50,13 @@
 
 | 状态 ID | 场景 | `state_text` | `main_text` | `ledm_text` | `detail_text` | `sub_text` |
 |---|---|---|---|---|---|---|
-| `READY` | 待机 | `READY` | `AUTO TEST` | `AUTO` | `PROFILE DB50` | `K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK` |
-| `SELF` | 自检 | `SELF` | `SELF TEST` | `Axxbxx` | `OUTxxx INxxx` | `CHECKING...  K3 RESET` |
-| `AUTO` | 自动测试 | `AUTO` | `AUTO TEST` | `Axxbxx` | `OK xxx/092` | `RUNNING  K3 RESET` |
-| `LEARN` | 学习 | `LEARN` | `LEARN MODE` | `LEArn` | `OUT048 IN048` | `HOLD K1 3S  K4 SAVE` |
-| `PASS` | 通过 | `PASS` | `PASS` | `PASS` | `TOTAL 092 OK` | `PRINT READY  REMOVE HARNESS` |
-| `NG` | 不良 | `NG` | `NG` | `001002` | `OUT001 IN002` | `SHORT CIRCUIT  K3 RESET` |
+| `READY` | 待机 | `READY` | `WIRE TESTER` | `WIRE TESTER` | `STANDARD CABLE` | `K1 SELF/LEARN  K2 AUTO  K3 RESET  K4 OK/SAVE` |
+| `SELF` | 自检 | `SELF` | `SELF TESTING` | `001 - 001` | `PAIR 001/047` | `CHECKING...  K3 RESET` |
+| `AUTO` | 自动测试 | `AUTO` | `AUTO TESTING` | `001 - 001` | `PAGE 1/2  TOTAL 047 PAIRS/094 POINTS` | `RUNNING  K3 RESET` |
+| `LEARN` | 学习 | `LEARNING` | `LEARNING` | `001 - 001` | `LEARNING OUTCOME` | `HOLD K1 3S  K4 SAVE` |
+| `PASS` | 通过 | `RESULT` | `TEST COMPLETE` | `PASS` | `PRINT READY` | `REMOVE HARNESS` |
+| `NG` | 不良 | `RESULT` | `TEST COMPLETE` | `NG` | `OUT001 IN002` | `SHORT CIRCUIT  K3 RESET` |
+| `PRINT` | 打印 | `RESULT` | `TEST COMPLETE` | `PRINT READY` / `PRINTING` / `PRINTED` | `WAITING FOR PRINTING` / `START PRINTING` / `COMPLETE` | `REMOVE HARNESS` |
 
 ## 实现边界
 

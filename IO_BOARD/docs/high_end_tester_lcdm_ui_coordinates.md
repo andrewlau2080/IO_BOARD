@@ -21,18 +21,18 @@
 |---|---:|---:|---:|---:|---|---|---:|---|
 | `screen_bg` | 0 | 0 | 480 | 272 | - | `WHITE` | - | 全屏背景，先画它覆盖旧内容 |
 | `title_bar` | 0 | 0 | 480 | 32 | - | `NAVY` | - | 顶部标题栏 |
-| `title_text` | 8 | 3 | 320 | 26 | `WHITE` | `NAVY` | 0 | 左侧标题 |
-| `role_text` | 360 | 3 | 110 | 26 | `WHITE` | `NAVY` | 2 | 右侧角色 |
+| `title_text` | 8 | 3 | 220 | 26 | `WHITE` | `NAVY` | 0 | 左侧标题 `STANDARD CABLE` |
+| `role_text` | 312 | 3 | 160 | 26 | `WHITE` | `NAVY` | 2 | 右侧标题 `WIRE TESTER` |
 | `status_panel` | 16 | 42 | 448 | 66 | - | `ROW_BG` | - | 主状态背景 |
-| `state_text` | 24 | 48 | 160 | 52 | 状态色 | `ROW_BG` | 0 | `READY/SELF/AUTO/LEARN/PASS/NG` |
+| `state_text` | 24 | 48 | 160 | 52 | 状态色 | `ROW_BG` | 0 | `READY/SELF/AUTO/LEARNING/RESULT` |
 | `main_text` | 184 | 48 | 272 | 52 | 状态色 | `ROW_BG` | 0 | 主提示，固定左对齐 |
 | `ledm_panel` | 16 | 122 | 214 | 34 | - | `WHITE` | - | LEDM 兼容显示背景 |
-| `result_text` | 24 | 126 | 432 | 26 | `BLUE` | `WHITE` | 0 | 普通测试/学习唯一结果，从左到右固定显示 |
-| `pass_result` | 16 | 122 | 149 | 34 | `WHITE` | `GREEN/DARK_GREEN` 闪烁 | 1 | PASS 专用结果区，占结果行 1/3，块字缩至上一版约 80% |
-| `print_state` | 165 | 122 | 299 | 34 | `NAVY/WHITE` | `PALE_CYAN/ORANGE/PALE_BLUE` | 1 | 打印状态区，占结果行 2/3，显示 `PRINT READY/PRINTING/PRINTED` |
+| `result_text` | 24 | 126 | 432 | 26 | `BLUE` | `WHITE` | 0 | 当前 pair / 单组结果，固定从左到右显示 |
+| `pass_result` | 16 | 122 | 149 | 34 | `WHITE` | `GREEN/DARK_GREEN` 闪烁 | 1 | PASS 专用结果区，占结果行 1/3 |
+| `print_state` | 165 | 122 | 299 | 34 | `NAVY/WHITE` | `PALE_CYAN/ORANGE/PALE_BLUE` | 1 | 打印状态区，占结果行 2/3，显示 `WAITING FOR PRINTING/START PRINTING/COMPLETE` |
 | `detail_panel` | 250 | 122 | 214 | 34 | - | `WHITE` | - | 点位/结果详情背景 |
 | `sub_panel` | 16 | 174 | 448 | 28 | - | `WHITE` | - | 辅助提示背景 |
-| `sub_text` | 24 | 177 | 432 | 22 | `GRAY` | `WHITE` | 1 | 操作提示 |
+| `sub_text` | 24 | 177 | 432 | 22 | `GRAY` | `WHITE` | 1 | 操作提示 / 页码 / 总数 |
 | `touch_debug_text` | 24 | 177 | 432 | 22 | `BLUE` | `WHITE` | 1 | 调试时覆盖 `sub_text` |
 | `key_band` | 0 | 214 | 480 | 58 | - | 分色 | - | 四键显示与触摸区域 |
 
@@ -47,9 +47,9 @@
 | `key_k3` | K3 | 240 | 214 | 120 | 58 | `block 286,227,27,14` | `compact 241,252,118,13` | `MAGENTA` | `PURPLE` |
 | `key_k4` | K4 | 360 | 214 | 120 | 58 | `block 406,227,27,14` | `compact 361,252,118,13` | `ORANGE` | `DARK_ORANGE` |
 
-K1-K4 主字使用 `fill` 绘制 5x7 方块字，已从上一版再缩小一半。按钮说明文字使用紧凑块字，高度约为上一版 90%。其它区域保持普通 `xstr` 显示。为提升点按响应，按下/松开不再重绘整颗按钮，只在按钮顶部更新一条 `fill` 快速亮条。
+K1-K4 主字使用 `fill` 绘制方块字，说明文字同步缩放。按钮说明文字使用紧凑块字。其它区域保持普通 `xstr` 显示。按下/松开只刷新按钮局部，不重绘整页。
 
-PASS 后结果行切换为双区显示：左侧 1/3 为 `PASS`，绿底白字，约 0.5 秒闪烁一次底色；右侧 2/3 为打印状态并带底色、居中放大。初始为 `PRINT READY` 淡青底深蓝字，感应触发并开始发送打印请求后为 `PRINTING` 橙底白字，收到完成后为 `PRINTED` 淡蓝底深蓝字。字体不使用绿色或黄色。
+PASS 后结果行切换为双区显示：左侧 1/3 为 `PASS`，绿底白字，约 0.5 秒闪烁一次底色；右侧 2/3 为打印状态并带底色、居中放大。初始为 `WAITING FOR PRINTING`，触发后切 `START PRINTING`，完成后切 `COMPLETE`。
 
 ## K1-K4 触摸命中坐标
 
