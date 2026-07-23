@@ -68,6 +68,11 @@
 #define LCDM_TOTAL_PAIRS            47U
 #define LCDM_TOTAL_POINTS           94U
 #define LCDM_PAIR_PAGE_SIZE         24U
+#define LCDM_AUTO_LIST_PAGE_SIZE    11U
+#define LCDM_AUTO_LIST_ROW_H        14U
+#define LCDM_AUTO_LIST_Y0           34U
+#define LCDM_AUTO_LIST_MAX_PAGE     (((LCDM_TOTAL_POINTS - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U)
+#define LCDM_TABLE_NG_WORDS         3U
 #define LCDM_PASS_BLINK_READS       50U
 #define LCDM_IDLE_SCROLL_READS      1920U
 #define LCDM_IDLE_BANNER_STEP_X     12
@@ -104,7 +109,20 @@ static uint16_t lcdm_idle_scroll_reads;
 static uint8_t lcdm_layout_mode;
 static uint8_t lcdm_table_page_cache;
 static uint16_t lcdm_table_active_cache;
+static uint32_t lcdm_table_ng_in_bits[LCDM_TABLE_NG_WORDS];
+static uint32_t lcdm_table_ng_out_bits[LCDM_TABLE_NG_WORDS];
+static uint16_t lcdm_learn_in_bg[LCDM_TOTAL_POINTS + 1U];
+static uint16_t lcdm_learn_out_bg[LCDM_TOTAL_POINTS + 1U];
+static char lcdm_auto_line_cache[LCDM_TOTAL_POINTS + 1U][256];
+static char lcdm_auto_footer_cache[80];
 static char lcdm_layout_top_cache[32];
+static char lcdm_learn_footer_scan_cache[20];
+static char lcdm_learn_footer_pairs_cache[24];
+static char lcdm_learn_footer_points_cache[24];
+static uint8_t lcdm_auto_page_cache;
+static uint16_t lcdm_auto_active_cache;
+static uint16_t lcdm_auto_line_count;
+static uint32_t lcdm_auto_point_count;
 static uint8_t lcdm_learn_outcome_blink_on;
 
 volatile uint32_t g_first_gen_lcdm_touch_count;
@@ -119,6 +137,16 @@ volatile uint16_t g_first_gen_lcdm_last_y;
 static void lcdm_raw_update(const char *state, const char *value, uint16_t state_color);
 static void lcdm_prepare_standard_page(const char *top_right);
 static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point);
+static void lcdm_prepare_auto_test_page(uint8_t page, uint16_t active_point, uint8_t done);
+static void lcdm_table_ng_clear(void);
+static void lcdm_learn_table_clear(void);
+static void lcdm_auto_test_clear(void);
+static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point);
+static void lcdm_auto_test_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *y);
+static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point, uint16_t active_point);
+static void lcdm_draw_auto_test_all(uint8_t page, uint16_t active_point);
+static uint16_t lcdm_auto_test_set_line(uint16_t point, const char *line);
+static void lcdm_draw_auto_footer(uint8_t done);
 
 static void text6_to_cstr(const char text[FIRST_GEN_DISPLAY_DIGITS], char out[8])
 {
@@ -703,6 +731,8 @@ static void lcdm_raw_draw_test_frame(void)
   lcdm_layout_mode = 0U;
   lcdm_table_page_cache = 0U;
   lcdm_table_active_cache = 0U;
+  lcdm_table_ng_clear();
+  lcdm_learn_table_clear();
   lcdm_layout_top_cache[0] = '\0';
   lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
@@ -740,6 +770,19 @@ static void lcdm_draw_common_header(const char *top_right)
   lcdm_raw_fill(0U, 0U, LCDM_W, 32U, LCDM_NAVY);
   (void)top_right;
   lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_SCROLL, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
+  lcdm_raw_draw_keys();
+  lcdm_reset_text_caches();
+}
+
+static void lcdm_draw_auto_header(const char *title)
+{
+  if(title == 0) {
+    title = "";
+  }
+
+  lcdm_raw_fill(0U, 0U, LCDM_W, LCDM_H, LCDM_WHITE);
+  lcdm_raw_fill(0U, 0U, LCDM_W, 32U, LCDM_NAVY);
+  lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_SCROLL, LCDM_WHITE, LCDM_NAVY, 1U, title);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
 }
@@ -858,6 +901,356 @@ static uint8_t lcdm_table_point_visible(uint8_t page, uint16_t point)
 
 static void lcdm_table_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *in_y);
 
+static void lcdm_table_ng_clear(void)
+{
+  uint8_t i;
+
+  for(i = 0U; i < LCDM_TABLE_NG_WORDS; i++) {
+    lcdm_table_ng_in_bits[i] = 0U;
+    lcdm_table_ng_out_bits[i] = 0U;
+  }
+}
+
+static void lcdm_table_ng_set_bit(uint32_t bits[LCDM_TABLE_NG_WORDS], uint16_t point)
+{
+  uint8_t word;
+  uint8_t bit;
+
+  if(point == 0U || point > LCDM_TOTAL_POINTS) {
+    return;
+  }
+
+  word = (uint8_t)((point - 1U) >> 5);
+  bit = (uint8_t)((point - 1U) & 0x1FU);
+  if(word < LCDM_TABLE_NG_WORDS) {
+    bits[word] |= (1UL << bit);
+  }
+}
+
+static uint8_t lcdm_table_ng_has_bit(const uint32_t bits[LCDM_TABLE_NG_WORDS], uint16_t point)
+{
+  uint8_t word;
+  uint8_t bit;
+
+  if(point == 0U || point > LCDM_TOTAL_POINTS) {
+    return 0U;
+  }
+
+  word = (uint8_t)((point - 1U) >> 5);
+  bit = (uint8_t)((point - 1U) & 0x1FU);
+  if(word >= LCDM_TABLE_NG_WORDS) {
+    return 0U;
+  }
+  return ((bits[word] & (1UL << bit)) != 0U) ? 1U : 0U;
+}
+
+static void lcdm_table_ng_set_in(uint16_t point)
+{
+  lcdm_table_ng_set_bit(lcdm_table_ng_in_bits, point);
+}
+
+static void lcdm_table_ng_set_out(uint16_t point)
+{
+  lcdm_table_ng_set_bit(lcdm_table_ng_out_bits, point);
+}
+
+static uint8_t lcdm_table_ng_has_in(uint16_t point)
+{
+  return lcdm_table_ng_has_bit(lcdm_table_ng_in_bits, point);
+}
+
+static uint8_t lcdm_table_ng_has_out(uint16_t point)
+{
+  return lcdm_table_ng_has_bit(lcdm_table_ng_out_bits, point);
+}
+
+static void lcdm_learn_table_clear(void)
+{
+  uint16_t point;
+
+  for(point = 0U; point <= LCDM_TOTAL_POINTS; point++) {
+    lcdm_learn_in_bg[point] = 0U;
+    lcdm_learn_out_bg[point] = 0U;
+  }
+  lcdm_learn_footer_scan_cache[0] = '\0';
+  lcdm_learn_footer_pairs_cache[0] = '\0';
+  lcdm_learn_footer_points_cache[0] = '\0';
+}
+
+static void lcdm_auto_test_clear(void)
+{
+  uint16_t point;
+
+  for(point = 0U; point <= LCDM_TOTAL_POINTS; point++) {
+    lcdm_auto_line_cache[point][0] = '\0';
+  }
+  lcdm_auto_page_cache = 0U;
+  lcdm_auto_active_cache = 0U;
+  lcdm_auto_line_count = 0U;
+  lcdm_auto_point_count = 0UL;
+  lcdm_auto_footer_cache[0] = '\0';
+}
+
+static uint16_t lcdm_learn_group_color(uint16_t out_point)
+{
+  static const uint16_t colors[] = {
+    LCDM_GREEN,
+    LCDM_ORANGE,
+    LCDM_MAGENTA,
+    LCDM_BLUE,
+    LCDM_PURPLE,
+    LCDM_PALE_CYAN,
+    LCDM_DARK_ORANGE,
+    LCDM_DARK_GREEN,
+    LCDM_GRAY
+  };
+
+  if(out_point == 0U) {
+    out_point = 1U;
+  }
+  return colors[(out_point - 1U) % (sizeof(colors) / sizeof(colors[0]))];
+}
+
+static uint16_t lcdm_learn_text_color(uint16_t bg)
+{
+  if(bg == LCDM_PALE_CYAN || bg == LCDM_PALE_BLUE || bg == LCDM_GREEN) {
+    return LCDM_NAVY;
+  }
+  return LCDM_WHITE;
+}
+
+static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point)
+{
+  uint16_t first;
+  uint16_t last;
+
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > LCDM_AUTO_LIST_MAX_PAGE) {
+    page = LCDM_AUTO_LIST_MAX_PAGE;
+  }
+
+  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+  last = (uint16_t)(first + LCDM_AUTO_LIST_PAGE_SIZE - 1U);
+  if(last > LCDM_TOTAL_POINTS) {
+    last = LCDM_TOTAL_POINTS;
+  }
+  return (point >= first && point <= last) ? 1U : 0U;
+}
+
+static void lcdm_auto_test_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *y)
+{
+  uint16_t base;
+  uint16_t offset;
+
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > LCDM_AUTO_LIST_MAX_PAGE) {
+    page = LCDM_AUTO_LIST_MAX_PAGE;
+  }
+
+  base = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+  offset = (uint16_t)(point - base);
+  *x = 16U;
+  *y = (uint16_t)(LCDM_AUTO_LIST_Y0 + (offset * LCDM_AUTO_LIST_ROW_H));
+}
+
+static uint16_t lcdm_auto_count_line_points(const char *line)
+{
+  uint16_t count = 0U;
+  const char *cursor;
+
+  if(line == 0 || line[0] == '\0') {
+    return 0U;
+  }
+
+  cursor = strchr(line, '-');
+  if(cursor == 0) {
+    return 0U;
+  }
+  cursor++;
+  while(*cursor != '\0' && *cursor != ';') {
+    if((*cursor == 'I') || (*cursor == 'O')) {
+      count++;
+    }
+    cursor++;
+  }
+
+  return count;
+}
+
+static uint16_t lcdm_auto_test_set_line(uint16_t point, const char *line)
+{
+  uint16_t existing;
+
+  if(point == 0U || point > LCDM_TOTAL_POINTS) {
+    return 0U;
+  }
+  if(line == 0) {
+    line = "";
+  }
+  if(line[0] == '\0') {
+    return 0U;
+  }
+
+  for(existing = 1U; existing <= lcdm_auto_line_count; existing++) {
+    if(strcmp(lcdm_auto_line_cache[existing], line) == 0) {
+      return existing;
+    }
+  }
+
+  if(lcdm_auto_line_count >= LCDM_TOTAL_POINTS) {
+    return 0U;
+  }
+
+  lcdm_auto_line_count++;
+  (void)snprintf(lcdm_auto_line_cache[lcdm_auto_line_count],
+                 sizeof(lcdm_auto_line_cache[lcdm_auto_line_count]),
+                 "%s",
+                 line);
+  lcdm_auto_point_count += (uint32_t)lcdm_auto_count_line_points(line);
+  return lcdm_auto_line_count;
+}
+
+static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point, uint16_t active_point)
+{
+  uint16_t x;
+  uint16_t y;
+  uint16_t bg = LCDM_WHITE;
+  uint16_t fg = LCDM_NAVY;
+  const char *line;
+
+  if(lcdm_auto_test_point_visible(page, point) == 0U) {
+    return;
+  }
+
+  line = lcdm_auto_line_cache[point];
+  if(line[0] == '\0') {
+    return;
+  }
+  if(point == active_point) {
+    bg = LCDM_PALE_BLUE;
+    fg = LCDM_WHITE;
+  }
+  lcdm_auto_test_point_rect(page, point, &x, &y);
+  lcdm_raw_fill(x, y, 448U, LCDM_AUTO_LIST_ROW_H, bg);
+  lcdm_raw_xstr_full(x, y, 448U, LCDM_AUTO_LIST_ROW_H, LCDM_FONT_SMALL, fg, bg, 0U, line);
+}
+
+static void lcdm_draw_auto_test_all(uint8_t page, uint16_t active_point)
+{
+  uint16_t point;
+  uint16_t first;
+  uint16_t last;
+
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > LCDM_AUTO_LIST_MAX_PAGE) {
+    page = LCDM_AUTO_LIST_MAX_PAGE;
+  }
+
+  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+  last = (uint16_t)(first + LCDM_AUTO_LIST_PAGE_SIZE - 1U);
+
+  if(first > lcdm_auto_line_count) {
+    return;
+  }
+  if(last > lcdm_auto_line_count) {
+    last = lcdm_auto_line_count;
+  }
+
+  for(point = first; point <= last; point++) {
+    lcdm_draw_auto_test_line(page, point, active_point);
+  }
+}
+
+static void lcdm_draw_auto_footer(uint8_t done)
+{
+  char status_text[20];
+  char pairs_text[24];
+  char points_text[24];
+  char cache_text[80];
+
+  if(done != 0U) {
+    (void)snprintf(status_text, sizeof(status_text), "RESULT");
+  } else {
+    (void)snprintf(status_text, sizeof(status_text), "AUTO");
+  }
+  (void)snprintf(pairs_text, sizeof(pairs_text), "TOTAL-%03u PAIRS", (unsigned int)lcdm_auto_line_count);
+  (void)snprintf(points_text, sizeof(points_text), "TOTAL-%03lu POINTS", (unsigned long)lcdm_auto_point_count);
+
+  (void)snprintf(cache_text, sizeof(cache_text), "%s|%s|%s", status_text, pairs_text, points_text);
+  if(strcmp(lcdm_auto_footer_cache, cache_text) == 0) {
+    return;
+  }
+
+  (void)snprintf(lcdm_auto_footer_cache, sizeof(lcdm_auto_footer_cache), "%s", cache_text);
+  lcdm_raw_fill(0U, 188U, LCDM_W, 24U, LCDM_WHITE);
+  lcdm_raw_xstr_full(0U, 188U, 140U, 24U, LCDM_FONT_TABLE, LCDM_BLUE, LCDM_WHITE, 1U, status_text);
+  lcdm_raw_xstr_full(140U, 188U, 170U, 24U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_WHITE, 1U, pairs_text);
+  lcdm_raw_xstr_full(310U, 188U, 170U, 24U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_WHITE, 1U, points_text);
+}
+
+static void lcdm_prepare_auto_test_page(uint8_t page, uint16_t active_point, uint8_t done)
+{
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > 2U) {
+    page = 2U;
+  }
+
+  lcdm_tjc_send_cmd("bkcmd=0");
+  lcdm_tjc_send_cmd("tsw 255,0");
+  lcdm_tjc_send_cmd("sendxy=1");
+
+  if(done == 0U && active_point == 0U && lcdm_auto_page_cache == 0U) {
+    lcdm_auto_test_clear();
+  }
+
+  if(lcdm_layout_mode != 4U || lcdm_auto_page_cache != page) {
+    lcdm_reset_dynamic_effects();
+    lcdm_layout_mode = 4U;
+    lcdm_auto_page_cache = page;
+    lcdm_auto_active_cache = active_point;
+    lcdm_layout_top_cache[0] = '\0';
+    lcdm_draw_auto_header("AUTO TESTING");
+    lcdm_draw_auto_test_all(page, active_point);
+    return;
+  }
+
+  if(lcdm_auto_active_cache != active_point) {
+    if(lcdm_auto_test_point_visible(page, lcdm_auto_active_cache) != 0U) {
+      lcdm_draw_auto_test_line(page, lcdm_auto_active_cache, active_point);
+    }
+    if(lcdm_auto_test_point_visible(page, active_point) != 0U) {
+      lcdm_draw_auto_test_line(page, active_point, active_point);
+    }
+    lcdm_auto_active_cache = active_point;
+  }
+
+  if(done != 0U) {
+    lcdm_draw_auto_footer(done);
+  }
+}
+
+static void lcdm_learn_set_group_connection(uint16_t out_point, uint16_t in_point, uint16_t group_index)
+{
+  uint16_t color;
+
+  if(out_point == 0U || out_point > LCDM_TOTAL_POINTS ||
+     in_point == 0U || in_point > LCDM_TOTAL_POINTS) {
+    return;
+  }
+
+  color = lcdm_learn_group_color(group_index);
+  lcdm_learn_out_bg[out_point] = color;
+  lcdm_learn_in_bg[in_point] = color;
+}
+
 static void lcdm_draw_table_legend(uint8_t page)
 {
   uint16_t x;
@@ -909,6 +1302,20 @@ static void lcdm_draw_table_pair(uint8_t page, uint16_t point, uint16_t active_p
     top_fg = LCDM_NAVY;
     bottom_fg = LCDM_WHITE;
   }
+  if(point == active_point) {
+    top_bg = LCDM_BLUE;
+    bottom_bg = LCDM_NAVY;
+    top_fg = LCDM_WHITE;
+    bottom_fg = LCDM_WHITE;
+  }
+  if(lcdm_table_ng_has_in(point) != 0U) {
+    top_bg = LCDM_RED;
+    top_fg = LCDM_WHITE;
+  }
+  if(lcdm_table_ng_has_out(point) != 0U) {
+    bottom_bg = LCDM_RED;
+    bottom_fg = LCDM_WHITE;
+  }
 
   lcdm_table_point_rect(page, point, &x, &y);
   lcdm_raw_fill(x, y, 40U, 40U, LCDM_BLACK);
@@ -945,6 +1352,10 @@ static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point)
   lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
 
+  if(active_point == 0U) {
+    lcdm_table_ng_clear();
+  }
+
   if(lcdm_layout_mode != 2U || lcdm_table_page_cache != page) {
     lcdm_reset_dynamic_effects();
     lcdm_layout_mode = 2U;
@@ -974,6 +1385,188 @@ static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point)
     }
     lcdm_table_active_cache = active_point;
   }
+}
+
+static void lcdm_learn_table_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *in_y)
+{
+  uint16_t base = (page == 1U) ? 1U : 48U;
+  uint16_t offset = (uint16_t)(point - base);
+  uint16_t group = (uint16_t)(offset / 12U);
+  uint16_t col = (uint16_t)(offset % 12U);
+
+  *x = (uint16_t)(col * 40U);
+  *in_y = (uint16_t)(36U + (group * 38U));
+}
+
+static void lcdm_draw_learn_footer(uint16_t scan_point, uint16_t pair_count, uint32_t point_count, uint8_t done)
+{
+  char scan_text[20];
+  char pairs_text[24];
+  char points_text[24];
+
+  if(done == 2U) {
+    lcdm_learn_outcome_blink_on ^= 1U;
+    if(lcdm_learn_outcome_blink_on != 0U) {
+      (void)snprintf(scan_text, sizeof(scan_text), "CONFIRMED");
+    } else {
+      scan_text[0] = '\0';
+    }
+  } else if(done != 0U) {
+    (void)snprintf(scan_text, sizeof(scan_text), "OUTCOME");
+  } else if(scan_point == 0U) {
+    (void)snprintf(scan_text, sizeof(scan_text), "SCAN 000");
+  } else {
+    (void)snprintf(scan_text, sizeof(scan_text), "SCAN %03u-%03u", (unsigned int)scan_point, (unsigned int)scan_point);
+  }
+
+  if(pair_count == 0U && point_count == 0UL && done == 0U) {
+    pairs_text[0] = '\0';
+    points_text[0] = '\0';
+  } else {
+    (void)snprintf(pairs_text, sizeof(pairs_text), "TOTAL-%03u PAIRS", (unsigned int)pair_count);
+    (void)snprintf(points_text, sizeof(points_text), "TOTAL-%03u POINTS", (unsigned int)point_count);
+  }
+
+  if(strncmp(lcdm_learn_footer_scan_cache, scan_text, sizeof(lcdm_learn_footer_scan_cache)) == 0 &&
+     strncmp(lcdm_learn_footer_pairs_cache, pairs_text, sizeof(lcdm_learn_footer_pairs_cache)) == 0 &&
+     strncmp(lcdm_learn_footer_points_cache, points_text, sizeof(lcdm_learn_footer_points_cache)) == 0) {
+    return;
+  }
+
+  (void)snprintf(lcdm_learn_footer_scan_cache, sizeof(lcdm_learn_footer_scan_cache), "%s", scan_text);
+  (void)snprintf(lcdm_learn_footer_pairs_cache, sizeof(lcdm_learn_footer_pairs_cache), "%s", pairs_text);
+  (void)snprintf(lcdm_learn_footer_points_cache, sizeof(lcdm_learn_footer_points_cache), "%s", points_text);
+  lcdm_raw_fill(0U, 188U, LCDM_W, 24U, LCDM_WHITE);
+  lcdm_raw_xstr_full(0U, 188U, 140U, 24U, LCDM_FONT_TABLE, LCDM_BLUE, LCDM_WHITE, 1U, scan_text);
+  lcdm_raw_xstr_full(140U, 188U, 170U, 24U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_WHITE, 1U, pairs_text);
+  lcdm_raw_xstr_full(310U, 188U, 170U, 24U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_WHITE, 1U, points_text);
+}
+
+static void lcdm_draw_learn_table_legend(uint8_t page)
+{
+  uint16_t x;
+  uint16_t y;
+
+  lcdm_learn_table_point_rect(page, (page == 1U) ? 48U : 95U, &x, &y);
+  lcdm_raw_fill(x, y, 40U, 36U, LCDM_BLACK);
+  lcdm_raw_fill((uint16_t)(x + 1U), (uint16_t)(y + 1U), 38U, 16U, LCDM_ROW_BG);
+  lcdm_raw_xstr_full((uint16_t)(x + 1U), (uint16_t)(y + 1U), 38U, 16U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_ROW_BG, 1U, "IN");
+  lcdm_raw_fill((uint16_t)(x + 1U), (uint16_t)(y + 19U), 38U, 16U, LCDM_ROW_BG);
+  lcdm_raw_xstr_full((uint16_t)(x + 1U), (uint16_t)(y + 19U), 38U, 16U, LCDM_FONT_TABLE, LCDM_NAVY, LCDM_ROW_BG, 1U, "OUT");
+}
+
+static void lcdm_draw_learn_table_pair(uint8_t page, uint16_t point, uint16_t active_point)
+{
+  uint16_t x;
+  uint16_t y;
+  uint16_t top_bg = LCDM_WHITE;
+  uint16_t bottom_bg = LCDM_WHITE;
+  uint16_t top_fg = LCDM_DARK_GRAY;
+  uint16_t bottom_fg = LCDM_DARK_GRAY;
+  char text[8];
+
+  if(lcdm_table_point_visible(page, point) == 0U) {
+    return;
+  }
+
+  if(point <= active_point) {
+    top_bg = LCDM_ROW_BG;
+    bottom_bg = LCDM_ROW_BG;
+  }
+  if(point == active_point) {
+    top_bg = LCDM_BLUE;
+    bottom_bg = LCDM_NAVY;
+    top_fg = LCDM_WHITE;
+    bottom_fg = LCDM_WHITE;
+  }
+  if(lcdm_learn_in_bg[point] != 0U) {
+    top_bg = lcdm_learn_in_bg[point];
+    top_fg = lcdm_learn_text_color(top_bg);
+  }
+  if(lcdm_learn_out_bg[point] != 0U) {
+    bottom_bg = lcdm_learn_out_bg[point];
+    bottom_fg = lcdm_learn_text_color(bottom_bg);
+  }
+
+  lcdm_learn_table_point_rect(page, point, &x, &y);
+  lcdm_raw_fill(x, y, 40U, 36U, LCDM_BLACK);
+  (void)snprintf(text, sizeof(text), "%03u", (unsigned int)point);
+  lcdm_raw_fill((uint16_t)(x + 1U), (uint16_t)(y + 1U), 38U, 16U, top_bg);
+  lcdm_raw_xstr_full((uint16_t)(x + 1U), (uint16_t)(y + 1U), 38U, 16U, LCDM_FONT_TABLE, top_fg, top_bg, 1U, text);
+  lcdm_raw_fill((uint16_t)(x + 1U), (uint16_t)(y + 19U), 38U, 16U, bottom_bg);
+  lcdm_raw_xstr_full((uint16_t)(x + 1U), (uint16_t)(y + 19U), 38U, 16U, LCDM_FONT_TABLE, bottom_fg, bottom_bg, 1U, text);
+}
+
+static void lcdm_draw_learn_table_all(uint8_t page, uint16_t active_point)
+{
+  uint16_t point;
+  uint16_t first = (page == 1U) ? 1U : 48U;
+  uint16_t last = (page == 1U) ? 47U : 94U;
+
+  for(point = first; point <= last; point++) {
+    lcdm_draw_learn_table_pair(page, point, active_point);
+  }
+}
+
+static void lcdm_prepare_learn_table_page(uint8_t page,
+                                          uint16_t active_point,
+                                          uint16_t scan_point,
+                                          uint16_t pair_count,
+                                          uint32_t point_count,
+                                          uint8_t done)
+{
+  uint16_t old_active = lcdm_table_active_cache;
+
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > 2U) {
+    page = 2U;
+  }
+
+  lcdm_tjc_send_cmd("bkcmd=0");
+  lcdm_tjc_send_cmd("tsw 255,0");
+  lcdm_tjc_send_cmd("sendxy=1");
+
+  if(active_point == 0U && done == 0U) {
+    lcdm_learn_table_clear();
+  }
+
+  if(lcdm_layout_mode != 3U || lcdm_table_page_cache != page) {
+    lcdm_reset_dynamic_effects();
+    lcdm_layout_mode = 3U;
+    lcdm_table_page_cache = page;
+    lcdm_table_active_cache = active_point;
+    lcdm_layout_top_cache[0] = '\0';
+    lcdm_draw_common_header("");
+    lcdm_draw_learn_table_all(page, active_point);
+    lcdm_draw_learn_table_legend(page);
+    lcdm_learn_footer_scan_cache[0] = '\0';
+    lcdm_learn_footer_pairs_cache[0] = '\0';
+    lcdm_learn_footer_points_cache[0] = '\0';
+    lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
+    return;
+  }
+
+  if(old_active != active_point) {
+    if(lcdm_table_point_visible(page, old_active) != 0U) {
+      lcdm_draw_learn_table_pair(page, old_active, active_point);
+    }
+    if(lcdm_table_point_visible(page, active_point) != 0U) {
+      lcdm_draw_learn_table_pair(page, active_point, active_point);
+    }
+    if(active_point > old_active) {
+      uint16_t point;
+      for(point = (uint16_t)(old_active + 1U); point < active_point; point++) {
+        if(lcdm_table_point_visible(page, point) != 0U) {
+          lcdm_draw_learn_table_pair(page, point, active_point);
+        }
+      }
+    }
+    lcdm_table_active_cache = active_point;
+  }
+
+  lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
 }
 
 void first_gen_display_show_page(const char *top_right,
@@ -1152,6 +1745,162 @@ void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point)
   }
 
   lcdm_prepare_table_page(page, active_point);
+}
+
+void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+  if(point == 0U) {
+    return;
+  }
+
+  lcdm_table_ng_set_in(point);
+  lcdm_table_ng_set_out(point);
+  lcdm_prepare_table_page(page, point);
+  if(lcdm_table_point_visible(page, point) != 0U) {
+    lcdm_draw_table_pair(page, point, point);
+  }
+}
+
+void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point, uint16_t in_point)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_table_ng_set_out(out_point);
+  lcdm_table_ng_set_in(in_point);
+  lcdm_prepare_table_page(page, in_point);
+  if(lcdm_table_point_visible(page, in_point) != 0U) {
+    lcdm_draw_table_pair(page, in_point, in_point);
+  }
+  if(out_point != in_point && lcdm_table_point_visible(page, out_point) != 0U) {
+    lcdm_draw_table_pair(page, out_point, in_point);
+  }
+}
+
+void first_gen_display_show_learn_table_page(uint8_t page,
+                                             uint16_t active_point,
+                                             uint16_t scan_point,
+                                             uint16_t pair_count,
+                                             uint32_t point_count,
+                                             uint8_t done)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_prepare_learn_table_page(page, active_point, scan_point, pair_count, point_count, done);
+}
+
+void first_gen_display_clear_learn_table_groups(void)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_learn_table_clear();
+  lcdm_layout_mode = 0U;
+  lcdm_table_page_cache = 0U;
+  lcdm_table_active_cache = 0U;
+}
+
+void first_gen_display_set_learn_table_group_connection(uint16_t out_point,
+                                                        uint16_t in_point,
+                                                        uint16_t group_index)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_learn_set_group_connection(out_point, in_point, group_index);
+}
+
+void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
+                                                const uint16_t in_groups[],
+                                                uint16_t active_point)
+{
+  uint16_t point;
+  uint16_t new_in_bg;
+  uint16_t new_out_bg;
+  uint8_t changed;
+
+  if(display_is_lcdm == 0U || out_groups == 0 || in_groups == 0) {
+    return;
+  }
+
+  for(point = 1U; point <= LCDM_TOTAL_POINTS; point++) {
+    new_in_bg = (in_groups[point] == 0U) ? 0U : lcdm_learn_group_color(in_groups[point]);
+    new_out_bg = (out_groups[point] == 0U) ? 0U : lcdm_learn_group_color(out_groups[point]);
+    changed = 0U;
+
+    if(lcdm_learn_in_bg[point] != new_in_bg) {
+      lcdm_learn_in_bg[point] = new_in_bg;
+      changed = 1U;
+    }
+    if(lcdm_learn_out_bg[point] != new_out_bg) {
+      lcdm_learn_out_bg[point] = new_out_bg;
+      changed = 1U;
+    }
+
+    if(changed != 0U &&
+       lcdm_layout_mode == 3U &&
+       lcdm_table_point_visible(lcdm_table_page_cache, point) != 0U) {
+      lcdm_draw_learn_table_pair(lcdm_table_page_cache, point, active_point);
+    }
+  }
+}
+
+void first_gen_display_clear_auto_test_lines(void)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_auto_test_clear();
+  lcdm_layout_mode = 0U;
+  lcdm_auto_page_cache = 0U;
+  lcdm_auto_active_cache = 0U;
+}
+
+void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line, uint8_t done)
+{
+  uint8_t page;
+  uint16_t active_point;
+  uint16_t stored_point;
+
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  if((line != 0) && (line[0] != '\0') && out_point != 0U && out_point <= LCDM_TOTAL_POINTS) {
+    stored_point = lcdm_auto_test_set_line(out_point, line);
+    if(stored_point != 0U) {
+      page = (uint8_t)(((stored_point - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+      lcdm_prepare_auto_test_page(page, stored_point, done);
+      if(lcdm_auto_test_point_visible(page, stored_point) != 0U) {
+        lcdm_draw_auto_test_line(page, stored_point, stored_point);
+      }
+      lcdm_auto_active_cache = stored_point;
+    }
+  } else {
+    if(lcdm_auto_line_count == 0U) {
+      page = (uint8_t)(((out_point - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+    } else {
+      page = (uint8_t)(((lcdm_auto_line_count - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+    }
+    active_point = (lcdm_auto_active_cache != 0U) ? lcdm_auto_active_cache : 0U;
+    lcdm_prepare_auto_test_page(page, active_point, done);
+  }
+
+  if(done != 0U) {
+    lcdm_draw_auto_footer(done);
+    return;
+  }
+
+  lcdm_draw_auto_footer(done);
 }
 
 #if LCDM_FONT_PROBE_MODE
@@ -1473,6 +2222,8 @@ static void lcdm_display_init(void)
   lcdm_layout_mode = 0U;
   lcdm_table_page_cache = 0U;
   lcdm_table_active_cache = 0U;
+  lcdm_table_ng_clear();
+  lcdm_learn_table_clear();
   lcdm_layout_top_cache[0] = '\0';
   lcdm_learn_outcome_blink_on = 0U;
   lcdm_tjc_init();

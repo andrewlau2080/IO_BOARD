@@ -48,5 +48,22 @@ void first_gen_display_show_page(const char *top_right,
                                  uint16_t result_bg,
                                  uint16_t result_fg);
 void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point);
+void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point);
+void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point, uint16_t in_point);
+void first_gen_display_show_learn_table_page(uint8_t page,
+                                             uint16_t active_point,
+                                             uint16_t scan_point,
+                                             uint16_t pair_count,
+                                             uint32_t point_count,
+                                             uint8_t done);
+void first_gen_display_clear_learn_table_groups(void);
+void first_gen_display_set_learn_table_group_connection(uint16_t out_point,
+                                                        uint16_t in_point,
+                                                        uint16_t group_index);
+void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
+                                                const uint16_t in_groups[],
+                                                uint16_t active_point);
+void first_gen_display_clear_auto_test_lines(void);
+void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line, uint8_t done);
 
 #endif
