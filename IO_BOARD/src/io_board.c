@@ -44,6 +44,7 @@ static const io_pin_t buttons[6] = {
 static const io_pin_t print_trigger = PIN_B(8);
 static const io_pin_t buzzer_2k = PIN_B(4);
 static const io_pin_t debug_out = PIN_H(3);
+static uint8_t mux_active_index[4] = {0xFFU, 0xFFU, 0xFFU, 0xFFU};
 
 static void clock_enable(const io_pin_t *pin)
 {
@@ -120,12 +121,44 @@ static void mux_group_select(const io_pin_t *addr_pins, const io_pin_t *en_pins,
   pin_write(&en_pins[index >> 3], FALSE);
 }
 
+static void mux_group_disable_cached(const io_pin_t *en_pins, uint8_t cache_index)
+{
+  if(mux_active_index[cache_index] != 0xFFU) {
+    pin_write(&en_pins[mux_active_index[cache_index] >> 3], TRUE);
+    mux_active_index[cache_index] = 0xFFU;
+  }
+}
+
+static void mux_group_select_cached(const io_pin_t *addr_pins,
+                                    const io_pin_t *en_pins,
+                                    uint8_t cache_index,
+                                    uint8_t index)
+{
+  if(mux_active_index[cache_index] == index) {
+    return;
+  }
+
+  if(mux_active_index[cache_index] != 0xFFU) {
+    pin_write(&en_pins[mux_active_index[cache_index] >> 3], TRUE);
+  } else {
+    mux_disable_group(en_pins);
+  }
+
+  mux_address_write(addr_pins, index & 0x07);
+  pin_write(&en_pins[index >> 3], FALSE);
+  mux_active_index[cache_index] = index;
+}
+
 void io_mux_disable_all(void)
 {
   mux_disable_group(in_a_en);
   mux_disable_group(in_b_en);
   mux_disable_group(out_a_en);
   mux_disable_group(out_b_en);
+  mux_active_index[0] = 0xFFU;
+  mux_active_index[1] = 0xFFU;
+  mux_active_index[2] = 0xFFU;
+  mux_active_index[3] = 0xFFU;
 }
 
 void io_mux_select(io_mux_bank_t bank, uint8_t index)
@@ -136,20 +169,20 @@ void io_mux_select(io_mux_bank_t bank, uint8_t index)
 
   switch(bank) {
   case IO_MUX_IN_A:
-    mux_disable_group(in_b_en);
-    mux_group_select(in_a_addr, in_a_en, index);
+    mux_group_disable_cached(in_b_en, 1U);
+    mux_group_select_cached(in_a_addr, in_a_en, 0U, index);
     break;
   case IO_MUX_IN_B:
-    mux_disable_group(in_a_en);
-    mux_group_select(in_b_addr, in_b_en, index);
+    mux_group_disable_cached(in_a_en, 0U);
+    mux_group_select_cached(in_b_addr, in_b_en, 1U, index);
     break;
   case IO_MUX_OUT_A:
-    mux_disable_group(out_b_en);
-    mux_group_select(out_a_addr, out_a_en, index);
+    mux_group_disable_cached(out_b_en, 3U);
+    mux_group_select_cached(out_a_addr, out_a_en, 2U, index);
     break;
   case IO_MUX_OUT_B:
-    mux_disable_group(out_a_en);
-    mux_group_select(out_b_addr, out_b_en, index);
+    mux_group_disable_cached(out_a_en, 2U);
+    mux_group_select_cached(out_b_addr, out_b_en, 3U, index);
     break;
   default:
     break;

@@ -41,8 +41,9 @@
 #define FIRST_GEN_LEARN_STEP_MS       100U
 #define FIRST_GEN_PANEL_PASS_MS       1200U
 #define FIRST_GEN_PANEL_KEY_POLL_MS   5U
+#define FIRST_GEN_LCDM_AUTO_ROWS_PER_SERVICE 94U
 #define FIRST_GEN_PROBLEM_RECHECK_MS  50U
-#define FIRST_GEN_PANEL_K1_SHORT_MS   80U
+#define FIRST_GEN_PANEL_K1_SHORT_MS   30U
 #define FIRST_GEN_PANEL_K1_LONG_MS    3000U
 #define FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS 200U
 #define FIRST_GEN_IDLE_SCROLL_MS      60000U
@@ -115,6 +116,8 @@ volatile uint8_t g_first_gen_learn_pending;
 
 static io_scan_result_t scan_result;
 static uint32_t expected_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
+static uint32_t auto_result_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
+static uint32_t auto_scan_cycle_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
 static uint16_t scan_out_point = 1U;
 static uint8_t waiting_on_error;
 static uint8_t current_problem_type;
@@ -122,6 +125,7 @@ static uint8_t panel_auto_enabled;
 static uint8_t panel_last_test_mode;
 static uint8_t panel_operation_interrupted;
 static uint8_t panel_waiting_for_reconnect;
+static uint8_t auto_cycle_result_changed;
 static uint32_t panel_idle_ms;
 static uint8_t scan_cycle_has_problem;
 static uint8_t panel_display_state;
@@ -144,6 +148,13 @@ static uint16_t printed_hold_out = 1U;
 static uint16_t printed_hold_in = 1U;
 static uint8_t self_test_result_ready;
 static uint8_t self_test_result_page = 1U;
+static uint8_t auto_result_browse_active;
+static uint8_t auto_result_browse_page = 1U;
+static uint8_t auto_result_live_page = 1U;
+static uint8_t auto_initial_display_active;
+static uint16_t auto_initial_display_line_count;
+static uint32_t auto_diag_scan_count;
+static uint32_t auto_diag_change_count;
 static uint8_t learn_result_page = 1U;
 static uint8_t learn_confirmed_hold_active;
 static uint8_t learn_table_display_active;
@@ -180,11 +191,14 @@ static uint8_t panel_printed_hold_service(void);
 static void first_gen_ir_sync_print_test_service(void);
 static void display_auto_idle(void);
 static void display_self_test_result_page(uint8_t page);
+static uint8_t panel_handle_auto_result_browse_key(uint8_t key);
 static void display_lcdm_total_line(char *out, uint8_t len);
 static void display_lcdm_pair_line(uint16_t left, uint16_t right, char *out, uint8_t len);
 static void display_auto_test_pair(uint16_t point);
 static void display_learn_pair(uint16_t point);
 static void display_learn_summary_page(uint8_t confirmed);
+static void auto_result_refresh_lcdm_page(uint16_t focus_out, uint8_t done);
+static uint8_t panel_handle_learn_confirmed_key(uint8_t key);
 static void display_self_pass(void);
 static void display_error_code(uint16_t point);
 static uint8_t panel_check_open_pair(uint16_t point);
@@ -285,10 +299,415 @@ static void panel_reset_scan_state(void)
   panel_display_state = FIRST_GEN_DISPLAY_UNKNOWN;
   g_first_gen_pass_hold_active = 0U;
   pass_print_started = 0U;
+  auto_result_browse_active = 0U;
+  auto_result_browse_page = 1U;
   printed_hold_active = 0U;
   printed_hold_out = 1U;
   printed_hold_in = 1U;
   buzzer_stop();
+}
+
+static void auto_result_matrix_clear(void)
+{
+  uint16_t row;
+  uint8_t word;
+
+  for(row = 0U; row < FIRST_GEN_4051_POINT_COUNT; row++) {
+    for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+      auto_result_matrix[row][word] = 0U;
+    }
+  }
+}
+
+static void auto_scan_cycle_matrix_clear(void)
+{
+  uint16_t row;
+  uint8_t word;
+
+  for(row = 0U; row < FIRST_GEN_4051_POINT_COUNT; row++) {
+    for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+      auto_scan_cycle_matrix[row][word] = 0U;
+    }
+  }
+}
+
+static void auto_scan_cycle_matrix_store_row(uint16_t out_point)
+{
+  uint8_t word;
+
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return;
+  }
+
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    auto_scan_cycle_matrix[out_point - 1U][word] = scan_result.matrix[out_point - 1U][word];
+  }
+}
+
+static uint8_t auto_scan_cycle_row_changed(uint16_t out_point)
+{
+  uint8_t word;
+
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return 0U;
+  }
+
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    if(auto_result_matrix[out_point - 1U][word] != auto_scan_cycle_matrix[out_point - 1U][word]) {
+      return 1U;
+    }
+  }
+
+  return 0U;
+}
+
+static void auto_scan_cycle_row_commit(uint16_t out_point)
+{
+  uint8_t word;
+
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return;
+  }
+
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    auto_result_matrix[out_point - 1U][word] = auto_scan_cycle_matrix[out_point - 1U][word];
+  }
+}
+
+static uint16_t auto_result_uf_find(uint16_t parent[], uint16_t node)
+{
+  while(parent[node] != node) {
+    parent[node] = parent[parent[node]];
+    node = parent[node];
+  }
+
+  return node;
+}
+
+static void auto_result_uf_union(uint16_t parent[], uint16_t left, uint16_t right)
+{
+  uint16_t left_root = auto_result_uf_find(parent, left);
+  uint16_t right_root = auto_result_uf_find(parent, right);
+
+  if(left_root == right_root) {
+    return;
+  }
+  if(left_root < right_root) {
+    parent[right_root] = left_root;
+  } else {
+    parent[left_root] = right_root;
+  }
+}
+
+static uint8_t auto_result_matrix_seed_has_connection(uint16_t in_point)
+{
+  uint16_t out_point;
+  uint8_t word;
+  uint8_t bit;
+
+  if(in_point == 0U || in_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return 0U;
+  }
+
+  word = (uint8_t)((in_point - 1U) >> 5);
+  bit = (uint8_t)((in_point - 1U) & 0x1FU);
+  for(out_point = 1U; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
+    if((auto_result_matrix[out_point - 1U][word] & (1UL << bit)) != 0U) {
+      return 1U;
+    }
+  }
+
+  return 0U;
+}
+
+static void build_auto_test_line_from_in(uint16_t in_point, char *out, uint16_t len)
+{
+  char *cursor;
+  uint16_t remain;
+  uint8_t out_seen[FIRST_GEN_ACTIVE_POINT_COUNT + 1U];
+  uint8_t in_seen[FIRST_GEN_ACTIVE_POINT_COUNT + 1U];
+  uint8_t changed;
+  uint8_t first;
+  uint16_t scan_out;
+  uint16_t seed_in;
+  uint8_t word;
+  uint8_t bit;
+
+  if(out == 0 || len == 0U) {
+    return;
+  }
+
+  out[0] = '\0';
+  if(in_point == 0U || in_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return;
+  }
+
+  for(seed_in = 0U; seed_in <= FIRST_GEN_ACTIVE_POINT_COUNT; seed_in++) {
+    out_seen[seed_in] = 0U;
+    in_seen[seed_in] = 0U;
+  }
+
+  in_seen[in_point] = 1U;
+  do {
+    changed = 0U;
+    for(scan_out = 1U; scan_out <= FIRST_GEN_ACTIVE_POINT_COUNT; scan_out++) {
+      if(out_seen[scan_out] == 0U) {
+        continue;
+      }
+      for(seed_in = 1U; seed_in <= FIRST_GEN_ACTIVE_POINT_COUNT; seed_in++) {
+        word = (uint8_t)((seed_in - 1U) >> 5);
+        bit = (uint8_t)((seed_in - 1U) & 0x1FU);
+        if((auto_result_matrix[scan_out - 1U][word] & (1UL << bit)) != 0U && in_seen[seed_in] == 0U) {
+          in_seen[seed_in] = 1U;
+          changed = 1U;
+        }
+      }
+    }
+
+    for(seed_in = 1U; seed_in <= FIRST_GEN_ACTIVE_POINT_COUNT; seed_in++) {
+      if(in_seen[seed_in] == 0U) {
+        continue;
+      }
+      word = (uint8_t)((seed_in - 1U) >> 5);
+      bit = (uint8_t)((seed_in - 1U) & 0x1FU);
+      for(scan_out = 1U; scan_out <= FIRST_GEN_ACTIVE_POINT_COUNT; scan_out++) {
+        if((auto_result_matrix[scan_out - 1U][word] & (1UL << bit)) != 0U && out_seen[scan_out] == 0U) {
+          out_seen[scan_out] = 1U;
+          changed = 1U;
+        }
+      }
+    }
+  } while(changed != 0U);
+
+  cursor = out;
+  remain = len;
+  first = 1U;
+  for(seed_in = 1U; seed_in <= FIRST_GEN_ACTIVE_POINT_COUNT; seed_in++) {
+    if(in_seen[seed_in] == 0U) {
+      continue;
+    }
+    if(remain <= 5U) {
+      break;
+    }
+    if(first == 0U) {
+      *cursor++ = ',';
+      *cursor = '\0';
+      remain--;
+    }
+    (void)snprintf(cursor, remain, "I%03u", (unsigned int)seed_in);
+    cursor = out + strlen(out);
+    remain = (uint16_t)(len - (uint16_t)(cursor - out));
+    first = 0U;
+  }
+
+  if(first != 0U) {
+    out[0] = '\0';
+    return;
+  }
+
+  if(remain <= 1U) {
+    return;
+  }
+  *cursor++ = '-';
+  *cursor = '\0';
+  remain = (uint16_t)(len - (uint16_t)(cursor - out));
+
+  first = 1U;
+  for(scan_out = 1U; scan_out <= FIRST_GEN_ACTIVE_POINT_COUNT; scan_out++) {
+    if(out_seen[scan_out] == 0U) {
+      continue;
+    }
+    if(remain <= 5U) {
+      break;
+    }
+    if(first == 0U) {
+      *cursor++ = ',';
+      *cursor = '\0';
+      remain--;
+    }
+    (void)snprintf(cursor, remain, "O%03u", (unsigned int)scan_out);
+    cursor = out + strlen(out);
+    remain = (uint16_t)(len - (uint16_t)(cursor - out));
+    first = 0U;
+  }
+
+  if(first != 0U) {
+    out[0] = '\0';
+    return;
+  }
+
+  if(remain > 1U) {
+    *cursor++ = ';';
+    *cursor = '\0';
+  }
+}
+
+static uint16_t auto_result_finalize_display_lines(uint16_t focus_out)
+{
+  enum {
+    AUTO_RESULT_IN_BASE = 0,
+    AUTO_RESULT_OUT_BASE = FIRST_GEN_ACTIVE_POINT_COUNT,
+    AUTO_RESULT_NODE_COUNT = FIRST_GEN_ACTIVE_POINT_COUNT * 2U
+  };
+
+  uint16_t parent[AUTO_RESULT_NODE_COUNT];
+  uint8_t root_done[AUTO_RESULT_NODE_COUNT];
+  char line[256];
+  char *cursor;
+  uint16_t remain;
+  uint16_t node;
+  uint16_t in_point;
+  uint16_t out_point;
+  uint16_t line_index = 1U;
+  uint16_t root;
+  uint16_t focus_line_index = 0U;
+  uint8_t word;
+  uint8_t bit;
+  uint8_t first;
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    return 0U;
+  }
+
+  first_gen_display_reset_auto_test_line_cache();
+
+  for(node = 0U; node < AUTO_RESULT_NODE_COUNT; node++) {
+    parent[node] = node;
+    root_done[node] = 0U;
+  }
+
+  for(out_point = 1U; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
+    for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
+      word = (uint8_t)((in_point - 1U) >> 5);
+      bit = (uint8_t)((in_point - 1U) & 0x1FU);
+      if((auto_result_matrix[out_point - 1U][word] & (1UL << bit)) != 0U) {
+        auto_result_uf_union(parent,
+                             (uint16_t)(AUTO_RESULT_IN_BASE + in_point - 1U),
+                             (uint16_t)(AUTO_RESULT_OUT_BASE + out_point - 1U));
+      }
+    }
+  }
+
+  for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
+    if(auto_result_matrix_seed_has_connection(in_point) == 0U) {
+      continue;
+    }
+
+    root = auto_result_uf_find(parent, (uint16_t)(AUTO_RESULT_IN_BASE + in_point - 1U));
+    if(root_done[root] != 0U) {
+      continue;
+    }
+    root_done[root] = 1U;
+
+    line[0] = '\0';
+    cursor = line;
+    remain = sizeof(line);
+    first = 1U;
+    for(node = 1U; node <= FIRST_GEN_ACTIVE_POINT_COUNT; node++) {
+      if(auto_result_uf_find(parent, (uint16_t)(AUTO_RESULT_IN_BASE + node - 1U)) != root) {
+        continue;
+      }
+      if(remain <= 5U) {
+        break;
+      }
+      if(first == 0U) {
+        *cursor++ = ',';
+        *cursor = '\0';
+        remain--;
+      }
+      (void)snprintf(cursor, remain, "I%03u", (unsigned int)node);
+      cursor = line + strlen(line);
+      remain = (uint16_t)(sizeof(line) - (uint16_t)(cursor - line));
+      first = 0U;
+    }
+
+    if(first != 0U || remain <= 1U) {
+      continue;
+    }
+
+    *cursor++ = '-';
+    *cursor = '\0';
+    remain = (uint16_t)(sizeof(line) - (uint16_t)(cursor - line));
+
+    first = 1U;
+    for(node = 1U; node <= FIRST_GEN_ACTIVE_POINT_COUNT; node++) {
+      if(auto_result_uf_find(parent, (uint16_t)(AUTO_RESULT_OUT_BASE + node - 1U)) != root) {
+        continue;
+      }
+      if(remain <= 5U) {
+        break;
+      }
+      if(first == 0U) {
+        *cursor++ = ',';
+        *cursor = '\0';
+        remain--;
+      }
+      (void)snprintf(cursor, remain, "O%03u", (unsigned int)node);
+      cursor = line + strlen(line);
+      remain = (uint16_t)(sizeof(line) - (uint16_t)(cursor - line));
+      first = 0U;
+    }
+
+    if(first != 0U) {
+      continue;
+    }
+    if(remain > 1U) {
+      *cursor++ = ';';
+      *cursor = '\0';
+    }
+    first_gen_display_cache_auto_test_line(line_index, line);
+    if(focus_out != 0U &&
+       focus_out <= FIRST_GEN_ACTIVE_POINT_COUNT &&
+       auto_result_uf_find(parent, (uint16_t)(AUTO_RESULT_OUT_BASE + focus_out - 1U)) == root) {
+      focus_line_index = line_index;
+    }
+    line_index++;
+  }
+
+  return focus_line_index;
+}
+
+static void auto_result_refresh_lcdm_page(uint16_t focus_out, uint8_t done)
+{
+  uint8_t page;
+  uint8_t page_count;
+  uint16_t focus_line;
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    return;
+  }
+
+  focus_line = auto_result_finalize_display_lines(focus_out);
+  page_count = first_gen_display_auto_test_page_count();
+  if(page_count == 0U) {
+    page_count = 1U;
+  }
+
+  if(focus_line != 0U) {
+    page = first_gen_display_auto_test_page_for_line(focus_line);
+    auto_result_browse_active = 0U;
+    auto_result_browse_page = page;
+  } else if(auto_result_browse_active != 0U) {
+    page = auto_result_browse_page;
+    if(page == 0U) {
+      page = 1U;
+    }
+    if(page > page_count) {
+      page = page_count;
+      auto_result_browse_page = page;
+    }
+  } else {
+    page = auto_result_live_page;
+    if(page == 0U) {
+      page = 1U;
+    }
+    if(page > page_count) {
+      page = page_count;
+    }
+  }
+
+  auto_result_live_page = page;
+  first_gen_display_refresh_auto_test_page(page, done);
 }
 
 static void panel_reset_print_state(void)
@@ -306,6 +725,9 @@ static void panel_reset_print_state(void)
   print_trigger_press_count = 0U;
   print_retry_scan_counter = 0U;
   pass_print_started = 0U;
+  auto_result_browse_active = 0U;
+  auto_result_browse_page = 1U;
+  auto_result_live_page = 1U;
   printed_hold_active = 0U;
 }
 
@@ -697,55 +1119,6 @@ static void display_panel_test_progress(uint16_t tested_point)
   display_panel_test_pair(tested_point);
 }
 
-static void build_auto_test_line(uint16_t out_point, char *out, uint16_t len)
-{
-  char *cursor;
-  uint16_t remain;
-  uint16_t in_point;
-  uint8_t word;
-  uint8_t bit;
-  uint8_t first;
-
-  if(out == 0 || len == 0U) {
-    return;
-  }
-
-  out[0] = '\0';
-  (void)snprintf(out, len, "O%03u-", (unsigned int)out_point);
-  cursor = out + strlen(out);
-  remain = (uint16_t)(len - (uint16_t)(cursor - out));
-  first = 1U;
-  for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
-    word = (uint8_t)((in_point - 1U) >> 5);
-    bit = (uint8_t)((in_point - 1U) & 0x1FU);
-    if((scan_result.matrix[out_point - 1U][word] & (1UL << bit)) == 0U) {
-      continue;
-    }
-    if(remain <= 5U) {
-      break;
-    }
-    if(first == 0U) {
-      *cursor++ = ',';
-      *cursor = '\0';
-      remain--;
-    }
-    (void)snprintf(cursor, remain, "I%03u", (unsigned int)in_point);
-    cursor = out + strlen(out);
-    remain = (uint16_t)(len - (uint16_t)(cursor - out));
-    first = 0U;
-  }
-
-  if(first != 0U) {
-    out[0] = '\0';
-    return;
-  }
-
-  if(remain > 1U) {
-    *cursor++ = ';';
-    *cursor = '\0';
-  }
-}
-
 static void display_auto_test_pair(uint16_t point)
 {
   if(first_gen_display_is_lcdm() != 0U) {
@@ -804,7 +1177,7 @@ static void display_learn_summary_page(uint8_t confirmed)
   }
 
   first_gen_display_show_learn_table_page(learn_result_page,
-                                          FIRST_GEN_ACTIVE_POINT_COUNT,
+                                          (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + 1U),
                                           FIRST_GEN_ACTIVE_POINT_COUNT,
                                           g_first_gen_learn_out_count,
                                           g_first_gen_learn_connected_pairs,
@@ -841,6 +1214,7 @@ static void panel_run_lcdm_self_test(void)
   display_panel_test_progress(0U);
   for(in_point = FIRST_GEN_PANEL_TEST_START; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
     page = (in_point <= 47U) ? 1U : 2U;
+    display_panel_test_progress(in_point);
     for(out_point = FIRST_GEN_PANEL_TEST_START; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
       if(io_scan_read_pair(IO_POS_OUT(out_point), IO_POS_IN(in_point), &pair) != IO_SCAN_OK) {
         io_mux_disable_all();
@@ -852,7 +1226,11 @@ static void panel_run_lcdm_self_test(void)
         lcdm_failed = 1U;
       }
     }
-    display_panel_test_progress(in_point);
+    if(first_gen_display_is_lcdm() != 0U) {
+      first_gen_display_show_auto_table_completed(page, in_point);
+    } else {
+      display_panel_test_progress(in_point);
+    }
     if(panel_priority_delay_ms(FIRST_GEN_PANEL_TEST_STEP_MS) != 0U) {
       io_mux_disable_all();
       return;
@@ -917,6 +1295,8 @@ static void display_ng(void)
 static void panel_display_pass_once(void)
 {
   if(panel_display_state != FIRST_GEN_DISPLAY_PASS) {
+    auto_result_browse_active = 0U;
+    auto_result_browse_page = 1U;
     panel_ng_out = 0U;
     panel_ng_in = 0U;
     display_pass();
@@ -928,6 +1308,8 @@ static void panel_display_pass_once(void)
 static void panel_display_ng_once(void)
 {
   if(panel_display_state != FIRST_GEN_DISPLAY_NG) {
+    auto_result_browse_active = 0U;
+    auto_result_browse_page = 1U;
     display_ng();
     panel_display_state = FIRST_GEN_DISPLAY_NG;
     panel_ng_tick = 0U;
@@ -939,6 +1321,12 @@ static void panel_display_ng_once(void)
 static void panel_display_ng_service(void)
 {
   if(panel_display_state != FIRST_GEN_DISPLAY_NG || panel_ng_out == 0U || panel_ng_in == 0U) {
+    return;
+  }
+  if(first_gen_display_is_lcdm() != 0U && g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    return;
+  }
+  if(auto_result_browse_active != 0U) {
     return;
   }
 
@@ -1012,7 +1400,39 @@ static void display_self_test_result_page(uint8_t page)
   }
 
   self_test_result_page = page;
-  first_gen_display_show_auto_table_page(page, 94U);
+  first_gen_display_show_auto_table_page(page, (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + 1U));
+}
+
+static uint8_t panel_handle_auto_result_browse_key(uint8_t key)
+{
+  uint8_t page_count;
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    return 0U;
+  }
+  if(g_first_gen_panel_mode != FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    return 0U;
+  }
+
+  if(key != FIRST_GEN_KEY_MINUS) {
+    return 0U;
+  }
+
+  page_count = first_gen_display_auto_test_page_count();
+  if(page_count == 0U) {
+    page_count = 1U;
+  }
+
+  if(auto_result_browse_active == 0U) {
+    auto_result_browse_active = 1U;
+    auto_result_browse_page = 1U;
+  } else {
+    auto_result_browse_page = (auto_result_browse_page >= page_count) ? 1U : (uint8_t)(auto_result_browse_page + 1U);
+  }
+
+  first_gen_display_refresh_auto_test_page(auto_result_browse_page, 0U);
+  auto_result_live_page = auto_result_browse_page;
+  return 1U;
 }
 
 static void display_auto_idle(void)
@@ -1267,6 +1687,17 @@ static void display_error_code(uint16_t point)
 
 static void panel_reset_to_zero(void)
 {
+  io_scan_clear_result(&scan_result);
+  scan_result.profile_id = IO_SCAN_PROFILE_FIRST_GEN_1TH;
+  scan_result.out_count = FIRST_GEN_ACTIVE_POINT_COUNT;
+  scan_result.in_count = FIRST_GEN_ACTIVE_POINT_COUNT;
+  g_first_gen_last_connected_pairs = 0U;
+  auto_result_matrix_clear();
+  auto_scan_cycle_matrix_clear();
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_clear_auto_test_lines();
+  }
+
   if(panel_auto_enabled == 0U &&
      g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_RESET &&
      panel_waiting_for_reconnect == 0U &&
@@ -1359,8 +1790,21 @@ static void panel_start_auto_test(void)
   panel_display_state = FIRST_GEN_DISPLAY_UNKNOWN;
   panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
   panel_scan_phase = 2U;
+  auto_result_browse_active = 0U;
+  auto_result_browse_page = 1U;
+  auto_result_live_page = 1U;
+  auto_initial_display_active = 1U;
+  auto_initial_display_line_count = 0U;
+  auto_diag_scan_count = 0UL;
+  auto_diag_change_count = 0UL;
+  auto_result_matrix_clear();
+  auto_scan_cycle_matrix_clear();
   first_gen_display_clear_auto_test_lines();
-  display_auto_test_pair(1U);
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_auto_test_page(1U, 0U);
+  } else {
+    display_auto_test_pair(1U);
+  }
   panel_display_state = FIRST_GEN_DISPLAY_SCAN;
 }
 
@@ -1395,6 +1839,7 @@ static void panel_handle_k1_press(void)
     if(self_test_result_ready != 0U) {
       panel_auto_enabled = 0U;
       g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
+      self_test_result_page = (self_test_result_page == 1U) ? 2U : 1U;
       display_self_test_result_page(self_test_result_page);
       return;
     }
@@ -1415,6 +1860,23 @@ static uint8_t panel_toggle_self_test_result_page(void)
   return 1U;
 }
 
+static uint8_t panel_handle_learn_confirmed_key(uint8_t key)
+{
+  if(learn_confirmed_hold_active == 0U) {
+    return 0U;
+  }
+
+  if(key != FIRST_GEN_KEY_SET) {
+    return 0U;
+  }
+
+  learn_result_page = (learn_result_page == 1U) ? 2U : 1U;
+  learn_confirmed_blink_tick = 0U;
+  display_learn_summary_page(1U);
+  panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+  return 1U;
+}
+
 static uint8_t panel_handle_key(void)
 {
   uint8_t key = first_gen_display_key_read_raw();
@@ -1430,7 +1892,13 @@ static uint8_t panel_handle_key(void)
 
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
+  if(panel_handle_learn_confirmed_key(key) != 0U) {
+    return 1U;
+  }
   learn_confirmed_hold_active = 0U;
+  if(panel_handle_auto_result_browse_key(key) != 0U) {
+    return 1U;
+  }
   switch(key) {
   case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
@@ -1467,7 +1935,13 @@ static uint8_t panel_priority_key_service(void)
 
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
+  if(panel_handle_learn_confirmed_key(key) != 0U) {
+    return 1U;
+  }
   learn_confirmed_hold_active = 0U;
+  if(panel_handle_auto_result_browse_key(key) != 0U) {
+    return 1U;
+  }
   switch(key) {
   case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
@@ -1670,18 +2144,78 @@ static void scan_result_set_bit(uint16_t out_point, uint16_t in_point)
   scan_result.matrix[out_point - 1U][word] |= (1UL << bit);
 }
 
+static uint8_t scan_select_out_point_fast(uint16_t out_point)
+{
+  uint8_t zero_based;
+
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return 0U;
+  }
+
+  zero_based = (uint8_t)(out_point - 1U);
+  if(zero_based < FIRST_GEN_A_HALF_POINT_COUNT) {
+    io_mux_select(IO_MUX_OUT_A, zero_based);
+  } else {
+    io_mux_select(IO_MUX_OUT_B, (uint8_t)(zero_based - FIRST_GEN_A_HALF_POINT_COUNT));
+  }
+  g_scan_active_out_pos = IO_POS_OUT(out_point);
+  return 1U;
+}
+
+static uint8_t scan_select_in_point_fast(uint16_t in_point)
+{
+  uint8_t zero_based;
+
+  if(in_point == 0U || in_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return 0U;
+  }
+
+  zero_based = (uint8_t)(in_point - 1U);
+  if(zero_based < FIRST_GEN_A_HALF_POINT_COUNT) {
+    io_mux_select(IO_MUX_IN_A, zero_based);
+  } else {
+    io_mux_select(IO_MUX_IN_B, (uint8_t)(zero_based - FIRST_GEN_A_HALF_POINT_COUNT));
+  }
+  g_scan_active_in_pos = IO_POS_IN(in_point);
+  return 1U;
+}
+
+static uint8_t scan_read_input_point_fast(uint16_t in_point)
+{
+  uint8_t input_high;
+
+  if(in_point <= FIRST_GEN_A_HALF_POINT_COUNT) {
+    input_high = (gpio_input_data_bit_read(GPIOA, GPIO_PINS_0) != RESET) ? 1U : 0U;
+    g_first_gen_last_adc1 = input_high ? 4095U : 0U;
+  } else {
+    input_high = (gpio_input_data_bit_read(GPIOA, GPIO_PINS_2) != RESET) ? 1U : 0U;
+    g_first_gen_last_adc2 = input_high ? 4095U : 0U;
+  }
+
+  return input_high;
+}
+
 static uint8_t scan_one_row(uint16_t out_point)
 {
   uint16_t in_point;
-  io_scan_pair_result_t pair;
+  uint8_t connected;
+
+  if(scan_select_out_point_fast(out_point) == 0U) {
+    io_mux_disable_all();
+    return 0U;
+  }
 
   for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
-    if(io_scan_read_pair(IO_POS_OUT(out_point), IO_POS_IN(in_point), &pair) != IO_SCAN_OK) {
+    if(scan_select_in_point_fast(in_point) == 0U) {
       io_mux_disable_all();
       return 0U;
     }
+    delay_us(10);
+    connected = scan_read_input_point_fast(in_point);
+    g_scan_pair_counter++;
     scan_result.scanned_pairs++;
-    if(pair.connected != 0U) {
+    if(connected != 0U) {
+      g_scan_connected_counter++;
       scan_result_set_bit(out_point, in_point);
       scan_result.connected_pairs++;
       if(learn_table_display_active != 0U && first_gen_display_is_lcdm() != 0U) {
@@ -1855,8 +2389,13 @@ static uint8_t scan_and_check_current_row(void)
 {
   uint16_t problem_in;
   uint8_t problem_type;
+  uint8_t word;
 
-  io_scan_clear_result(&scan_result);
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    scan_result.matrix[scan_out_point - 1U][word] = 0U;
+  }
+  scan_result.scanned_pairs = 0U;
+  scan_result.connected_pairs = 0U;
   scan_result.profile_id = IO_SCAN_PROFILE_FIRST_GEN_1TH;
   scan_result.out_count = FIRST_GEN_ACTIVE_POINT_COUNT;
   scan_result.in_count = FIRST_GEN_ACTIVE_POINT_COUNT;
@@ -2225,19 +2764,34 @@ static uint8_t first_gen_4051_learn_preview(void)
       scan_out_point = 1U;
       return 0U;
     }
+    if(first_gen_display_is_lcdm() != 0U) {
+      first_gen_display_show_learn_table_completed((scan_out_point <= 47U) ? 1U : 2U,
+                                                   scan_out_point,
+                                                   scan_out_point,
+                                                   0U,
+                                                   0UL);
+    }
     delay_ms(FIRST_GEN_LEARN_STEP_MS);
     buzzer_service(FIRST_GEN_LEARN_STEP_MS);
     first_gen_display_effect_step();
   }
   io_mux_disable_all();
   learn_table_display_active = 0U;
-  scan_out_point = 1U;
+  scan_out_point = (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + 1U);
   g_first_gen_last_connected_pairs = scan_result.connected_pairs;
   g_first_gen_learn_out_count = count_nonzero_rows(scan_result.matrix);
   g_first_gen_learn_in_count = count_nonzero_inputs(scan_result.matrix);
   g_first_gen_learn_connected_pairs = (uint32_t)g_first_gen_learn_out_count +
                                       (uint32_t)g_first_gen_learn_in_count;
   lcdm_apply_learn_component_colors();
+  scan_out_point = 1U;
+  if(first_gen_display_is_lcdm() != 0U) {
+    learn_result_page = 2U;
+    first_gen_display_refresh_learn_table_footer(FIRST_GEN_ACTIVE_POINT_COUNT,
+                                                 g_first_gen_learn_out_count,
+                                                 g_first_gen_learn_connected_pairs,
+                                                 1U);
+  }
 
   if(g_first_gen_learn_connected_pairs == 0U) {
     g_first_gen_recipe_valid = 0U;
@@ -2299,6 +2853,10 @@ uint8_t first_gen_4051_learn_current_harness(void)
 void first_gen_4051_scan_service(void)
 {
   uint8_t pass;
+  uint8_t row_changed;
+  uint8_t rows_this_service;
+  uint8_t rows_limit;
+  uint8_t lcdm_auto_scan_active;
 
   buzzer_service(1U);
 
@@ -2318,14 +2876,20 @@ void first_gen_4051_scan_service(void)
     return;
   }
 
+  lcdm_auto_scan_active = (first_gen_display_is_lcdm() != 0U &&
+                           panel_auto_enabled != 0U &&
+                           g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) ? 1U : 0U;
+
   panel_display_ng_service();
 
-  if(panel_service_print_event() != 0U) {
-    return;
-  }
+  if(lcdm_auto_scan_active == 0U) {
+    if(panel_service_print_event() != 0U) {
+      return;
+    }
 
-  if(panel_printed_hold_service() != 0U) {
-    return;
+    if(panel_printed_hold_service() != 0U) {
+      return;
+    }
   }
 
   if(panel_waiting_for_reconnect != 0U) {
@@ -2376,58 +2940,98 @@ void first_gen_4051_scan_service(void)
     return;
   }
 
-  if(scan_out_point == 1U && waiting_on_error == 0U) {
-    g_first_gen_missing_counter = 0U;
-    g_first_gen_unexpected_counter = 0U;
-    g_first_gen_first_fail_out = 0U;
-    g_first_gen_first_fail_in = 0U;
-    scan_cycle_has_problem = 0U;
-  }
+  rows_limit = (first_gen_display_is_lcdm() != 0U) ? FIRST_GEN_LCDM_AUTO_ROWS_PER_SERVICE : 1U;
+  for(rows_this_service = 0U; rows_this_service < rows_limit; rows_this_service++) {
+    if(scan_out_point == 1U && waiting_on_error == 0U) {
+      g_first_gen_missing_counter = 0U;
+      g_first_gen_unexpected_counter = 0U;
+      g_first_gen_first_fail_out = 0U;
+      g_first_gen_first_fail_in = 0U;
+      scan_cycle_has_problem = 0U;
+      auto_cycle_result_changed = 0U;
+      auto_scan_cycle_matrix_clear();
+    }
 
-  if(g_first_gen_last_pass == 0U && panel_display_state != FIRST_GEN_DISPLAY_NG) {
-    display_auto_test_pair(scan_out_point);
-    panel_display_state = FIRST_GEN_DISPLAY_SCAN;
-  }
+    pass = scan_and_check_current_row();
+    auto_scan_cycle_matrix_store_row(scan_out_point);
+    row_changed = auto_scan_cycle_row_changed(scan_out_point);
+    if(row_changed != 0U) {
+      auto_scan_cycle_row_commit(scan_out_point);
+      if(auto_cycle_result_changed == 0U && first_gen_display_is_lcdm() != 0U) {
+        auto_diag_change_count++;
+      }
+      auto_cycle_result_changed = 1U;
+      if(first_gen_display_is_lcdm() != 0U) {
+        auto_result_refresh_lcdm_page(scan_out_point, 0U);
+      }
+    }
 
-  pass = scan_and_check_current_row();
-  if(pass != 0U) {
-    char line[256];
+    if(pass != 0U) {
+      waiting_on_error = 0U;
+    } else {
+      scan_cycle_has_problem = 1U;
+      g_first_gen_last_pass = 0U;
+      g_first_gen_print_ready = 0U;
+      print_trigger_waiting = 0U;
+      print_event_pending = 0U;
+      print_event_sent = 0U;
+      pass_print_started = 0U;
+      waiting_on_error = 0U;
+    }
 
-    build_auto_test_line(scan_out_point, line, sizeof(line));
-    first_gen_display_show_auto_test_line(scan_out_point, line, 0U);
-    waiting_on_error = 0U;
     scan_out_point++;
     if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
-      first_gen_display_show_auto_test_line(1U, "", 1U);
       g_first_gen_scan_counter++;
       scan_out_point = 1U;
+      auto_initial_display_active = 0U;
+      auto_initial_display_line_count = 0U;
+      if(first_gen_display_is_lcdm() == 0U) {
+        first_gen_display_show_auto_test_line(1U, "", 1U);
+      }
+
       if(scan_cycle_has_problem == 0U) {
         g_first_gen_last_pass = 1U;
-        panel_hold_pass_until_restart();
+        g_first_gen_print_ready = 1U;
+        if(first_gen_display_is_lcdm() != 0U) {
+          print_event_pending = 0U;
+          print_event_displayed = 0U;
+          print_event_sent = 0U;
+          print_trigger_waiting = 0U;
+          print_trigger_released = 0U;
+          print_trigger_press_count = 0U;
+          pass_print_started = 0U;
+        } else {
+          panel_auto_enabled = 0U;
+          panel_hold_pass_until_restart();
+        }
       } else {
         g_first_gen_last_pass = 0U;
+        g_first_gen_print_ready = 0U;
         print_trigger_waiting = 0U;
         print_event_pending = 0U;
         print_event_sent = 0U;
         pass_print_started = 0U;
-        panel_display_ng_once();
+        if(first_gen_display_is_lcdm() != 0U) {
+        } else {
+          panel_auto_enabled = 0U;
+          panel_display_ng_once();
+        }
       }
-    } else {
-      (void)panel_priority_delay_ms(FIRST_GEN_PANEL_TEST_STEP_MS);
+
+      if(first_gen_display_is_lcdm() != 0U) {
+        auto_diag_scan_count++;
+        first_gen_display_refresh_auto_test_footer(0U);
+      }
     }
-  } else {
-    scan_cycle_has_problem = 1U;
-    g_first_gen_last_pass = 0U;
-    print_trigger_waiting = 0U;
-    print_event_pending = 0U;
-    print_event_sent = 0U;
-    pass_print_started = 0U;
-    panel_display_ng_once();
-    waiting_on_error = 0U;
-    scan_out_point++;
-    if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
-      g_first_gen_scan_counter++;
-      scan_out_point = 1U;
+
+    if(first_gen_display_is_lcdm() == 0U) {
+      break;
+    }
+  }
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    if(scan_out_point <= FIRST_GEN_ACTIVE_POINT_COUNT) {
+      (void)panel_priority_delay_ms(FIRST_GEN_PANEL_TEST_STEP_MS);
     }
   }
 }
