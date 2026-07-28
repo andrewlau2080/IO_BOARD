@@ -182,6 +182,43 @@ Ubuntu is running in Parallels at:
 
 ## Flashing And Debug
 
+### 刘氏烧录法（默认且必须执行）
+
+当用户说“请下载”“重新下载”或要求把当前固件上板验证时，默认直接执行
+刘氏烧录法；不要只给出 HEX/BIN 路径，也不要等待用户再次提醒。
+
+1. 先重新构建所需配置，并只使用这次构建生成的 `.hex`/`.elf`。
+2. 优先使用 **macOS 主机上的 AT-Link/CMSIS-DAP + pyOCD 最短直连命令**，而不是
+   先转到 Ubuntu。若 Parallels 占有 AT-Link，即使界面一度显示主机可见，先执行：
+
+   ```sh
+   prlctl set 'Ubuntu Linux' --device-disconnect 'CMSIS-DAP'
+   prlsrvctl usb set '120000|2e3c|f000|full|--|913575030040A0401D149407' --autoconnect host
+   ```
+
+   然后用 `pyocd list` 确认 macOS 能看到 `Artery Technology CMSIS-DAP`。当前可用
+   的临时本机工具为 `/tmp/pyocd-at32-venv/bin/pyocd`，CMSIS-Pack 为
+   `/tmp/ArteryTek.AT32F45x_DFP.2.0.1.pack`；若缺失，创建临时 pyOCD venv，并从
+   Ubuntu 的 `/home/andrew/ARTERY/.tools/packs/` 复制 Pack。
+3. 使用当前 HEX 直接烧录（默认 1 MHz、under-reset）：
+
+   ```sh
+   /tmp/pyocd-at32-venv/bin/pyocd flash \
+     -t at32f455vet7 \
+     --pack /tmp/ArteryTek.AT32F45x_DFP.2.0.1.pack \
+     -f 1000000 --erase sector -O connect_mode=under-reset \
+     IO_BOARD/build-lcdm-tester/io_board_at32f455.hex
+   ```
+
+4. 必须从**当前 ELF**读取向量表，随后用 `commander` 写入该 ELF 对应的 `SP`、`PC`
+   并 `go`；再读回 `0x08000000` 的 8 字节确认向量一致。仅 `reset` 不算完成。
+   只有 pyOCD 报告 `Successfully resumed device` 且读回向量匹配，才报告“已下载”。
+5. 若目标内容相同而 pyOCD 显示 `programmed 0 bytes, identical ... bytes`，这是有效
+   的烧录核验；仍必须完成第 4 步的运行确认。
+
+Ubuntu pyOCD 仅作为 macOS 主机无法枚举探头时的后备方案。若改走 Ubuntu，先确认
+`lsusb` 可见 `2e3c:f000`，并处理 `/dev/hidraw*` 的 udev 权限，再进行烧录。
+
 AT-Link/ICE enumerates as:
 
 - USB: `2e3c:f000 Artery Technology CMSIS-DAP`

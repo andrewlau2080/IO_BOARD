@@ -4,6 +4,14 @@
 
 #include <string.h>
 
+/* The previous verified scan tuning reduced this wait from 20 us to 10 us.
+ * A CD4051 address change is followed by several GPIO writes before this
+ * point; 3 us leaves a conservative settle margin while avoiding 8,836 long
+ * SysTick delays in every 94 x 94 matrix scan. */
+#ifndef IO_SCAN_SETTLE_US
+#define IO_SCAN_SETTLE_US 3U
+#endif
+
 volatile uint16_t g_scan_active_out_pos;
 volatile uint16_t g_scan_active_in_pos;
 volatile uint32_t g_scan_pair_counter;
@@ -139,24 +147,32 @@ __attribute__((weak)) uint8_t io_scan_measure_selected_pair(void)
   return 0U;
 }
 
-io_scan_status_t io_scan_read_pair(uint16_t out_pos, uint16_t in_pos, io_scan_pair_result_t *result)
+io_scan_status_t io_scan_begin_out_row(uint16_t out_pos)
+{
+  return io_scan_select_out(out_pos);
+}
+
+io_scan_status_t io_scan_read_selected_out_in(uint16_t in_pos, io_scan_pair_result_t *result)
 {
   uint8_t connected;
 
   if(result == 0) {
     return IO_SCAN_INVALID_POINT;
   }
-  if(IO_POS_IS_IN(out_pos) || !IO_POS_IS_IN(in_pos)) {
+  if(g_scan_active_out_pos == 0U ||
+     IO_POS_IS_IN(g_scan_active_out_pos) ||
+     !io_scan_position_valid(g_scan_active_out_pos) ||
+     !IO_POS_IS_IN(in_pos)) {
     return IO_SCAN_INVALID_POINT;
   }
-  if(io_scan_select_out(out_pos) != IO_SCAN_OK || io_scan_select_in(in_pos) != IO_SCAN_OK) {
+  if(io_scan_select_in(in_pos) != IO_SCAN_OK) {
     return IO_SCAN_INVALID_POINT;
   }
 
-  delay_us(10);
+  delay_us(IO_SCAN_SETTLE_US);
   connected = io_scan_measure_selected_pair();
 
-  result->out_pos = out_pos;
+  result->out_pos = g_scan_active_out_pos;
   result->in_pos = in_pos;
   result->connected = connected;
 
@@ -166,6 +182,15 @@ io_scan_status_t io_scan_read_pair(uint16_t out_pos, uint16_t in_pos, io_scan_pa
   }
 
   return IO_SCAN_OK;
+}
+
+io_scan_status_t io_scan_read_pair(uint16_t out_pos, uint16_t in_pos, io_scan_pair_result_t *result)
+{
+  if(io_scan_begin_out_row(out_pos) != IO_SCAN_OK) {
+    return IO_SCAN_INVALID_POINT;
+  }
+
+  return io_scan_read_selected_out_in(in_pos, result);
 }
 
 void io_scan_clear_result(io_scan_result_t *result)
@@ -197,10 +222,14 @@ io_scan_status_t io_scan_all(io_scan_result_t *result)
   for(out_point = 1U; out_point <= active_profile->out_count; out_point++) {
     out_pos = IO_POS_OUT(out_point);
     result->active_out_pos = out_pos;
+    if(io_scan_begin_out_row(out_pos) != IO_SCAN_OK) {
+      io_mux_disable_all();
+      return IO_SCAN_INVALID_POINT;
+    }
 
     for(in_point = 1U; in_point <= active_profile->in_count; in_point++) {
       in_pos = IO_POS_IN(in_point);
-      if(io_scan_read_pair(out_pos, in_pos, &pair) != IO_SCAN_OK) {
+      if(io_scan_read_selected_out_in(in_pos, &pair) != IO_SCAN_OK) {
         io_mux_disable_all();
         return IO_SCAN_INVALID_POINT;
       }

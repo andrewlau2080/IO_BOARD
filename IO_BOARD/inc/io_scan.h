@@ -63,6 +63,10 @@ const io_scan_profile_t *io_scan_active_profile(void);
 const io_scan_profile_t *io_scan_get_profile(io_scan_profile_id_t profile_id);
 io_scan_status_t io_scan_select_out(uint16_t out_pos);
 io_scan_status_t io_scan_select_in(uint16_t in_pos);
+/* Select one OUT once, then read all IN points beneath it.  This is the
+ * high-speed matrix path used by the first-generation scanner. */
+io_scan_status_t io_scan_begin_out_row(uint16_t out_pos);
+io_scan_status_t io_scan_read_selected_out_in(uint16_t in_pos, io_scan_pair_result_t *result);
 io_scan_status_t io_scan_read_pair(uint16_t out_pos, uint16_t in_pos, io_scan_pair_result_t *result);
 io_scan_status_t io_scan_all(io_scan_result_t *result);
 void io_scan_clear_result(io_scan_result_t *result);

@@ -81,6 +81,13 @@ void first_gen_display_reset_auto_test_result_lines(void);
 void first_gen_display_add_auto_test_result_line(uint16_t row_index, const char *line);
 uint8_t first_gen_display_auto_test_page_count(void);
 void first_gen_display_show_auto_test_result_page(uint8_t page, uint8_t done);
+/* Final AUTO summary pages follow the approved fifth-section layout:
+ * RESULT/DETAILES at the top, then the left PASS/NG panel and the right
+ * TOTAL/fault-group panel.  NG detail updates redraw only the right panel so
+ * its 0.5 s blink never refreshes the key strip or the left NG panel. */
+void first_gen_display_show_auto_test_pass_summary(const char *total_text);
+void first_gen_display_show_auto_test_ng_summary(const char *fault_text);
+void first_gen_display_update_auto_test_ng_detail(const char *fault_text);
 /* Update one already-cached AUTO row immediately and return its displayed
  * page.  Used while the matrix is still being scanned. */
 uint8_t first_gen_display_show_auto_test_result_row(uint16_t row_index, uint8_t done);
