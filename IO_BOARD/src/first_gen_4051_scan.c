@@ -37,13 +37,15 @@
 #define FIRST_GEN_LEARN_MAX_CONNECTED_PAIRS 512UL
 #define FIRST_GEN_PANEL_TEST_START    1U
 #define FIRST_GEN_PANEL_TEST_END      47U
-#define FIRST_GEN_PANEL_TEST_STEP_MS  50U
-#define FIRST_GEN_LEARN_STEP_MS       100U
+/* LCDM raster commands are acknowledged individually.  A 5 ms cooperative
+ * pause leaves the keys responsive without adding the old 50/100 ms visual
+ * stall after every row. */
+#define FIRST_GEN_PANEL_TEST_STEP_MS  5U
 #define FIRST_GEN_PANEL_PASS_MS       1200U
 #define FIRST_GEN_PANEL_KEY_POLL_MS   5U
 #define FIRST_GEN_PROBLEM_RECHECK_MS  50U
-#define FIRST_GEN_PANEL_K1_SHORT_MS   80U
 #define FIRST_GEN_PANEL_K1_LONG_MS    3000U
+#define FIRST_GEN_PANEL_K1_DOUBLE_WINDOW_MS 160U
 #define FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS 200U
 #define FIRST_GEN_IDLE_SCROLL_MS      60000U
 #define FIRST_GEN_IR_TEST_BURST_US    800U
@@ -115,6 +117,11 @@ volatile uint8_t g_first_gen_learn_pending;
 
 static io_scan_result_t scan_result;
 static uint32_t expected_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
+/* scan_result is cleared before every OUT row.  Keep a separate complete
+ * matrix for the AUTO result page so it can be reorganised by INPUT after the
+ * whole cable has been measured. */
+static uint32_t auto_result_matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS];
+static uint16_t auto_k1_double_remaining_ms;
 static uint16_t scan_out_point = 1U;
 static uint8_t waiting_on_error;
 static uint8_t current_problem_type;
@@ -144,9 +151,10 @@ static uint16_t printed_hold_out = 1U;
 static uint16_t printed_hold_in = 1U;
 static uint8_t self_test_result_ready;
 static uint8_t self_test_result_page = 1U;
+static uint8_t auto_result_ready;
+static uint8_t auto_result_page = 1U;
 static uint8_t learn_result_page = 1U;
 static uint8_t learn_confirmed_hold_active;
-static uint8_t learn_table_display_active;
 static uint16_t learn_confirmed_blink_tick;
 static uint8_t buzzer_pattern;
 static uint8_t buzzer_step;
@@ -161,12 +169,16 @@ static uint16_t buzzer_step_remaining_ms;
 #define FIRST_GEN_BUZZER_PATTERN_NONE 0U
 #define FIRST_GEN_BUZZER_PATTERN_PASS 1U
 #define FIRST_GEN_BUZZER_PATTERN_NG   2U
+/* One electrical circuit may contain every I and O endpoint: 94 input
+ * labels + 94 output labels + the compact '-' separator require 940 bytes. */
+#define FIRST_GEN_AUTO_RESULT_LINE_MAX 960U
 
 uint8_t first_gen_4051_learn_current_harness(void);
 static uint8_t first_gen_4051_learn_preview(void);
 static uint8_t first_gen_4051_confirm_learn_save(void);
 static void panel_start_auto_test(void);
 static void panel_reset_to_zero(void);
+static void matrix_clear(uint32_t matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MATRIX_WORDS]);
 static void panel_wait_all_keys_released(uint16_t stable_ms);
 static uint8_t panel_priority_delay_ms(uint32_t duration_ms);
 static uint8_t first_gen_ir_send_logic_tx_once(void);
@@ -180,16 +192,25 @@ static uint8_t panel_printed_hold_service(void);
 static void first_gen_ir_sync_print_test_service(void);
 static void display_auto_idle(void);
 static void display_self_test_result_page(uint8_t page);
+static void auto_result_store_current_row(uint16_t out_point);
+static void auto_result_live_reset(void);
+static void auto_result_update_lcdm_for_out(uint16_t out_point);
+static void panel_finish_lcdm_auto_result(void);
+static uint8_t panel_result_page_active(void);
+static uint8_t panel_result_page_next(void);
+static uint8_t panel_auto_result_page_back(uint8_t count);
+static void panel_auto_k1_double_tick(uint16_t elapsed_ms);
+static uint8_t panel_handle_result_page_k1(void);
 static void display_lcdm_total_line(char *out, uint8_t len);
 static void display_lcdm_pair_line(uint16_t left, uint16_t right, char *out, uint8_t len);
 static void display_auto_test_pair(uint16_t point);
-static void display_learn_pair(uint16_t point);
 static void display_learn_summary_page(uint8_t confirmed);
 static void display_self_pass(void);
 static void display_error_code(uint16_t point);
 static uint8_t panel_check_open_pair(uint16_t point);
 static void panel_run_lcdm_self_test(void);
 static void lcdm_apply_learn_component_colors(void);
+static uint8_t panel_scan_full_matrix(void);
 
 static void buzzer_stop(void)
 {
@@ -273,6 +294,10 @@ static void buzzer_service(uint16_t elapsed_ms)
 static void panel_reset_scan_state(void)
 {
   scan_out_point = 1U;
+  matrix_clear(auto_result_matrix);
+  auto_result_live_reset();
+  auto_result_ready = 0U;
+  auto_result_page = 1U;
   waiting_on_error = 0U;
   g_first_gen_first_fail_out = 0U;
   g_first_gen_first_fail_in = 0U;
@@ -654,7 +679,10 @@ static void lcdm_apply_learn_component_colors(void)
     }
   }
 
-  first_gen_display_apply_learn_table_groups(out_groups, in_groups, scan_out_point);
+  /* The matrix is scanned first, then its finished component colours are
+   * staged in the LCDM cache in one pass.  No raster traffic is generated
+   * while IO scanning is in progress. */
+  first_gen_display_apply_learn_table_groups(out_groups, in_groups, 0U);
 }
 
 static void display_panel_test_pair(uint16_t point)
@@ -697,53 +725,322 @@ static void display_panel_test_progress(uint16_t tested_point)
   display_panel_test_pair(tested_point);
 }
 
-static void build_auto_test_line(uint16_t out_point, char *out, uint16_t len)
+static void auto_result_store_current_row(uint16_t out_point)
 {
-  char *cursor;
-  uint16_t remain;
-  uint16_t in_point;
   uint8_t word;
-  uint8_t bit;
-  uint8_t first;
 
-  if(out == 0 || len == 0U) {
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
     return;
   }
 
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    auto_result_matrix[out_point - 1U][word] = scan_result.matrix[out_point - 1U][word];
+  }
+}
+
+static void auto_result_live_reset(void)
+{
+  auto_k1_double_remaining_ms = 0U;
+}
+
+static uint8_t auto_result_append_endpoint(char *out,
+                                           uint16_t len,
+                                           uint16_t *used,
+                                           uint8_t *first,
+                                           char prefix,
+                                           uint16_t point)
+{
+  int written;
+
+  if(out == 0 || used == 0 || first == 0 || *used >= len) {
+    return 0U;
+  }
+
+  if(*first == 0U) {
+    if((uint16_t)(len - *used) <= 1U) {
+      return 0U;
+    }
+    out[(*used)++] = ',';
+    out[*used] = '\0';
+  }
+
+  written = snprintf(&out[*used], (size_t)(len - *used), "%c%03u", prefix, (unsigned int)point);
+  if(written != 4 || (uint16_t)written >= (uint16_t)(len - *used)) {
+    return 0U;
+  }
+  *used = (uint16_t)(*used + (uint16_t)written);
+  *first = 0U;
+  return 1U;
+}
+
+static uint8_t auto_result_build_component_line(uint16_t parent[(FIRST_GEN_ACTIVE_POINT_COUNT * 2U) + 1U],
+                                                uint16_t component_root,
+                                                char out[FIRST_GEN_AUTO_RESULT_LINE_MAX])
+{
+  uint16_t in_point;
+  uint16_t out_point;
+  uint16_t used = 0U;
+  uint16_t root;
+  uint8_t first = 1U;
+  uint8_t input_count = 0U;
+  uint8_t output_count = 0U;
+
   out[0] = '\0';
-  (void)snprintf(out, len, "O%03u-", (unsigned int)out_point);
-  cursor = out + strlen(out);
-  remain = (uint16_t)(len - (uint16_t)(cursor - out));
+  root = learn_union_find_root(parent, component_root);
+
+  for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
+    if(learn_union_find_root(parent, (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + in_point)) != root) {
+      continue;
+    }
+    if(auto_result_append_endpoint(out,
+                                   FIRST_GEN_AUTO_RESULT_LINE_MAX,
+                                   &used,
+                                   &first,
+                                   'I',
+                                   in_point) == 0U) {
+      return 0U;
+    }
+    input_count++;
+  }
+
+  if(input_count == 0U || (uint16_t)(FIRST_GEN_AUTO_RESULT_LINE_MAX - used) <= 1U) {
+    return 0U;
+  }
+  out[used++] = '-';
+  out[used] = '\0';
+
   first = 1U;
+  for(out_point = 1U; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
+    if(learn_union_find_root(parent, out_point) != root) {
+      continue;
+    }
+    if(auto_result_append_endpoint(out,
+                                   FIRST_GEN_AUTO_RESULT_LINE_MAX,
+                                   &used,
+                                   &first,
+                                   'O',
+                                   out_point) == 0U) {
+      return 0U;
+    }
+    output_count++;
+  }
+
+  return (output_count != 0U) ? 1U : 0U;
+}
+
+static void auto_result_update_lcdm_for_out(uint16_t out_point)
+{
+  uint16_t parent[(FIRST_GEN_ACTIVE_POINT_COUNT * 2U) + 1U];
+  uint16_t root_to_component[(FIRST_GEN_ACTIVE_POINT_COUNT * 2U) + 1U];
+  uint16_t component_root[FIRST_GEN_ACTIVE_POINT_COUNT + 1U];
+  uint16_t node;
+  uint16_t in_point;
+  uint16_t scanned_out;
+  uint16_t root;
+  uint16_t component_count = 0U;
+  uint16_t display_row = 0U;
+  uint8_t word;
+  uint8_t bit;
+  uint8_t has_current_connection = 0U;
+  char line[FIRST_GEN_AUTO_RESULT_LINE_MAX];
+
+  if(first_gen_display_is_lcdm() == 0U ||
+     out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    return;
+  }
+
+  for(word = 0U; word < IO_SCAN_MATRIX_WORDS; word++) {
+    if(auto_result_matrix[out_point - 1U][word] != 0U) {
+      has_current_connection = 1U;
+      break;
+    }
+  }
+  if(has_current_connection == 0U) {
+    return;
+  }
+
+  for(node = 0U; node <= (FIRST_GEN_ACTIVE_POINT_COUNT * 2U); node++) {
+    parent[node] = node;
+    root_to_component[node] = 0U;
+  }
+
+  for(scanned_out = 1U; scanned_out <= FIRST_GEN_ACTIVE_POINT_COUNT; scanned_out++) {
+    for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
+      word = (uint8_t)((in_point - 1U) >> 5);
+      bit = (uint8_t)((in_point - 1U) & 0x1FU);
+      if((auto_result_matrix[scanned_out - 1U][word] & (1UL << bit)) != 0U) {
+        learn_union_find_join(parent,
+                              scanned_out,
+                              (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + in_point));
+      }
+    }
+  }
+
+  /* Components are ordered by their first I point, so the shown summary and
+   * future CSV export remain stable and easy to read. */
   for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
     word = (uint8_t)((in_point - 1U) >> 5);
     bit = (uint8_t)((in_point - 1U) & 0x1FU);
-    if((scan_result.matrix[out_point - 1U][word] & (1UL << bit)) == 0U) {
+    for(scanned_out = 1U; scanned_out <= FIRST_GEN_ACTIVE_POINT_COUNT; scanned_out++) {
+      if((auto_result_matrix[scanned_out - 1U][word] & (1UL << bit)) != 0U) {
+        break;
+      }
+    }
+    if(scanned_out > FIRST_GEN_ACTIVE_POINT_COUNT) {
       continue;
     }
-    if(remain <= 5U) {
-      break;
+    root = learn_union_find_root(parent, (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + in_point));
+    if(root_to_component[root] == 0U) {
+      component_count++;
+      root_to_component[root] = component_count;
+      component_root[component_count] = root;
     }
-    if(first == 0U) {
-      *cursor++ = ',';
-      *cursor = '\0';
-      remain--;
-    }
-    (void)snprintf(cursor, remain, "I%03u", (unsigned int)in_point);
-    cursor = out + strlen(out);
-    remain = (uint16_t)(len - (uint16_t)(cursor - out));
-    first = 0U;
   }
 
-  if(first != 0U) {
-    out[0] = '\0';
+  first_gen_display_reset_auto_test_result_lines();
+  for(node = 1U; node <= component_count; node++) {
+    if(auto_result_build_component_line(parent, component_root[node], line) != 0U) {
+      display_row++;
+      first_gen_display_add_auto_test_result_line(display_row, line);
+    }
+  }
+
+  auto_result_page = first_gen_display_auto_test_page_count();
+  first_gen_display_show_auto_test_result_page(auto_result_page, 0U);
+}
+
+static void panel_finish_lcdm_auto_result(void)
+{
+  io_mux_disable_all();
+  first_gen_display_set_auto_test_blink(0U);
+  panel_auto_enabled = 0U;
+  auto_result_ready = 1U;
+  g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_AUTO_TEST;
+  g_first_gen_last_pass = (scan_cycle_has_problem == 0U) ? 1U : 0U;
+  g_first_gen_print_ready = 0U;
+  g_first_gen_pass_hold_active = 0U;
+  print_trigger_waiting = 0U;
+  print_event_pending = 0U;
+  print_event_sent = 0U;
+  pass_print_started = 0U;
+  panel_display_state = FIRST_GEN_DISPLAY_SCAN;
+  buzzer_stop();
+  if(auto_result_page == 0U) {
+    auto_result_page = 1U;
+  }
+  first_gen_display_show_auto_test_result_page(auto_result_page, 1U);
+}
+
+static uint8_t panel_result_page_active(void)
+{
+  if(g_first_gen_learn_pending != 0U || learn_confirmed_hold_active != 0U) {
+    return 1U;
+  }
+  if(self_test_result_ready != 0U && g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_SELF_TEST) {
+    return 1U;
+  }
+  if(auto_result_ready != 0U && g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    return 1U;
+  }
+  return 0U;
+}
+
+static uint8_t panel_result_page_next(void)
+{
+  uint8_t page_count;
+
+  if(g_first_gen_learn_pending != 0U || learn_confirmed_hold_active != 0U) {
+    learn_result_page = (learn_result_page == 1U) ? 2U : 1U;
+    display_learn_summary_page((learn_confirmed_hold_active != 0U) ? 1U : 0U);
+  } else if(self_test_result_ready != 0U &&
+            g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_SELF_TEST) {
+    self_test_result_page = (self_test_result_page == 1U) ? 2U : 1U;
+    display_self_test_result_page(self_test_result_page);
+  } else if(auto_result_ready != 0U &&
+            g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    page_count = first_gen_display_auto_test_page_count();
+    if(auto_result_page >= page_count) {
+      auto_result_page = 1U;
+    } else {
+      auto_result_page++;
+    }
+    first_gen_display_show_auto_test_result_page(auto_result_page, 1U);
+  } else {
+    return 0U;
+  }
+
+  first_gen_display_set_k1_page_hint(1U);
+  return 1U;
+}
+
+static uint8_t panel_auto_result_page_back(uint8_t count)
+{
+  uint8_t page_count;
+
+  if(auto_result_ready == 0U ||
+     g_first_gen_panel_mode != FIRST_GEN_PANEL_MODE_AUTO_TEST) {
+    return 0U;
+  }
+
+  page_count = first_gen_display_auto_test_page_count();
+  while(count != 0U) {
+    if(auto_result_page <= 1U) {
+      auto_result_page = page_count;
+    } else {
+      auto_result_page--;
+    }
+    count--;
+  }
+  first_gen_display_show_auto_test_result_page(auto_result_page, 1U);
+  first_gen_display_set_k1_page_hint(1U);
+  return 1U;
+}
+
+static void panel_auto_k1_double_tick(uint16_t elapsed_ms)
+{
+  if(auto_k1_double_remaining_ms == 0U) {
     return;
   }
 
-  if(remain > 1U) {
-    *cursor++ = ';';
-    *cursor = '\0';
+  if(elapsed_ms >= auto_k1_double_remaining_ms) {
+    auto_k1_double_remaining_ms = 0U;
+  } else {
+    auto_k1_double_remaining_ms = (uint16_t)(auto_k1_double_remaining_ms - elapsed_ms);
   }
+}
+
+static uint8_t panel_handle_result_page_k1(void)
+{
+  uint8_t auto_result_page_active;
+
+  if(panel_result_page_active() == 0U || first_gen_display_is_lcdm() == 0U) {
+    return 0U;
+  }
+
+  auto_result_page_active = (auto_result_ready != 0U &&
+                             g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) ? 1U : 0U;
+
+  if(auto_result_page_active != 0U) {
+    if(auto_k1_double_remaining_ms != 0U) {
+      /* The first touch already advanced immediately.  A second touch inside
+       * the short window converts that pair into one page backward. */
+      auto_k1_double_remaining_ms = 0U;
+      (void)panel_auto_result_page_back(2U);
+    } else {
+      (void)panel_result_page_next();
+      auto_k1_double_remaining_ms = FIRST_GEN_PANEL_K1_DOUBLE_WINDOW_MS;
+    }
+  } else {
+    (void)panel_result_page_next();
+  }
+
+  /* Rendering starts on the press event.  Wait only for the matching release
+   * before accepting another physical key, not before changing the page. */
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+  }
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
+  return 1U;
 }
 
 static void display_auto_test_pair(uint16_t point)
@@ -765,26 +1062,6 @@ static void display_auto_test_pair(uint16_t point)
   }
 }
 
-static void display_learn_pair(uint16_t point)
-{
-  char text[FIRST_GEN_DISPLAY_DIGITS];
-  uint8_t page;
-
-  if(first_gen_display_is_lcdm() != 0U) {
-    page = (point <= 47U) ? 1U : 2U;
-    first_gen_display_show_learn_table_page(page, point, point, 0U, 0UL, 0U);
-    return;
-  }
-
-  text[0] = (char)('0' + ((point / 100U) % 10U));
-  text[1] = (char)('0' + ((point / 10U) % 10U));
-  text[2] = (char)('0' + (point % 10U));
-  text[3] = text[0];
-  text[4] = text[1];
-  text[5] = text[2];
-  first_gen_display_write_text6(text);
-}
-
 static void display_learn_summary_page(uint8_t confirmed)
 {
   (void)confirmed;
@@ -804,11 +1081,12 @@ static void display_learn_summary_page(uint8_t confirmed)
   }
 
   first_gen_display_show_learn_table_page(learn_result_page,
-                                          FIRST_GEN_ACTIVE_POINT_COUNT,
+                                          0U,
                                           FIRST_GEN_ACTIVE_POINT_COUNT,
                                           g_first_gen_learn_out_count,
                                           g_first_gen_learn_connected_pairs,
                                           confirmed != 0U ? 2U : 1U);
+  first_gen_display_set_k1_page_hint(1U);
 }
 
 static uint8_t panel_check_open_pair(uint16_t point)
@@ -828,47 +1106,35 @@ static uint8_t panel_check_open_pair(uint16_t point)
 
 static void panel_run_lcdm_self_test(void)
 {
-  uint16_t in_point;
-  uint16_t out_point;
-  uint8_t page;
-  uint8_t lcdm_failed = 0U;
-  io_scan_pair_result_t pair;
-
   panel_auto_enabled = 0U;
+  first_gen_display_set_auto_test_blink(0U);
   panel_last_test_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
   g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
+  self_test_result_ready = 0U;
 
-  display_panel_test_progress(0U);
-  for(in_point = FIRST_GEN_PANEL_TEST_START; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
-    page = (in_point <= 47U) ? 1U : 2U;
-    for(out_point = FIRST_GEN_PANEL_TEST_START; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
-      if(io_scan_read_pair(IO_POS_OUT(out_point), IO_POS_IN(in_point), &pair) != IO_SCAN_OK) {
-        io_mux_disable_all();
-        display_error_code(1U);
-        return;
-      }
-      if(pair.connected != 0U) {
-        first_gen_display_show_auto_table_ng_pair(page, out_point, in_point);
-        lcdm_failed = 1U;
-      }
-    }
-    display_panel_test_progress(in_point);
-    if(panel_priority_delay_ms(FIRST_GEN_PANEL_TEST_STEP_MS) != 0U) {
-      io_mux_disable_all();
-      return;
-    }
-  }
-
-  io_mux_disable_all();
-  self_test_result_ready = 1U;
-  self_test_result_page = 2U;
-  g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
-
-  if(lcdm_failed != 0U) {
+  /* Keep the screen lightweight while the shared matrix scanner runs.  The
+   * old per-row grid update made the IO scan wait for LCDM acknowledgements. */
+  first_gen_display_show_page("",
+                              "SELF TESTING",
+                              "SCANNING",
+                              "",
+                              "",
+                              FIRST_GEN_DISPLAY_COLOR_BLUE,
+                              FIRST_GEN_DISPLAY_COLOR_WHITE,
+                              FIRST_GEN_DISPLAY_COLOR_BLUE);
+  if(panel_scan_full_matrix() == 0U) {
+    display_error_code(1U);
     return;
   }
 
-  display_self_pass();
+  g_first_gen_last_connected_pairs = scan_result.connected_pairs;
+  first_gen_display_set_self_test_matrix(&scan_result.matrix[0][0],
+                                          FIRST_GEN_ACTIVE_POINT_COUNT,
+                                          IO_SCAN_MATRIX_WORDS);
+  self_test_result_ready = 1U;
+  self_test_result_page = 1U;
+  g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
+  display_self_test_result_page(self_test_result_page);
 }
 
 static void display_pass(void)
@@ -1012,7 +1278,11 @@ static void display_self_test_result_page(uint8_t page)
   }
 
   self_test_result_page = page;
-  first_gen_display_show_auto_table_page(page, 94U);
+  /* 95 is an off-grid completion marker: all 94 cells become confirmed
+   * green/red results and none remains in the blue running-cell colour. */
+  first_gen_display_show_auto_table_page(page,
+                                         (uint16_t)(FIRST_GEN_ACTIVE_POINT_COUNT + 1U));
+  first_gen_display_set_k1_page_hint(1U);
 }
 
 static void display_auto_idle(void)
@@ -1090,7 +1360,14 @@ static void display_learn(void)
   char text[FIRST_GEN_DISPLAY_DIGITS] = {'0', '0', '1', '0', '0', '1'};
 
   if(first_gen_display_is_lcdm() != 0U) {
-    first_gen_display_show_learn_table_page(1U, 0U, 0U, 0U, 0UL, 0U);
+    first_gen_display_show_page("",
+                                "LEARNING",
+                                "SCANNING",
+                                "",
+                                "",
+                                FIRST_GEN_DISPLAY_COLOR_BLUE,
+                                FIRST_GEN_DISPLAY_COLOR_WHITE,
+                                FIRST_GEN_DISPLAY_COLOR_BLUE);
     return;
   }
 
@@ -1127,8 +1404,7 @@ static uint8_t panel_wait_learn_confirm(void)
 
       g_first_gen_last_panel_key = key;
       if(key == FIRST_GEN_KEY_SET) {
-        learn_result_page = (learn_result_page == 1U) ? 2U : 1U;
-        display_learn_summary_page(0U);
+        (void)panel_result_page_next();
         panel_wait_all_keys_released(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
         continue;
       }
@@ -1285,6 +1561,7 @@ static void panel_reset_to_zero(void)
   g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
   panel_reset_scan_state();
   panel_reset_print_state();
+  first_gen_display_set_auto_test_blink(0U);
   panel_auto_enabled = 0U;
   if(first_gen_display_is_lcdm() != 0U) {
     first_gen_display_show_page("",
@@ -1348,6 +1625,7 @@ static void panel_start_auto_test(void)
   g_first_gen_last_pass = 0U;
   panel_reset_scan_state();
   panel_reset_print_state();
+  first_gen_display_set_auto_test_blink(0U);
 
   if(g_first_gen_recipe_valid == 0U) {
     panel_auto_enabled = 0U;
@@ -1360,7 +1638,12 @@ static void panel_start_auto_test(void)
   panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
   panel_scan_phase = 2U;
   first_gen_display_clear_auto_test_lines();
-  display_auto_test_pair(1U);
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_auto_test_result_page(1U, 0U);
+  } else {
+    display_auto_test_pair(1U);
+  }
+  first_gen_display_set_auto_test_blink(1U);
   panel_display_state = FIRST_GEN_DISPLAY_SCAN;
 }
 
@@ -1368,6 +1651,11 @@ static void panel_handle_k1_press(void)
 {
   uint16_t elapsed_ms = 0U;
   uint8_t learned = 0U;
+
+  /* Learning, self-test, and AUTO results all use this same K1 PAGE path. */
+  if(panel_handle_result_page_k1() != 0U) {
+    return;
+  }
 
   while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
     if(elapsed_ms >= FIRST_GEN_PANEL_K1_LONG_MS) {
@@ -1381,38 +1669,33 @@ static void panel_handle_k1_press(void)
     elapsed_ms = (uint16_t)(elapsed_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
   }
 
-  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
-    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
-  }
-  delay_ms(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
-  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
-
   if(learned != 0U) {
+    /* Learning is entered while K1 is still down.  Keep its original
+     * release guard so that the held touch cannot operate the next screen. */
+    while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
+      delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+    }
+    delay_ms(FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS);
+    g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
     return;
   }
 
-  if(elapsed_ms >= FIRST_GEN_PANEL_K1_SHORT_MS) {
-    if(self_test_result_ready != 0U) {
-      panel_auto_enabled = 0U;
-      g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
-      display_self_test_result_page(self_test_result_page);
-      return;
-    }
-    panel_run_self_test();
+  /* On the idle/start page K1 must accept the very first tap.  The former
+   * 80 ms minimum tap and 200 ms post-release delay could discard a normal
+   * quick touch before the self-test even started.  A press/release event is
+   * already latched by LCDM, so release starts the self-test immediately. */
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_SET) {
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
   }
-}
+  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 
-static uint8_t panel_toggle_self_test_result_page(void)
-{
-  if(self_test_result_ready == 0U || g_first_gen_learn_pending != 0U) {
-    return 0U;
+  if(self_test_result_ready != 0U) {
+    panel_auto_enabled = 0U;
+    g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
+    (void)panel_result_page_next();
+    return;
   }
-
-  panel_auto_enabled = 0U;
-  g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_SELF_TEST;
-  self_test_result_page = (self_test_result_page == 1U) ? 2U : 1U;
-  display_self_test_result_page(self_test_result_page);
-  return 1U;
+  panel_run_self_test();
 }
 
 static uint8_t panel_handle_key(void)
@@ -1430,7 +1713,12 @@ static uint8_t panel_handle_key(void)
 
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
-  learn_confirmed_hold_active = 0U;
+  /* K1 remains the page key on the confirmed learning result.  Other keys
+   * intentionally leave that hold/result state. */
+  if(key != FIRST_GEN_KEY_SET) {
+    learn_confirmed_hold_active = 0U;
+    auto_k1_double_remaining_ms = 0U;
+  }
   switch(key) {
   case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
@@ -1445,9 +1733,6 @@ static uint8_t panel_handle_key(void)
     return 1U;
 
   case FIRST_GEN_KEY_MINUS:
-    if(panel_toggle_self_test_result_page() != 0U) {
-      return 1U;
-    }
     (void)first_gen_4051_confirm_learn_save();
     return 1U;
 
@@ -1467,7 +1752,10 @@ static uint8_t panel_priority_key_service(void)
 
   g_first_gen_last_panel_key = key;
   panel_idle_ms = 0U;
-  learn_confirmed_hold_active = 0U;
+  if(key != FIRST_GEN_KEY_SET) {
+    learn_confirmed_hold_active = 0U;
+    auto_k1_double_remaining_ms = 0U;
+  }
   switch(key) {
   case FIRST_GEN_KEY_SET:
     panel_handle_k1_press();
@@ -1482,9 +1770,6 @@ static uint8_t panel_priority_key_service(void)
     return 1U;
 
   case FIRST_GEN_KEY_MINUS:
-    if(panel_toggle_self_test_result_page() != 0U) {
-      return 1U;
-    }
     (void)first_gen_4051_confirm_learn_save();
     return 1U;
 
@@ -1503,6 +1788,7 @@ static uint8_t panel_priority_delay_ms(uint32_t duration_ms)
     }
     delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
     buzzer_service(FIRST_GEN_PANEL_KEY_POLL_MS);
+    panel_auto_k1_double_tick(FIRST_GEN_PANEL_KEY_POLL_MS);
     elapsed_ms += FIRST_GEN_PANEL_KEY_POLL_MS;
   }
 
@@ -1687,6 +1973,33 @@ static uint8_t scan_one_row(uint16_t out_point)
     }
   }
 
+  return 1U;
+}
+
+/* Self-test and learning deliberately share this acquisition path.  It
+ * contains no display operation, so moving from OUT047 to OUT048 never waits
+ * for a second LCDM grid page to be drawn. */
+static uint8_t panel_scan_full_matrix(void)
+{
+  io_scan_init(IO_SCAN_PROFILE_FIRST_GEN_1TH);
+  io_scan_clear_result(&scan_result);
+  scan_result.profile_id = IO_SCAN_PROFILE_FIRST_GEN_1TH;
+  scan_result.out_count = FIRST_GEN_ACTIVE_POINT_COUNT;
+  scan_result.in_count = FIRST_GEN_ACTIVE_POINT_COUNT;
+
+  for(scan_out_point = 1U;
+      scan_out_point <= FIRST_GEN_ACTIVE_POINT_COUNT;
+      scan_out_point++) {
+    scan_result.active_out_pos = IO_POS_OUT(scan_out_point);
+    if(scan_one_row(scan_out_point) == 0U) {
+      io_mux_disable_all();
+      scan_out_point = 1U;
+      return 0U;
+    }
+  }
+
+  io_mux_disable_all();
+  scan_out_point = 1U;
   return 1U;
 }
 
@@ -2202,36 +2515,17 @@ uint8_t first_gen_4051_scan_once(void)
 static uint8_t first_gen_4051_learn_preview(void)
 {
   learn_result_page = 1U;
+  first_gen_display_set_auto_test_blink(0U);
   display_learn();
   learn_confirmed_hold_active = 0U;
   g_first_gen_learn_pending = 0U;
-  learn_table_display_active = 1U;
 
-  io_scan_init(IO_SCAN_PROFILE_FIRST_GEN_1TH);
-  io_scan_clear_result(&scan_result);
-  scan_result.profile_id = IO_SCAN_PROFILE_FIRST_GEN_1TH;
-  scan_result.out_count = FIRST_GEN_ACTIVE_POINT_COUNT;
-  scan_result.in_count = FIRST_GEN_ACTIVE_POINT_COUNT;
-  for(scan_out_point = 1U; scan_out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; scan_out_point++) {
-    display_learn_pair(scan_out_point);
-    scan_result.active_out_pos = IO_POS_OUT(scan_out_point);
-    if(scan_one_row(scan_out_point) == 0U) {
-      g_first_gen_learn_status = 2U;
-      learn_table_display_active = 0U;
-      display_error_code(1U);
-      scan_out_point = 1U;
-      return 0U;
-    }
-    /* Keep the scan grid to one local progress update per OUT row.  Component
-     * colours are applied once after the complete matrix is known; recalculating
-     * and repainting earlier rows here can flood the LCDM command buffer. */
-    delay_ms(FIRST_GEN_LEARN_STEP_MS);
-    buzzer_service(FIRST_GEN_LEARN_STEP_MS);
-    first_gen_display_effect_step();
+  if(panel_scan_full_matrix() == 0U) {
+    g_first_gen_learn_status = 2U;
+    display_error_code(1U);
+    return 0U;
   }
-  io_mux_disable_all();
-  learn_table_display_active = 0U;
-  scan_out_point = 1U;
+
   g_first_gen_last_connected_pairs = scan_result.connected_pairs;
   g_first_gen_learn_out_count = count_nonzero_rows(scan_result.matrix);
   g_first_gen_learn_in_count = count_nonzero_inputs(scan_result.matrix);
@@ -2353,6 +2647,14 @@ void first_gen_4051_scan_service(void)
       (void)panel_priority_delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
       return;
     }
+    if(auto_result_ready != 0U &&
+       g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST &&
+       first_gen_display_is_lcdm() != 0U) {
+      /* Keep the completed AUTO page static until the operator starts a new
+       * action.  In particular, do not let the idle screen replace it. */
+      (void)panel_priority_delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+      return;
+    }
     (void)panel_priority_delay_ms(FIRST_GEN_4051_SCAN_PERIOD_MS);
     if(panel_waiting_for_reconnect == 0U && g_first_gen_pass_hold_active == 0U) {
       panel_idle_ms += (FIRST_GEN_4051_SCAN_PERIOD_MS == 0U) ? 1U : FIRST_GEN_4051_SCAN_PERIOD_MS;
@@ -2384,24 +2686,26 @@ void first_gen_4051_scan_service(void)
     scan_cycle_has_problem = 0U;
   }
 
-  if(g_first_gen_last_pass == 0U && panel_display_state != FIRST_GEN_DISPLAY_NG) {
+  if(first_gen_display_is_lcdm() == 0U &&
+     g_first_gen_last_pass == 0U &&
+     panel_display_state != FIRST_GEN_DISPLAY_NG) {
     display_auto_test_pair(scan_out_point);
     panel_display_state = FIRST_GEN_DISPLAY_SCAN;
   }
 
   pass = scan_and_check_current_row();
+  auto_result_store_current_row(scan_out_point);
+  auto_result_update_lcdm_for_out(scan_out_point);
+  first_gen_display_auto_test_blink_step();
   if(pass != 0U) {
-    char line[256];
-
-    build_auto_test_line(scan_out_point, line, sizeof(line));
-    first_gen_display_show_auto_test_line(scan_out_point, line, 0U);
     waiting_on_error = 0U;
     scan_out_point++;
     if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
-      first_gen_display_show_auto_test_line(1U, "", 1U);
       g_first_gen_scan_counter++;
       scan_out_point = 1U;
-      if(scan_cycle_has_problem == 0U) {
+      if(first_gen_display_is_lcdm() != 0U) {
+        panel_finish_lcdm_auto_result();
+      } else if(scan_cycle_has_problem == 0U) {
         g_first_gen_last_pass = 1U;
         panel_hold_pass_until_restart();
       } else {
@@ -2422,12 +2726,17 @@ void first_gen_4051_scan_service(void)
     print_event_pending = 0U;
     print_event_sent = 0U;
     pass_print_started = 0U;
-    panel_display_ng_once();
+    if(first_gen_display_is_lcdm() == 0U) {
+      panel_display_ng_once();
+    }
     waiting_on_error = 0U;
     scan_out_point++;
     if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
       g_first_gen_scan_counter++;
       scan_out_point = 1U;
+      if(first_gen_display_is_lcdm() != 0U) {
+        panel_finish_lcdm_auto_result();
+      }
     }
   }
 }

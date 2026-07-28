@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define FIRST_GEN_DISPLAY_DIGITS 6U
+#define FIRST_GEN_DISPLAY_AUTO_RESULT_PAGE_ROWS 5U
 
 #define FIRST_GEN_KEY_NONE       0xFFU
 #define FIRST_GEN_KEY_SET        0xF3U
@@ -50,6 +51,14 @@ void first_gen_display_show_page(const char *top_right,
 void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point);
 void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point);
 void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point, uint16_t in_point);
+/* Load all self-test NG marks into the display cache without sending per-pair
+ * raster commands.  The caller then renders the completed result page once. */
+void first_gen_display_set_self_test_matrix(const uint32_t *matrix,
+                                            uint16_t point_count,
+                                            uint8_t words_per_row);
+void first_gen_display_set_k1_page_hint(uint8_t enabled);
+void first_gen_display_set_auto_test_blink(uint8_t enabled);
+void first_gen_display_auto_test_blink_step(void);
 void first_gen_display_show_learn_table_page(uint8_t page,
                                              uint16_t active_point,
                                              uint16_t scan_point,
@@ -64,6 +73,18 @@ void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
                                                 const uint16_t in_groups[],
                                                 uint16_t active_point);
 void first_gen_display_clear_auto_test_lines(void);
+/* Clear cached AUTO rows while retaining the current LCDM page/key strip.
+ * Used when a newly scanned edge merges two electrical circuits. */
+void first_gen_display_reset_auto_test_result_lines(void);
+/* Cache one completed AUTO result row.  Only connected I rows are appended,
+ * so row_index is compact and the footer I count is the true connected count. */
+void first_gen_display_add_auto_test_result_line(uint16_t row_index, const char *line);
+uint8_t first_gen_display_auto_test_page_count(void);
+void first_gen_display_show_auto_test_result_page(uint8_t page, uint8_t done);
+/* Update one already-cached AUTO row immediately and return its displayed
+ * page.  Used while the matrix is still being scanned. */
+uint8_t first_gen_display_show_auto_test_result_row(uint16_t row_index, uint8_t done);
+/* Compatibility entry point for older callers. */
 void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line, uint8_t done);
 
 #endif
