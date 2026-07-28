@@ -48,7 +48,6 @@ void first_gen_display_show_page(const char *top_right,
                                  uint16_t result_bg,
                                  uint16_t result_fg);
 void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point);
-void first_gen_display_show_auto_table_completed(uint8_t page, uint16_t point);
 void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point);
 void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point, uint16_t in_point);
 void first_gen_display_show_learn_table_page(uint8_t page,
@@ -57,30 +56,14 @@ void first_gen_display_show_learn_table_page(uint8_t page,
                                              uint16_t pair_count,
                                              uint32_t point_count,
                                              uint8_t done);
-void first_gen_display_show_learn_table_completed(uint8_t page,
-                                                  uint16_t point,
-                                                  uint16_t scan_point,
-                                                  uint16_t pair_count,
-                                                  uint32_t point_count);
-void first_gen_display_refresh_learn_table_footer(uint16_t scan_point,
-                                                  uint16_t pair_count,
-                                                  uint32_t point_count,
-                                                  uint8_t done);
 void first_gen_display_clear_learn_table_groups(void);
+void first_gen_display_set_learn_table_group_connection(uint16_t out_point,
+                                                        uint16_t in_point,
+                                                        uint16_t group_index);
 void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
                                                 const uint16_t in_groups[],
                                                 uint16_t active_point);
 void first_gen_display_clear_auto_test_lines(void);
-void first_gen_display_reset_auto_test_line_cache(void);
-void first_gen_display_cache_auto_test_line(uint16_t line_index, const char *line);
 void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line, uint8_t done);
-uint8_t first_gen_display_auto_test_page_count(void);
-uint8_t first_gen_display_auto_test_page_for_line(uint16_t line_index);
-uint16_t first_gen_display_auto_test_line_count(void);
-void first_gen_display_refresh_auto_test_page(uint8_t page, uint8_t done);
-void first_gen_display_refresh_auto_test_page_body(uint8_t page);
-void first_gen_display_refresh_auto_test_footer(uint8_t done);
-void first_gen_display_show_auto_test_diag(uint32_t scan_count, uint32_t change_count);
-void first_gen_display_show_auto_test_page(uint8_t page, uint8_t done);
 
 #endif

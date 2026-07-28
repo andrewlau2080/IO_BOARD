@@ -33,6 +33,9 @@ typedef struct {
 
 extern volatile uint32_t g_lcdm_tjc_tx_cmd_count;
 extern volatile uint32_t g_lcdm_tjc_tx_error_count;
+extern volatile uint32_t g_lcdm_tjc_cmd_ack_count;
+extern volatile uint32_t g_lcdm_tjc_cmd_nack_count;
+extern volatile uint32_t g_lcdm_tjc_cmd_ack_timeout_count;
 extern volatile uint32_t g_lcdm_tjc_rx_byte_count;
 extern volatile uint32_t g_lcdm_tjc_rx_packet_count;
 extern volatile uint32_t g_lcdm_tjc_rx_overflow_count;
@@ -66,6 +69,14 @@ void lcdm_tjc_force_baudrate(uint32_t target_baudrate);
 void lcdm_tjc_rx_falling_edge_isr(void);
 void lcdm_tjc_usart_irq_handler(void);
 void lcdm_tjc_send_cmd(const char *cmd);
+/* Enable TJC command acknowledgements and serialize direct draw commands. */
+void lcdm_tjc_set_command_ack(uint8_t enable);
+/*
+ * Defines a logical direct-draw transaction.  Commands are acknowledged one by
+ * one instead of being accumulated in the screen's refresh queue.
+ */
+void lcdm_tjc_draw_batch_begin(void);
+void lcdm_tjc_draw_batch_end(void);
 void lcdm_tjc_set_text(const char *obj, const char *text);
 void lcdm_tjc_set_num(const char *obj, int32_t value);
 void lcdm_tjc_page(uint8_t page_id);

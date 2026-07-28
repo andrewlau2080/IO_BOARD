@@ -43,7 +43,15 @@
 #endif
 
 #ifndef LCDM_TJC_CMD_GAP_MS
-#define LCDM_TJC_CMD_GAP_MS 2U
+#define LCDM_TJC_CMD_GAP_MS 5U
+#endif
+
+#ifndef LCDM_TJC_DRAW_BATCH_ENABLED
+#define LCDM_TJC_DRAW_BATCH_ENABLED 1U
+#endif
+
+#ifndef LCDM_TJC_CMD_ACK_TIMEOUT_MS
+#define LCDM_TJC_CMD_ACK_TIMEOUT_MS 250U
 #endif
 
 #ifndef LCDM_TJC_POWER_ON_WAIT_MS
@@ -72,6 +80,9 @@
 
 volatile uint32_t g_lcdm_tjc_tx_cmd_count;
 volatile uint32_t g_lcdm_tjc_tx_error_count;
+volatile uint32_t g_lcdm_tjc_cmd_ack_count;
+volatile uint32_t g_lcdm_tjc_cmd_nack_count;
+volatile uint32_t g_lcdm_tjc_cmd_ack_timeout_count;
 volatile uint32_t g_lcdm_tjc_rx_byte_count;
 volatile uint32_t g_lcdm_tjc_rx_packet_count;
 volatile uint32_t g_lcdm_tjc_rx_overflow_count;
@@ -109,8 +120,13 @@ static volatile uint8_t ready_count;
 static uint8_t current_page;
 static uint8_t refresh_requested;
 static uint32_t active_baudrate;
+static uint8_t draw_batch_depth;
+static volatile uint32_t command_response_sequence;
+static volatile uint8_t command_response_status;
+static uint8_t command_ack_enabled;
 
 static void poll_rx_bytes(void);
+static void send_cmd_raw(const char *cmd);
 
 static void rx_reset(void)
 {
@@ -197,7 +213,7 @@ static void send_end(void)
   }
 }
 
-static void send_cmd(const char *cmd)
+static void send_cmd_raw(const char *cmd)
 {
   const uint8_t *bytes = (const uint8_t *)cmd;
   uint8_t gap_ms;
@@ -220,6 +236,46 @@ static void send_cmd(const char *cmd)
   poll_rx_bytes();
 }
 
+static uint8_t wait_for_command_response(uint32_t sequence, uint8_t *status)
+{
+  uint16_t elapsed_ms;
+
+  for(elapsed_ms = 0U; elapsed_ms < LCDM_TJC_CMD_ACK_TIMEOUT_MS; elapsed_ms++) {
+    poll_rx_bytes();
+    if(command_response_sequence != sequence) {
+      if(status != 0) {
+        *status = command_response_status;
+      }
+      return 1U;
+    }
+    lcdm_tjc_delay_ms(1U);
+  }
+
+  poll_rx_bytes();
+  if(command_response_sequence != sequence) {
+    if(status != 0) {
+      *status = command_response_status;
+    }
+    return 1U;
+  }
+
+  return 0U;
+}
+
+static uint8_t send_cmd_with_ack(const char *cmd)
+{
+  uint32_t sequence = command_response_sequence;
+  uint8_t status = 0U;
+
+  send_cmd_raw(cmd);
+  if(wait_for_command_response(sequence, &status) == 0U) {
+    g_lcdm_tjc_cmd_ack_timeout_count++;
+    return 0U;
+  }
+
+  return (status == 0x01U) ? 1U : 0U;
+}
+
 static void process_packet(const uint8_t *packet, uint8_t len)
 {
   uint8_t i;
@@ -234,6 +290,19 @@ static void process_packet(const uint8_t *packet, uint8_t len)
   g_lcdm_tjc_last_packet1 = (len > 1U) ? packet[1] : 0U;
   g_lcdm_tjc_last_packet2 = (len > 2U) ? packet[2] : 0U;
   g_lcdm_tjc_last_event_type = packet[0];
+
+  /* bkcmd=3 returns one-byte command status packets.  Consume those here so
+   * drawing acknowledgements never enter the touch-event queue. */
+  if(len == 1U && packet[0] <= 0x23U) {
+    command_response_status = packet[0];
+    command_response_sequence++;
+    if(packet[0] == 0x01U) {
+      g_lcdm_tjc_cmd_ack_count++;
+    } else {
+      g_lcdm_tjc_cmd_nack_count++;
+    }
+    return;
+  }
 
   if((len >= 4U) && (packet[0] == 0x65U)) {
     g_lcdm_tjc_last_page_id = packet[1];
@@ -322,8 +391,11 @@ static void store_rx_byte(uint8_t value)
   if(value == 0xFFU) {
     rx_ff_count++;
     if(rx_ff_count >= 3U) {
+      uint8_t is_command_response =
+        (rx_len == 1U && rx_packet[0] <= 0x23U) ? 1U : 0U;
+
       process_packet(rx_packet, rx_len);
-      if(rx_len != 0U) {
+      if(rx_len != 0U && is_command_response == 0U) {
         enqueue_ready_packet(rx_packet, rx_len);
       }
       rx_reset();
@@ -382,6 +454,10 @@ void lcdm_tjc_init(void)
   ready_tail = 0U;
   ready_count = 0U;
   rx_reset();
+  draw_batch_depth = 0U;
+  command_ack_enabled = 0U;
+  command_response_sequence = 0U;
+  command_response_status = 0U;
 
   lcdm_tjc_usart_config(LCDM_TJC_BAUDRATE);
   lcdm_tjc_delay_ms(LCDM_TJC_POWER_ON_WAIT_MS);
@@ -393,6 +469,8 @@ void lcdm_tjc_set_baudrate(uint32_t baudrate)
   ready_tail = 0U;
   ready_count = 0U;
   rx_reset();
+  draw_batch_depth = 0U;
+  command_ack_enabled = 0U;
   lcdm_tjc_usart_config(baudrate);
 }
 
@@ -401,11 +479,11 @@ static void lcdm_tjc_send_baud_cmds(uint32_t source_baudrate, uint32_t target_ba
   char cmd[32];
 
   lcdm_tjc_set_baudrate(source_baudrate);
-  send_cmd("bkcmd=0");
+  send_cmd_raw("bkcmd=0");
   (void)snprintf(cmd, sizeof(cmd), "bauds=%lu", (unsigned long)target_baudrate);
-  send_cmd(cmd);
+  send_cmd_raw(cmd);
   (void)snprintf(cmd, sizeof(cmd), "baud=%lu", (unsigned long)target_baudrate);
-  send_cmd(cmd);
+  send_cmd_raw(cmd);
   lcdm_tjc_delay_ms(50U);
 }
 
@@ -430,7 +508,8 @@ void lcdm_tjc_force_baudrate(uint32_t target_baudrate)
   lcdm_tjc_try_recovery_baud(LCDM_TJC_RECOVERY_BAUD3, target_baudrate);
   lcdm_tjc_send_baud_cmds(target_baudrate, target_baudrate);
   lcdm_tjc_set_baudrate(target_baudrate);
-  send_cmd("bkcmd=0");
+  command_ack_enabled = 0U;
+  send_cmd_raw("bkcmd=0");
   lcdm_tjc_delay_ms(80U);
 }
 
@@ -445,7 +524,7 @@ uint8_t lcdm_tjc_probe(uint8_t attempts)
   lcdm_tjc_init();
   for(attempt = 0U; attempt < attempts; attempt++) {
     uint8_t wait_step;
-    send_cmd("connect");
+    send_cmd_raw("connect");
     for(wait_step = 0U; wait_step < LCDM_TJC_PROBE_WAIT_MS; wait_step++) {
       lcdm_tjc_event_t event;
       if(lcdm_tjc_poll_event(&event) != 0U) {
@@ -492,7 +571,85 @@ void lcdm_tjc_usart_irq_handler(void)
 
 void lcdm_tjc_send_cmd(const char *cmd)
 {
-  send_cmd(cmd);
+  if(cmd == 0) {
+    return;
+  }
+
+  if(strcmp(cmd, "bkcmd=0") == 0) {
+    command_ack_enabled = 0U;
+    send_cmd_raw(cmd);
+    return;
+  }
+  if(strcmp(cmd, "bkcmd=3") == 0) {
+    lcdm_tjc_set_command_ack(1U);
+    return;
+  }
+
+  if(command_ack_enabled != 0U) {
+    (void)send_cmd_with_ack(cmd);
+  } else {
+    send_cmd_raw(cmd);
+  }
+}
+
+void lcdm_tjc_set_command_ack(uint8_t enable)
+{
+  uint32_t sequence;
+  uint8_t status = 0U;
+
+  if(enable == 0U) {
+    if(command_ack_enabled != 0U) {
+      command_ack_enabled = 0U;
+      send_cmd_raw("bkcmd=0");
+    }
+    return;
+  }
+
+  if(command_ack_enabled != 0U) {
+    return;
+  }
+
+  /* The setting command itself is not guaranteed to return a status on every
+   * TJC firmware.  Enable it, drain a possible setting reply, then use a
+   * harmless touch-enable command as the explicit acknowledgement probe. */
+  send_cmd_raw("bkcmd=3");
+  lcdm_tjc_delay_ms(LCDM_TJC_CMD_GAP_MS);
+  poll_rx_bytes();
+  sequence = command_response_sequence;
+  send_cmd_raw("tsw 255,0");
+  if(wait_for_command_response(sequence, &status) != 0U && status == 0x01U) {
+    command_ack_enabled = 1U;
+    return;
+  }
+
+  g_lcdm_tjc_cmd_ack_timeout_count++;
+  command_ack_enabled = 0U;
+  send_cmd_raw("bkcmd=0");
+}
+
+void lcdm_tjc_draw_batch_begin(void)
+{
+#if LCDM_TJC_DRAW_BATCH_ENABLED
+  if(draw_batch_depth == 0U) {
+    /* Do not use ref_stop/ref_star here.  Large grids overflow the screen's
+     * deferred-refresh queue; acknowledged commands keep the raster complete. */
+    lcdm_tjc_set_command_ack(1U);
+  }
+  if(draw_batch_depth != 0xFFU) {
+    draw_batch_depth++;
+  }
+#endif
+}
+
+void lcdm_tjc_draw_batch_end(void)
+{
+#if LCDM_TJC_DRAW_BATCH_ENABLED
+  if(draw_batch_depth == 0U) {
+    return;
+  }
+
+  draw_batch_depth--;
+#endif
 }
 
 void lcdm_tjc_set_text(const char *obj, const char *text)
@@ -504,7 +661,7 @@ void lcdm_tjc_set_text(const char *obj, const char *text)
   }
 
   (void)snprintf(cmd, sizeof(cmd), "%s.txt=\"%s\"", obj, text);
-  send_cmd(cmd);
+  lcdm_tjc_send_cmd(cmd);
 }
 
 void lcdm_tjc_set_num(const char *obj, int32_t value)
@@ -516,7 +673,7 @@ void lcdm_tjc_set_num(const char *obj, int32_t value)
   }
 
   (void)snprintf(cmd, sizeof(cmd), "%s.val=%ld", obj, (long)value);
-  send_cmd(cmd);
+  lcdm_tjc_send_cmd(cmd);
 }
 
 void lcdm_tjc_page(uint8_t page_id)
@@ -527,7 +684,7 @@ void lcdm_tjc_page(uint8_t page_id)
   g_lcdm_tjc_debug_page = current_page;
   refresh_requested = 1U;
   (void)snprintf(cmd, sizeof(cmd), "page %u", (unsigned int)page_id);
-  send_cmd(cmd);
+  lcdm_tjc_send_cmd(cmd);
 }
 
 uint8_t lcdm_tjc_poll_event(lcdm_tjc_event_t *event)

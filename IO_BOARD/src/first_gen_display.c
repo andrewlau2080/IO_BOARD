@@ -19,10 +19,6 @@
 #define LCDM_FONT_PROBE_MODE 0
 #endif
 
-#ifndef LCDM_TOUCH_DEBUG_TEXT
-#define LCDM_TOUCH_DEBUG_TEXT 0
-#endif
-
 #define LCDM_TOUCH_K1               11U
 #define LCDM_TOUCH_K2               12U
 #define LCDM_TOUCH_K3               13U
@@ -39,17 +35,25 @@
 #define LCDM_KEY_Y1                 271U
 #define LCDM_KEY_W                  120U
 #define LCDM_KEY_H                  58U
-#define LCDM_FONT_SMALL             0U
-#define LCDM_FONT_LARGE             0U
-#define LCDM_FONT_SCROLL            3U
-#define LCDM_FONT_TABLE             0U
+/*
+ * 260728song.tft stores its font resources in this TJC ID order:
+ *   0=font-4song (32 px), 1=font-3song (29 px), 2=font-2song (16 px),
+ *   3=font-1song (14 px), 4=font-0song (10 px).
+ * The resource-name suffix is not the TJC font ID.
+ * See docs/tjc4827t143_font_plan.md.
+ */
+#define LCDM_FONT_SMALL             4U
+#define LCDM_FONT_TABLE             4U
+#define LCDM_FONT_STATUS            3U
+#define LCDM_FONT_TITLE             2U
+#define LCDM_FONT_RESULT            1U
+#define LCDM_FONT_POINT             0U
+#define LCDM_FONT_COUNT             5U
 #define LCDM_BLACK                  0U
 #define LCDM_BLUE                   31U
 #define LCDM_RED                    63488U
 #define LCDM_GREEN                  2016U
 #define LCDM_DARK_GREEN             992U
-#define LCDM_DONE_GREEN             1504U
-#define LCDM_DONE_DARK_GREEN        736U
 #define LCDM_DARK_RED               32768U
 #define LCDM_MAGENTA                63519U
 #define LCDM_PURPLE                 30735U
@@ -74,15 +78,9 @@
 #define LCDM_TOTAL_PAIRS            47U
 #define LCDM_TOTAL_POINTS           94U
 #define LCDM_PAIR_PAGE_SIZE         24U
-#define LCDM_AUTO_LIST_PAGE_SIZE     4U
-#define LCDM_AUTO_LIST_ROW_H        28U
-#define LCDM_AUTO_LIST_Y0           72U
-#define LCDM_AUTO_LIST_H            (LCDM_AUTO_LIST_PAGE_SIZE * LCDM_AUTO_LIST_ROW_H)
-#define LCDM_AUTO_LINE_TEXT_MAX     72U
-#define LCDM_AUTO_LINE_CHAR_W        9U
-#define LCDM_AUTO_LINE_PAD_W        10U
-#define LCDM_AUTO_LINE_TOTAL_W     440U
-#define LCDM_AUTO_LINE_OUT_MIN_W    72U
+#define LCDM_AUTO_LIST_PAGE_SIZE    11U
+#define LCDM_AUTO_LIST_ROW_H        14U
+#define LCDM_AUTO_LIST_Y0           34U
 #define LCDM_AUTO_LIST_MAX_PAGE     (((LCDM_TOTAL_POINTS - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U)
 #define LCDM_TABLE_NG_WORDS         3U
 #define LCDM_PASS_BLINK_READS       50U
@@ -126,17 +124,12 @@ static uint32_t lcdm_table_ng_out_bits[LCDM_TABLE_NG_WORDS];
 static uint16_t lcdm_learn_in_bg[LCDM_TOTAL_POINTS + 1U];
 static uint16_t lcdm_learn_out_bg[LCDM_TOTAL_POINTS + 1U];
 static char lcdm_auto_line_cache[LCDM_TOTAL_POINTS + 1U][256];
-static char lcdm_auto_drawn_line_cache[LCDM_AUTO_LIST_PAGE_SIZE][256];
 static char lcdm_auto_footer_cache[80];
-static char lcdm_auto_diag_a_cache[24];
-static char lcdm_auto_diag_b_cache[24];
-static uint8_t lcdm_auto_diag_visible;
 static char lcdm_layout_top_cache[32];
 static char lcdm_learn_footer_scan_cache[20];
 static char lcdm_learn_footer_pairs_cache[24];
 static char lcdm_learn_footer_points_cache[24];
 static uint8_t lcdm_auto_page_cache;
-static uint8_t lcdm_auto_drawn_page_cache;
 static uint16_t lcdm_auto_active_cache;
 static uint16_t lcdm_auto_line_count;
 static uint32_t lcdm_auto_point_count;
@@ -298,7 +291,7 @@ static void lcdm_raw_xstr_style(uint16_t x,
                                 uint8_t style,
                                 const char *text)
 {
-  char cmd[384];
+  char cmd[192];
 
   if(text == 0) {
     text = "";
@@ -417,7 +410,7 @@ static void lcdm_raw_write_status_cached(char *cache,
   (void)snprintf(cache, cache_len, "%s", text);
   lcdm_raw_fill(x, y, w, h, bg);
   (void)fg;
-  lcdm_raw_xstr(x, (uint16_t)(y + 5U), w, (h > 10U) ? (uint16_t)(h - 10U) : h, LCDM_FONT_SMALL, LCDM_BLUE, bg, align, cache);
+  lcdm_raw_xstr(x, (uint16_t)(y + 5U), w, (h > 10U) ? (uint16_t)(h - 10U) : h, LCDM_FONT_STATUS, LCDM_BLUE, bg, align, cache);
 }
 
 static void lcdm_raw_draw_key(uint8_t index, uint8_t active)
@@ -455,7 +448,7 @@ static void lcdm_raw_draw_key(uint8_t index, uint8_t active)
 
   lcdm_raw_fill(x, LCDM_KEY_Y0, LCDM_KEY_W, LCDM_KEY_H, LCDM_WHITE);
   lcdm_raw_round_rect((uint16_t)(x + 2U), (uint16_t)(LCDM_KEY_Y0 + 2U), (uint16_t)(LCDM_KEY_W - 4U), (uint16_t)(LCDM_KEY_H - 4U), 7U, bg);
-  lcdm_raw_xstr_full((uint16_t)(x + 4U), (uint16_t)(LCDM_KEY_Y0 + 5U), 112U, 31U, LCDM_FONT_LARGE, LCDM_WHITE, bg, 1U, top);
+  lcdm_raw_xstr_full((uint16_t)(x + 4U), (uint16_t)(LCDM_KEY_Y0 + 5U), 112U, 31U, LCDM_FONT_TITLE, LCDM_WHITE, bg, 1U, top);
   lcdm_raw_xstr_full((uint16_t)(x + 4U), (uint16_t)(LCDM_KEY_Y0 + 34U), 112U, 19U, LCDM_FONT_SMALL, LCDM_WHITE, bg, 1U, bottom);
 }
 
@@ -488,15 +481,33 @@ static uint8_t lcdm_key_to_index(uint8_t key, uint8_t *index)
   return 0U;
 }
 
+static uint16_t lcdm_key_normal_bg(uint8_t index)
+{
+  if(index == 1U) {
+    return LCDM_SOFT_PINK;
+  }
+  if(index == 2U) {
+    return LCDM_MAGENTA;
+  }
+  if(index == 3U) {
+    return LCDM_ORANGE;
+  }
+  return LCDM_BLUE;
+}
+
 static void lcdm_raw_draw_key_press_marker(uint8_t key, uint8_t active)
 {
   uint8_t index;
+  uint16_t x;
+  uint16_t color;
 
   if(lcdm_key_to_index(key, &index) == 0U) {
     return;
   }
 
-  lcdm_raw_draw_key(index, active);
+  x = (uint16_t)(index * LCDM_KEY_W);
+  color = (active != 0U) ? LCDM_WHITE : lcdm_key_normal_bg(index);
+  lcdm_raw_fill((uint16_t)(x + 6U), (uint16_t)(LCDM_KEY_Y0 + 2U), (uint16_t)(LCDM_KEY_W - 12U), 4U, color);
 }
 
 static const char *lcdm_print_status_text(uint8_t status)
@@ -516,7 +527,7 @@ static void lcdm_raw_draw_pass_cell(void)
 
   lcdm_raw_fill(LCDM_RESULT_X, LCDM_DETAIL_Y, LCDM_PASS_W, LCDM_DETAIL_H, LCDM_WHITE);
   lcdm_raw_round_rect(LCDM_RESULT_X, LCDM_DETAIL_Y, LCDM_PASS_W, LCDM_DETAIL_H, 8U, bg);
-  lcdm_raw_xstr_full((uint16_t)(LCDM_RESULT_X + 4U), (uint16_t)(LCDM_DETAIL_Y + 4U), (uint16_t)(LCDM_PASS_W - 8U), (uint16_t)(LCDM_DETAIL_H - 8U), LCDM_FONT_LARGE, LCDM_WHITE, bg, 1U, "PASS");
+  lcdm_raw_xstr_full((uint16_t)(LCDM_RESULT_X + 4U), (uint16_t)(LCDM_DETAIL_Y + 4U), (uint16_t)(LCDM_PASS_W - 8U), (uint16_t)(LCDM_DETAIL_H - 8U), LCDM_FONT_RESULT, LCDM_WHITE, bg, 1U, "PASS");
 }
 
 static void lcdm_raw_draw_print_cell(uint8_t force)
@@ -540,7 +551,7 @@ static void lcdm_raw_draw_print_cell(uint8_t force)
   (void)snprintf(lcdm_raw_print_cache, sizeof(lcdm_raw_print_cache), "%s", text);
   lcdm_raw_fill(LCDM_PRINT_X, LCDM_DETAIL_Y, LCDM_PRINT_W, LCDM_DETAIL_H, LCDM_WHITE);
   lcdm_raw_round_rect(LCDM_PRINT_X, LCDM_DETAIL_Y, LCDM_PRINT_W, LCDM_DETAIL_H, 8U, bg);
-  lcdm_raw_xstr_full((uint16_t)(LCDM_PRINT_X + 6U), (uint16_t)(LCDM_DETAIL_Y + 4U), (uint16_t)(LCDM_PRINT_W - 12U), (uint16_t)(LCDM_DETAIL_H - 8U), LCDM_FONT_LARGE, fg, bg, 1U, lcdm_raw_print_cache);
+  lcdm_raw_xstr_full((uint16_t)(LCDM_PRINT_X + 6U), (uint16_t)(LCDM_DETAIL_Y + 4U), (uint16_t)(LCDM_PRINT_W - 12U), (uint16_t)(LCDM_DETAIL_H - 8U), LCDM_FONT_RESULT, fg, bg, 1U, lcdm_raw_print_cache);
 }
 
 static void lcdm_raw_draw_pass_print_result(uint8_t status)
@@ -623,7 +634,7 @@ static void lcdm_raw_draw_idle_banner(void)
                      LCDM_STATUS_Y,
                      (uint16_t)(((uint16_t)(last_col - first_col + 1) * LCDM_IDLE_BANNER_CHAR_W)),
                      LCDM_STATUS_H,
-                     LCDM_FONT_SCROLL,
+                     LCDM_FONT_TITLE,
                      LCDM_BLUE,
                      LCDM_ROW_BG,
                      0U,
@@ -692,14 +703,13 @@ static void lcdm_idle_banner_step_now(void)
 
 static void lcdm_raw_draw_test_frame(void)
 {
-  lcdm_tjc_send_cmd("bkcmd=0");
   lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
   lcdm_tjc_send_cmd("cls 65535");
   lcdm_raw_fill(0U, 0U, LCDM_W, LCDM_H, LCDM_WHITE);
   lcdm_raw_fill(0U, 0U, LCDM_W, 32U, LCDM_NAVY);
-  lcdm_raw_xstr_full(8U, 3U, 220U, 26U, LCDM_FONT_SMALL, LCDM_WHITE, LCDM_NAVY, 0U, "STANDARD CABLE");
-  lcdm_raw_xstr_full(300U, 3U, 172U, 26U, LCDM_FONT_SMALL, LCDM_WHITE, LCDM_NAVY, 2U, "WIRE TESTER");
+  lcdm_raw_xstr_full(8U, 3U, 220U, 26U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 0U, "STANDARD CABLE");
+  lcdm_raw_xstr_full(300U, 3U, 172U, 26U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 2U, "WIRE TESTER");
   lcdm_raw_fill(16U, LCDM_STATUS_Y, 448U, LCDM_STATUS_H, LCDM_ROW_BG);
   lcdm_raw_draw_keys();
   lcdm_raw_fill(LCDM_RESULT_X, LCDM_DETAIL_Y, LCDM_RESULT_W, LCDM_DETAIL_H, LCDM_WHITE);
@@ -768,7 +778,7 @@ static void lcdm_draw_common_header(const char *top_right)
   lcdm_raw_fill(0U, 0U, LCDM_W, LCDM_H, LCDM_WHITE);
   lcdm_raw_fill(0U, 0U, LCDM_W, 32U, LCDM_NAVY);
   (void)top_right;
-  lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_SCROLL, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
+  lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
 }
@@ -781,9 +791,7 @@ static void lcdm_draw_auto_header(const char *title)
 
   lcdm_raw_fill(0U, 0U, LCDM_W, LCDM_H, LCDM_WHITE);
   lcdm_raw_fill(0U, 0U, LCDM_W, 32U, LCDM_NAVY);
-  lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_SCROLL, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
-  lcdm_raw_fill(0U, 34U, LCDM_W, 36U, LCDM_ROW_BG);
-  lcdm_raw_xstr_full(0U, 35U, LCDM_W, 34U, LCDM_FONT_SCROLL, LCDM_BLUE, LCDM_ROW_BG, 1U, title);
+  lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 1U, title);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
 }
@@ -791,13 +799,13 @@ static void lcdm_draw_auto_header(const char *title)
 static void lcdm_draw_body_text(uint16_t y, uint16_t h, const char *text, uint16_t fg, uint16_t bg)
 {
   lcdm_raw_fill(24U, y, 432U, h, bg);
-  lcdm_raw_xstr_full(24U, y, 432U, h, LCDM_FONT_SMALL, fg, bg, 1U, text);
+  lcdm_raw_xstr_full(24U, y, 432U, h, LCDM_FONT_STATUS, fg, bg, 1U, text);
 }
 
 static void lcdm_draw_learning_pair_text(const char *text)
 {
   lcdm_raw_fill(24U, 84U, 432U, 82U, LCDM_WHITE);
-  lcdm_raw_xstr_full(24U, 84U, 432U, 82U, LCDM_FONT_SCROLL, LCDM_NAVY, LCDM_WHITE, 1U, text);
+  lcdm_raw_xstr_full(24U, 84U, 432U, 82U, LCDM_FONT_POINT, LCDM_NAVY, LCDM_WHITE, 1U, text);
 }
 
 static void lcdm_draw_split_body(uint16_t left_x,
@@ -805,6 +813,8 @@ static void lcdm_draw_split_body(uint16_t left_x,
                                  uint16_t left_w,
                                  uint16_t right_w,
                                  uint16_t h,
+                                 uint16_t left_font,
+                                 uint16_t right_font,
                                  const char *left_text,
                                  const char *right_text,
                                  uint16_t left_fg,
@@ -815,8 +825,8 @@ static void lcdm_draw_split_body(uint16_t left_x,
   lcdm_raw_fill(left_x, y, left_w, h, left_bg);
   lcdm_raw_fill((uint16_t)(left_x + left_w), y, right_w, h, right_bg);
   lcdm_raw_fill((uint16_t)(left_x + left_w - 1U), y, 2U, h, LCDM_BLACK);
-  lcdm_raw_xstr_full(left_x, y, left_w, h, LCDM_FONT_LARGE, left_fg, left_bg, 1U, left_text);
-  lcdm_raw_xstr_full((uint16_t)(left_x + left_w), y, right_w, h, LCDM_FONT_LARGE, right_fg, right_bg, 1U, right_text);
+  lcdm_raw_xstr_full(left_x, y, left_w, h, left_font, left_fg, left_bg, 1U, left_text);
+  lcdm_raw_xstr_full((uint16_t)(left_x + left_w), y, right_w, h, right_font, right_fg, right_bg, 1U, right_text);
 }
 
 static void lcdm_draw_result_pass_body(const char *detail_text)
@@ -842,13 +852,13 @@ static void lcdm_draw_result_pass_body(const char *detail_text)
   lcdm_raw_fill(24U, 84U, 216U, 82U, LCDM_GREEN);
   lcdm_raw_fill(240U, 84U, 216U, 82U, LCDM_WHITE);
   lcdm_raw_fill(239U, 84U, 2U, 82U, LCDM_BLACK);
-  lcdm_raw_xstr_full(18U, 84U, 228U, 82U, LCDM_FONT_SCROLL, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(19U, 84U, 228U, 82U, LCDM_FONT_SCROLL, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(18U, 85U, 228U, 82U, LCDM_FONT_SCROLL, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(19U, 85U, 228U, 82U, LCDM_FONT_SCROLL, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(244U, 84U, 208U, 26U, LCDM_FONT_SCROLL, LCDM_NAVY, LCDM_WHITE, 1U, total_text);
-  lcdm_raw_xstr_full(244U, 111U, 208U, 26U, LCDM_FONT_SCROLL, LCDM_NAVY, LCDM_WHITE, 1U, pairs_text);
-  lcdm_raw_xstr_full(244U, 138U, 208U, 28U, LCDM_FONT_SCROLL, LCDM_NAVY, LCDM_WHITE, 1U, points_text);
+  lcdm_raw_xstr_full(18U, 84U, 228U, 82U, LCDM_FONT_RESULT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(19U, 84U, 228U, 82U, LCDM_FONT_RESULT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(18U, 85U, 228U, 82U, LCDM_FONT_RESULT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(19U, 85U, 228U, 82U, LCDM_FONT_RESULT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(244U, 84U, 208U, 26U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, total_text);
+  lcdm_raw_xstr_full(244U, 111U, 208U, 26U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, pairs_text);
+  lcdm_raw_xstr_full(244U, 138U, 208U, 28U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, points_text);
 }
 
 static void lcdm_draw_top_split_labels(const char *left_text, const char *right_text, uint16_t fg, uint16_t bg)
@@ -857,8 +867,8 @@ static void lcdm_draw_top_split_labels(const char *left_text, const char *right_
   lcdm_raw_fill(24U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, bg);
   lcdm_raw_fill(240U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, bg);
   lcdm_raw_fill(240U, LCDM_STATUS_Y, 2U, LCDM_STATUS_H, LCDM_BLACK);
-  lcdm_raw_xstr_full(24U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, LCDM_FONT_SCROLL, LCDM_BLUE, bg, 1U, left_text);
-  lcdm_raw_xstr_full(240U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, LCDM_FONT_SCROLL, LCDM_BLUE, bg, 1U, right_text);
+  lcdm_raw_xstr_full(24U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, LCDM_FONT_STATUS, LCDM_BLUE, bg, 1U, left_text);
+  lcdm_raw_xstr_full(240U, LCDM_STATUS_Y, 216U, LCDM_STATUS_H, LCDM_FONT_STATUS, LCDM_BLUE, bg, 1U, right_text);
 }
 
 static void lcdm_prepare_standard_page(const char *top_right)
@@ -866,10 +876,6 @@ static void lcdm_prepare_standard_page(const char *top_right)
   if(top_right == 0) {
     top_right = "";
   }
-
-  lcdm_tjc_send_cmd("bkcmd=0");
-  lcdm_tjc_send_cmd("tsw 255,0");
-  lcdm_tjc_send_cmd("sendxy=1");
 
   if(lcdm_layout_mode == 1U && strcmp(lcdm_layout_top_cache, top_right) == 0) {
     return;
@@ -978,86 +984,21 @@ static void lcdm_learn_table_clear(void)
   lcdm_learn_footer_points_cache[0] = '\0';
 }
 
-static void lcdm_auto_drawn_cache_clear(void)
-{
-  uint8_t slot;
-
-  for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-    lcdm_auto_drawn_line_cache[slot][0] = '\0';
-  }
-  lcdm_auto_drawn_page_cache = 0U;
-  lcdm_auto_diag_a_cache[0] = '\0';
-  lcdm_auto_diag_b_cache[0] = '\0';
-  lcdm_auto_diag_visible = 0U;
-}
-
-static void lcdm_auto_drawn_cache_sync(uint8_t page)
-{
-  uint8_t slot;
-  uint16_t point;
-  uint16_t first;
-  const char *line;
-
-  if(page == 0U) {
-    page = 1U;
-  }
-
-  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
-  for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-    point = (uint16_t)(first + slot);
-    line = (point <= lcdm_auto_line_count) ? lcdm_auto_line_cache[point] : "";
-    (void)snprintf(lcdm_auto_drawn_line_cache[slot],
-                   sizeof(lcdm_auto_drawn_line_cache[slot]),
-                   "%s",
-                   line);
-  }
-  lcdm_auto_drawn_page_cache = page;
-}
-
-static void lcdm_auto_line_data_clear(void)
+static void lcdm_auto_test_clear(void)
 {
   uint16_t point;
 
   for(point = 0U; point <= LCDM_TOTAL_POINTS; point++) {
     lcdm_auto_line_cache[point][0] = '\0';
   }
+  lcdm_auto_page_cache = 0U;
+  lcdm_auto_active_cache = 0U;
   lcdm_auto_line_count = 0U;
   lcdm_auto_point_count = 0UL;
-}
-
-static void lcdm_auto_test_clear(void)
-{
-  lcdm_auto_line_data_clear();
-  lcdm_auto_page_cache = 0U;
-  lcdm_auto_drawn_cache_clear();
-  lcdm_auto_active_cache = 0U;
   lcdm_auto_footer_cache[0] = '\0';
 }
 
-static uint8_t lcdm_auto_test_page_count(void)
-{
-  uint8_t page_count;
-
-  if(lcdm_auto_line_count == 0U) {
-    return 1U;
-  }
-
-  page_count = (uint8_t)(((lcdm_auto_line_count - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
-  if(page_count == 0U) {
-    page_count = 1U;
-  }
-  if(page_count > LCDM_AUTO_LIST_MAX_PAGE) {
-    page_count = LCDM_AUTO_LIST_MAX_PAGE;
-  }
-  return page_count;
-}
-
-static uint16_t lcdm_rgb565(uint16_t r5, uint16_t g6, uint16_t b5)
-{
-  return (uint16_t)(((r5 & 0x1FU) << 11) | ((g6 & 0x3FU) << 5) | (b5 & 0x1FU));
-}
-
-static uint16_t lcdm_learn_group_color(uint16_t group_index)
+static uint16_t lcdm_learn_group_color(uint16_t out_point)
 {
   static const uint16_t colors[] = {
     LCDM_GREEN,
@@ -1068,72 +1009,21 @@ static uint16_t lcdm_learn_group_color(uint16_t group_index)
     LCDM_PALE_CYAN,
     LCDM_DARK_ORANGE,
     LCDM_DARK_GREEN,
-    LCDM_GRAY,
-    65504U,
-    2047U,
-    63519U,
-    64543U,
-    34815U,
-    65440U,
-    32767U,
-    63454U,
-    47071U,
-    65375U,
-    38879U,
-    63423U,
-    22527U,
-    65519U,
-    45055U
+    LCDM_GRAY
   };
-  uint16_t idx;
-  uint16_t r;
-  uint16_t g;
-  uint16_t b;
 
-  if(group_index == 0U) {
-    group_index = 1U;
+  if(out_point == 0U) {
+    out_point = 1U;
   }
-
-  idx = (uint16_t)(group_index - 1U);
-  if(idx < (sizeof(colors) / sizeof(colors[0]))) {
-    return colors[idx];
-  }
-
-  r = (uint16_t)(((idx * 7U) % 25U) + 6U);
-  g = (uint16_t)(((idx * 13U) % 49U) + 14U);
-  b = (uint16_t)(((idx * 17U) % 25U) + 6U);
-
-  return lcdm_rgb565(r, g, b);
+  return colors[(out_point - 1U) % (sizeof(colors) / sizeof(colors[0]))];
 }
 
 static uint16_t lcdm_learn_text_color(uint16_t bg)
 {
-  uint16_t r = (uint16_t)((bg >> 11) & 0x1FU);
-  uint16_t g = (uint16_t)((bg >> 5) & 0x3FU);
-  uint16_t b = (uint16_t)(bg & 0x1FU);
-  uint32_t luminance = ((uint32_t)r * 76UL) + ((uint32_t)g * 75UL) + ((uint32_t)b * 29UL);
-
-  return (luminance > 3600UL) ? LCDM_NAVY : LCDM_WHITE;
-}
-
-static uint16_t lcdm_finish_bg_color(uint16_t bg)
-{
-  if(bg == LCDM_GREEN) {
-    return LCDM_DONE_GREEN;
+  if(bg == LCDM_PALE_CYAN || bg == LCDM_PALE_BLUE || bg == LCDM_GREEN) {
+    return LCDM_NAVY;
   }
-  if(bg == LCDM_DARK_GREEN) {
-    return LCDM_DONE_DARK_GREEN;
-  }
-  if(bg == LCDM_ORANGE) {
-    return LCDM_DARK_ORANGE;
-  }
-  if(bg == LCDM_PALE_CYAN) {
-    return LCDM_PALE_BLUE;
-  }
-  if(bg == LCDM_GRAY) {
-    return LCDM_DARK_GRAY;
-  }
-  return bg;
+  return LCDM_WHITE;
 }
 
 static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point)
@@ -1177,219 +1067,30 @@ static void lcdm_auto_test_point_rect(uint8_t page, uint16_t point, uint16_t *x,
 static uint16_t lcdm_auto_count_line_points(const char *line)
 {
   uint16_t count = 0U;
+  const char *cursor;
 
   if(line == 0 || line[0] == '\0') {
     return 0U;
   }
 
-  while(*line != '\0' && *line != ';') {
-    if(((*line == 'I') || (*line == 'O')) &&
-       (line[1] >= '0' && line[1] <= '9') &&
-       (line[2] >= '0' && line[2] <= '9') &&
-       (line[3] >= '0' && line[3] <= '9')) {
+  cursor = strchr(line, '-');
+  if(cursor == 0) {
+    return 0U;
+  }
+  cursor++;
+  while(*cursor != '\0' && *cursor != ';') {
+    if((*cursor == 'I') || (*cursor == 'O')) {
       count++;
     }
-    line++;
+    cursor++;
   }
 
   return count;
 }
 
-static uint16_t lcdm_auto_line_first_in(const char *line)
-{
-  uint16_t value;
-
-  if(line == 0) {
-    return 0xFFFFU;
-  }
-
-  while(*line != '\0') {
-    if((*line == 'I') &&
-       (line[1] >= '0' && line[1] <= '9') &&
-       (line[2] >= '0' && line[2] <= '9') &&
-       (line[3] >= '0' && line[3] <= '9')) {
-      value = (uint16_t)(((line[1] - '0') * 100U) +
-                         ((line[2] - '0') * 10U) +
-                         (line[3] - '0'));
-      return value;
-    }
-    line++;
-  }
-
-  return 0xFFFFU;
-}
-
-static uint8_t lcdm_auto_line_has_token(const char *line, char token_type, uint16_t token_value)
-{
-  uint16_t value;
-
-  if(line == 0) {
-    return 0U;
-  }
-
-  while(*line != '\0') {
-    if((*line == token_type) &&
-       (line[1] >= '0' && line[1] <= '9') &&
-       (line[2] >= '0' && line[2] <= '9') &&
-       (line[3] >= '0' && line[3] <= '9')) {
-      value = (uint16_t)(((line[1] - '0') * 100U) +
-                         ((line[2] - '0') * 10U) +
-                         (line[3] - '0'));
-      if(value == token_value) {
-        return 1U;
-      }
-    }
-    line++;
-  }
-
-  return 0U;
-}
-
-static uint8_t lcdm_auto_lines_share_token(const char *left, const char *right)
-{
-  char token_type;
-  uint16_t token_value;
-
-  if(left == 0 || right == 0) {
-    return 0U;
-  }
-
-  while(*left != '\0') {
-    token_type = *left;
-    if(((token_type == 'I') || (token_type == 'O')) &&
-       (left[1] >= '0' && left[1] <= '9') &&
-       (left[2] >= '0' && left[2] <= '9') &&
-       (left[3] >= '0' && left[3] <= '9')) {
-      token_value = (uint16_t)(((left[1] - '0') * 100U) +
-                               ((left[2] - '0') * 10U) +
-                               (left[3] - '0'));
-      if(lcdm_auto_line_has_token(right, token_type, token_value) != 0U) {
-        return 1U;
-      }
-    }
-    left++;
-  }
-
-  return 0U;
-}
-
-static void lcdm_auto_collect_line_tokens(const char *line,
-                                          uint8_t in_seen[LCDM_TOTAL_POINTS + 1U],
-                                          uint8_t out_seen[LCDM_TOTAL_POINTS + 1U])
-{
-  char token_type;
-  uint16_t token_value;
-
-  if(line == 0) {
-    return;
-  }
-
-  while(*line != '\0') {
-    token_type = *line;
-    if(((token_type == 'I') || (token_type == 'O')) &&
-       (line[1] >= '0' && line[1] <= '9') &&
-       (line[2] >= '0' && line[2] <= '9') &&
-       (line[3] >= '0' && line[3] <= '9')) {
-      token_value = (uint16_t)(((line[1] - '0') * 100U) +
-                               ((line[2] - '0') * 10U) +
-                               (line[3] - '0'));
-      if(token_value <= LCDM_TOTAL_POINTS) {
-        if(token_type == 'I') {
-          in_seen[token_value] = 1U;
-        } else {
-          out_seen[token_value] = 1U;
-        }
-      }
-    }
-    line++;
-  }
-}
-
-static void lcdm_auto_append_token(char *out,
-                                   uint16_t out_len,
-                                   char token_type,
-                                   uint16_t token_value,
-                                   uint8_t *first)
-{
-  uint16_t used;
-
-  if(out == 0 || first == 0 || out_len == 0U) {
-    return;
-  }
-
-  used = (uint16_t)strlen(out);
-  if(used >= out_len || (uint16_t)(out_len - used) <= 6U) {
-    return;
-  }
-
-  if(*first == 0U) {
-    out[used] = ',';
-    used++;
-    out[used] = '\0';
-  }
-
-  (void)snprintf(&out[used], (uint16_t)(out_len - used), "%c%03u", token_type, (unsigned int)token_value);
-  *first = 0U;
-}
-
-static void lcdm_auto_merge_lines(const char *existing_line, const char *new_line, char *out, uint16_t out_len)
-{
-  uint8_t in_seen[LCDM_TOTAL_POINTS + 1U];
-  uint8_t out_seen[LCDM_TOTAL_POINTS + 1U];
-  uint16_t point;
-  uint8_t first;
-  uint16_t used;
-
-  if(out == 0 || out_len == 0U) {
-    return;
-  }
-
-  for(point = 0U; point <= LCDM_TOTAL_POINTS; point++) {
-    in_seen[point] = 0U;
-    out_seen[point] = 0U;
-  }
-
-  lcdm_auto_collect_line_tokens(existing_line, in_seen, out_seen);
-  lcdm_auto_collect_line_tokens(new_line, in_seen, out_seen);
-
-  out[0] = '\0';
-  first = 1U;
-  for(point = 1U; point <= LCDM_TOTAL_POINTS; point++) {
-    if(in_seen[point] != 0U) {
-      lcdm_auto_append_token(out, out_len, 'I', point, &first);
-    }
-  }
-
-  used = (uint16_t)strlen(out);
-  if(used < out_len && (uint16_t)(out_len - used) > 1U) {
-    out[used] = '-';
-    used++;
-    out[used] = '\0';
-  }
-
-  first = 1U;
-  for(point = 1U; point <= LCDM_TOTAL_POINTS; point++) {
-    if(out_seen[point] != 0U) {
-      lcdm_auto_append_token(out, out_len, 'O', point, &first);
-    }
-  }
-
-  used = (uint16_t)strlen(out);
-  if(used < out_len && (uint16_t)(out_len - used) > 1U) {
-    out[used] = ';';
-    used++;
-    out[used] = '\0';
-  }
-}
-
 static uint16_t lcdm_auto_test_set_line(uint16_t point, const char *line)
 {
   uint16_t existing;
-  uint16_t old_points;
-  uint16_t new_points;
-  uint16_t insert;
-  uint16_t key;
-  char merged_line[256];
 
   if(point == 0U || point > LCDM_TOTAL_POINTS) {
     return 0U;
@@ -1405,79 +1106,27 @@ static uint16_t lcdm_auto_test_set_line(uint16_t point, const char *line)
     if(strcmp(lcdm_auto_line_cache[existing], line) == 0) {
       return existing;
     }
-    if(lcdm_auto_lines_share_token(lcdm_auto_line_cache[existing], line) != 0U) {
-      old_points = lcdm_auto_count_line_points(lcdm_auto_line_cache[existing]);
-      lcdm_auto_merge_lines(lcdm_auto_line_cache[existing], line, merged_line, sizeof(merged_line));
-      new_points = lcdm_auto_count_line_points(merged_line);
-      (void)snprintf(lcdm_auto_line_cache[existing],
-                     sizeof(lcdm_auto_line_cache[existing]),
-                     "%s",
-                     merged_line);
-      if(lcdm_auto_point_count >= old_points) {
-        lcdm_auto_point_count -= old_points;
-      } else {
-        lcdm_auto_point_count = 0UL;
-      }
-      lcdm_auto_point_count += new_points;
-
-      key = lcdm_auto_line_first_in(lcdm_auto_line_cache[existing]);
-      while(existing > 1U && lcdm_auto_line_first_in(lcdm_auto_line_cache[existing - 1U]) > key) {
-        memcpy(merged_line, lcdm_auto_line_cache[existing - 1U], sizeof(merged_line));
-        memcpy(lcdm_auto_line_cache[existing - 1U],
-               lcdm_auto_line_cache[existing],
-               sizeof(lcdm_auto_line_cache[existing - 1U]));
-        memcpy(lcdm_auto_line_cache[existing],
-               merged_line,
-               sizeof(lcdm_auto_line_cache[existing]));
-        existing--;
-      }
-      return existing;
-    }
   }
 
   if(lcdm_auto_line_count >= LCDM_TOTAL_POINTS) {
     return 0U;
   }
 
-  key = lcdm_auto_line_first_in(line);
-  insert = (uint16_t)(lcdm_auto_line_count + 1U);
-  for(existing = 1U; existing <= lcdm_auto_line_count; existing++) {
-    if(lcdm_auto_line_first_in(lcdm_auto_line_cache[existing]) > key) {
-      insert = existing;
-      break;
-    }
-  }
-
   lcdm_auto_line_count++;
-  for(existing = lcdm_auto_line_count; existing > insert; existing--) {
-    memcpy(lcdm_auto_line_cache[existing],
-           lcdm_auto_line_cache[existing - 1U],
-           sizeof(lcdm_auto_line_cache[existing]));
-  }
-  (void)snprintf(lcdm_auto_line_cache[insert],
-                 sizeof(lcdm_auto_line_cache[insert]),
+  (void)snprintf(lcdm_auto_line_cache[lcdm_auto_line_count],
+                 sizeof(lcdm_auto_line_cache[lcdm_auto_line_count]),
                  "%s",
                  line);
   lcdm_auto_point_count += (uint32_t)lcdm_auto_count_line_points(line);
-  return insert;
+  return lcdm_auto_line_count;
 }
 
 static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point, uint16_t active_point)
 {
   uint16_t x;
   uint16_t y;
-  uint16_t text_x;
-  uint16_t text_y;
-  uint16_t text_h;
-  uint16_t split_w;
   uint16_t bg = LCDM_WHITE;
   uint16_t fg = LCDM_NAVY;
-  uint16_t in_bg;
-  uint16_t out_bg;
-  char text[LCDM_AUTO_LINE_TEXT_MAX];
-  char in_text[LCDM_AUTO_LINE_TEXT_MAX];
-  char out_text[LCDM_AUTO_LINE_TEXT_MAX];
-  char *dash;
   const char *line;
 
   if(lcdm_auto_test_point_visible(page, point) == 0U) {
@@ -1485,67 +1134,16 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point, uint16_t acti
   }
 
   line = lcdm_auto_line_cache[point];
-  strncpy(text, line, sizeof(text) - 1U);
-  text[sizeof(text) - 1U] = '\0';
-  bg = ((point & 1U) == 0U) ? LCDM_ROW_BG : LCDM_WHITE;
-  if(active_point != 0U && point == active_point) {
-    bg = LCDM_BLUE;
+  if(line[0] == '\0') {
+    return;
+  }
+  if(point == active_point) {
+    bg = LCDM_PALE_BLUE;
     fg = LCDM_WHITE;
   }
   lcdm_auto_test_point_rect(page, point, &x, &y);
   lcdm_raw_fill(x, y, 448U, LCDM_AUTO_LIST_ROW_H, bg);
-  if(text[0] == '\0') {
-    return;
-  }
-
-  text_x = (uint16_t)(x + 4U);
-  text_y = (uint16_t)(y + 6U);
-  text_h = 16U;
-  dash = strchr(text, '-');
-  if(active_point == 0U && dash != 0 && dash > text) {
-    *dash = '\0';
-    strncpy(in_text, text, sizeof(in_text) - 2U);
-    in_text[sizeof(in_text) - 2U] = '\0';
-    strncat(in_text, "-", sizeof(in_text) - strlen(in_text) - 1U);
-    (void)snprintf(out_text, sizeof(out_text), "%s", dash + 1);
-    split_w = (uint16_t)((strlen(in_text) * LCDM_AUTO_LINE_CHAR_W) + LCDM_AUTO_LINE_PAD_W);
-    if(split_w < 56U) {
-      split_w = 56U;
-    }
-    if(split_w > (LCDM_AUTO_LINE_TOTAL_W - LCDM_AUTO_LINE_OUT_MIN_W)) {
-      split_w = (uint16_t)(LCDM_AUTO_LINE_TOTAL_W - LCDM_AUTO_LINE_OUT_MIN_W);
-    }
-    in_bg = LCDM_GREEN;
-    out_bg = LCDM_DARK_GREEN;
-    lcdm_raw_xstr_full(text_x,
-                       text_y,
-                       split_w,
-                       text_h,
-                       LCDM_FONT_SMALL,
-                       lcdm_learn_text_color(in_bg),
-                       in_bg,
-                       0U,
-                       in_text);
-    lcdm_raw_xstr_full((uint16_t)(text_x + split_w),
-                       text_y,
-                       (uint16_t)(LCDM_AUTO_LINE_TOTAL_W - split_w),
-                       text_h,
-                       LCDM_FONT_SMALL,
-                       lcdm_learn_text_color(out_bg),
-                       out_bg,
-                       0U,
-                       out_text);
-  } else {
-    lcdm_raw_xstr_full(text_x,
-                       text_y,
-                       LCDM_AUTO_LINE_TOTAL_W,
-                       text_h,
-                       LCDM_FONT_SMALL,
-                       fg,
-                       bg,
-                       0U,
-                       text);
-  }
+  lcdm_raw_xstr_full(x, y, 448U, LCDM_AUTO_LIST_ROW_H, LCDM_FONT_SMALL, fg, bg, 0U, line);
 }
 
 static void lcdm_draw_auto_test_all(uint8_t page, uint16_t active_point)
@@ -1608,13 +1206,9 @@ static void lcdm_prepare_auto_test_page(uint8_t page, uint16_t active_point, uin
   if(page == 0U) {
     page = 1U;
   }
-  if(page > LCDM_AUTO_LIST_MAX_PAGE) {
-    page = LCDM_AUTO_LIST_MAX_PAGE;
+  if(page > 2U) {
+    page = 2U;
   }
-
-  lcdm_tjc_send_cmd("bkcmd=0");
-  lcdm_tjc_send_cmd("tsw 255,0");
-  lcdm_tjc_send_cmd("sendxy=1");
 
   if(done == 0U && active_point == 0U && lcdm_auto_page_cache == 0U) {
     lcdm_auto_test_clear();
@@ -1628,7 +1222,6 @@ static void lcdm_prepare_auto_test_page(uint8_t page, uint16_t active_point, uin
     lcdm_layout_top_cache[0] = '\0';
     lcdm_draw_auto_header("AUTO TESTING");
     lcdm_draw_auto_test_all(page, active_point);
-    lcdm_raw_draw_keys();
     return;
   }
 
@@ -1645,6 +1238,20 @@ static void lcdm_prepare_auto_test_page(uint8_t page, uint16_t active_point, uin
   if(done != 0U) {
     lcdm_draw_auto_footer(done);
   }
+}
+
+static void lcdm_learn_set_group_connection(uint16_t out_point, uint16_t in_point, uint16_t group_index)
+{
+  uint16_t color;
+
+  if(out_point == 0U || out_point > LCDM_TOTAL_POINTS ||
+     in_point == 0U || in_point > LCDM_TOTAL_POINTS) {
+    return;
+  }
+
+  color = lcdm_learn_group_color(group_index);
+  lcdm_learn_out_bg[out_point] = color;
+  lcdm_learn_in_bg[in_point] = color;
 }
 
 static void lcdm_draw_table_legend(uint8_t page)
@@ -1693,8 +1300,8 @@ static void lcdm_draw_table_pair(uint8_t page, uint16_t point, uint16_t active_p
   }
 
   if(point <= active_point) {
-    top_bg = LCDM_DONE_GREEN;
-    bottom_bg = LCDM_DONE_DARK_GREEN;
+    top_bg = LCDM_GREEN;
+    bottom_bg = LCDM_DARK_GREEN;
     top_fg = LCDM_NAVY;
     bottom_fg = LCDM_WHITE;
   }
@@ -1744,15 +1351,12 @@ static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point)
     page = 2U;
   }
 
-  lcdm_tjc_send_cmd("bkcmd=0");
-  lcdm_tjc_send_cmd("tsw 255,0");
-  lcdm_tjc_send_cmd("sendxy=1");
-
   if(active_point == 0U) {
     lcdm_table_ng_clear();
   }
 
   if(lcdm_layout_mode != 2U || lcdm_table_page_cache != page) {
+    lcdm_tjc_draw_batch_begin();
     lcdm_reset_dynamic_effects();
     lcdm_layout_mode = 2U;
     lcdm_table_page_cache = page;
@@ -1761,24 +1365,12 @@ static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point)
     lcdm_draw_common_header("");
     lcdm_draw_table_all(page, active_point);
     lcdm_draw_table_legend(page);
-    return;
-  }
-
-  if(active_point > LCDM_TOTAL_POINTS) {
-    lcdm_draw_table_all(page, active_point);
-    lcdm_draw_table_legend(page);
-    lcdm_table_active_cache = active_point;
-    return;
-  }
-
-  if(active_point == 0U && old_active != 0U) {
-    lcdm_draw_table_all(page, 0U);
-    lcdm_draw_table_legend(page);
-    lcdm_table_active_cache = 0U;
+    lcdm_tjc_draw_batch_end();
     return;
   }
 
   if(old_active != active_point) {
+    lcdm_tjc_draw_batch_begin();
     if(lcdm_table_point_visible(page, old_active) != 0U) {
       lcdm_draw_table_pair(page, old_active, active_point);
     }
@@ -1794,6 +1386,7 @@ static void lcdm_prepare_table_page(uint8_t page, uint16_t active_point)
       }
     }
     lcdm_table_active_cache = active_point;
+    lcdm_tjc_draw_batch_end();
   }
 }
 
@@ -1897,14 +1490,6 @@ static void lcdm_draw_learn_table_pair(uint8_t page, uint16_t point, uint16_t ac
     bottom_bg = lcdm_learn_out_bg[point];
     bottom_fg = lcdm_learn_text_color(bottom_bg);
   }
-  if((active_point == 0U || active_point > LCDM_TOTAL_POINTS) && lcdm_learn_in_bg[point] != 0U) {
-    top_bg = lcdm_finish_bg_color(top_bg);
-    top_fg = lcdm_learn_text_color(top_bg);
-  }
-  if((active_point == 0U || active_point > LCDM_TOTAL_POINTS) && lcdm_learn_out_bg[point] != 0U) {
-    bottom_bg = lcdm_finish_bg_color(bottom_bg);
-    bottom_fg = lcdm_learn_text_color(bottom_bg);
-  }
 
   lcdm_learn_table_point_rect(page, point, &x, &y);
   lcdm_raw_fill(x, y, 40U, 36U, LCDM_BLACK);
@@ -1942,15 +1527,12 @@ static void lcdm_prepare_learn_table_page(uint8_t page,
     page = 2U;
   }
 
-  lcdm_tjc_send_cmd("bkcmd=0");
-  lcdm_tjc_send_cmd("tsw 255,0");
-  lcdm_tjc_send_cmd("sendxy=1");
-
   if(active_point == 0U && done == 0U) {
     lcdm_learn_table_clear();
   }
 
   if(lcdm_layout_mode != 3U || lcdm_table_page_cache != page) {
+    lcdm_tjc_draw_batch_begin();
     lcdm_reset_dynamic_effects();
     lcdm_layout_mode = 3U;
     lcdm_table_page_cache = page;
@@ -1963,28 +1545,12 @@ static void lcdm_prepare_learn_table_page(uint8_t page,
     lcdm_learn_footer_pairs_cache[0] = '\0';
     lcdm_learn_footer_points_cache[0] = '\0';
     lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
-    return;
-  }
-
-  if(active_point > LCDM_TOTAL_POINTS) {
-    if(old_active != active_point) {
-      lcdm_draw_learn_table_all(page, active_point);
-      lcdm_draw_learn_table_legend(page);
-    }
-    lcdm_table_active_cache = active_point;
-    lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
-    return;
-  }
-
-  if(active_point == 0U && old_active != 0U) {
-    lcdm_draw_learn_table_all(page, 0U);
-    lcdm_draw_learn_table_legend(page);
-    lcdm_table_active_cache = 0U;
-    lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
+    lcdm_tjc_draw_batch_end();
     return;
   }
 
   if(old_active != active_point) {
+    lcdm_tjc_draw_batch_begin();
     if(lcdm_table_point_visible(page, old_active) != 0U) {
       lcdm_draw_learn_table_pair(page, old_active, active_point);
     }
@@ -2000,6 +1566,9 @@ static void lcdm_prepare_learn_table_page(uint8_t page,
       }
     }
     lcdm_table_active_cache = active_point;
+    lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
+    lcdm_tjc_draw_batch_end();
+    return;
   }
 
   lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
@@ -2051,6 +1620,8 @@ void first_gen_display_show_page(const char *top_right,
                            216U,
                            216U,
                            82U,
+                           LCDM_FONT_RESULT,
+                           LCDM_FONT_POINT,
                            main_text,
                            result_text,
                            result_fg,
@@ -2074,7 +1645,7 @@ void first_gen_display_show_page(const char *top_right,
                                LCDM_STATUS_Y,
                                432U,
                                LCDM_STATUS_H,
-                               LCDM_FONT_SCROLL,
+                               LCDM_FONT_STATUS,
                                LCDM_BLUE,
                                LCDM_ROW_BG,
                                1U,
@@ -2088,6 +1659,8 @@ void first_gen_display_show_page(const char *top_right,
                            216U,
                            216U,
                            82U,
+                           LCDM_FONT_STATUS,
+                           LCDM_FONT_STATUS,
                            main_text,
                            result_text,
                            LCDM_NAVY,
@@ -2113,7 +1686,7 @@ void first_gen_display_show_page(const char *top_right,
                                LCDM_STATUS_Y,
                                432U,
                                LCDM_STATUS_H,
-                               LCDM_FONT_SCROLL,
+                               LCDM_FONT_STATUS,
                                LCDM_BLUE,
                                LCDM_ROW_BG,
                                1U,
@@ -2125,7 +1698,7 @@ void first_gen_display_show_page(const char *top_right,
                                  84U,
                                  432U,
                                  82U,
-                                 LCDM_FONT_SCROLL,
+                                 LCDM_FONT_STATUS,
                                  LCDM_NAVY,
                                  LCDM_WHITE,
                                  1U,
@@ -2134,17 +1707,9 @@ void first_gen_display_show_page(const char *top_right,
       lcdm_raw_fill(24U, 84U, 432U, 82U, LCDM_WHITE);
     }
   } else if(strcmp(status_text, "RESET") == 0U) {
-    lcdm_raw_write_cached_font(lcdm_raw_state_cache,
-                               sizeof(lcdm_raw_state_cache),
-                               24U,
-                               LCDM_STATUS_Y,
-                               432U,
-                               LCDM_STATUS_H,
-                               LCDM_FONT_SCROLL,
-                               status_color,
-                               LCDM_ROW_BG,
-                               1U,
-                               status_text);
+    lcdm_raw_write_status_cached(lcdm_raw_state_cache, sizeof(lcdm_raw_state_cache),
+                                 24U, LCDM_STATUS_Y, 432U, LCDM_STATUS_H,
+                                 status_color, LCDM_ROW_BG, 1U, status_text);
     lcdm_draw_body_text(84U, 82U, " ", LCDM_BLUE, LCDM_WHITE);
   } else if(strcmp(status_text, "LEARNING") == 0U) {
     lcdm_idle_banner_start("LEARNING");
@@ -2191,21 +1756,6 @@ void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point)
   lcdm_prepare_table_page(page, active_point);
 }
 
-void first_gen_display_show_auto_table_completed(uint8_t page, uint16_t point)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-  if(lcdm_layout_mode != 2U || lcdm_table_point_visible(page, point) == 0U) {
-    return;
-  }
-
-  lcdm_draw_table_pair(page, point, (uint16_t)(LCDM_TOTAL_POINTS + 1U));
-  if(lcdm_table_active_cache == point) {
-    lcdm_table_active_cache = (uint16_t)(LCDM_TOTAL_POINTS + 1U);
-  }
-}
-
 void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point)
 {
   if(display_is_lcdm == 0U) {
@@ -2217,10 +1767,12 @@ void first_gen_display_show_auto_table_ng(uint8_t page, uint16_t point)
 
   lcdm_table_ng_set_in(point);
   lcdm_table_ng_set_out(point);
+  lcdm_tjc_draw_batch_begin();
   lcdm_prepare_table_page(page, point);
   if(lcdm_table_point_visible(page, point) != 0U) {
     lcdm_draw_table_pair(page, point, point);
   }
+  lcdm_tjc_draw_batch_end();
 }
 
 void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point, uint16_t in_point)
@@ -2231,6 +1783,7 @@ void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point,
 
   lcdm_table_ng_set_out(out_point);
   lcdm_table_ng_set_in(in_point);
+  lcdm_tjc_draw_batch_begin();
   lcdm_prepare_table_page(page, in_point);
   if(lcdm_table_point_visible(page, in_point) != 0U) {
     lcdm_draw_table_pair(page, in_point, in_point);
@@ -2238,6 +1791,7 @@ void first_gen_display_show_auto_table_ng_pair(uint8_t page, uint16_t out_point,
   if(out_point != in_point && lcdm_table_point_visible(page, out_point) != 0U) {
     lcdm_draw_table_pair(page, out_point, in_point);
   }
+  lcdm_tjc_draw_batch_end();
 }
 
 void first_gen_display_show_learn_table_page(uint8_t page,
@@ -2254,40 +1808,6 @@ void first_gen_display_show_learn_table_page(uint8_t page,
   lcdm_prepare_learn_table_page(page, active_point, scan_point, pair_count, point_count, done);
 }
 
-void first_gen_display_show_learn_table_completed(uint8_t page,
-                                                  uint16_t point,
-                                                  uint16_t scan_point,
-                                                  uint16_t pair_count,
-                                                  uint32_t point_count)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-  if(lcdm_layout_mode != 3U || lcdm_table_point_visible(page, point) == 0U) {
-    return;
-  }
-
-  lcdm_draw_learn_table_pair(page, point, (uint16_t)(LCDM_TOTAL_POINTS + 1U));
-  if(lcdm_table_active_cache == point) {
-    lcdm_table_active_cache = (uint16_t)(LCDM_TOTAL_POINTS + 1U);
-  }
-  (void)scan_point;
-  (void)pair_count;
-  (void)point_count;
-}
-
-void first_gen_display_refresh_learn_table_footer(uint16_t scan_point,
-                                                  uint16_t pair_count,
-                                                  uint32_t point_count,
-                                                  uint8_t done)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  lcdm_draw_learn_footer(scan_point, pair_count, point_count, done);
-}
-
 void first_gen_display_clear_learn_table_groups(void)
 {
   if(display_is_lcdm == 0U) {
@@ -2300,6 +1820,17 @@ void first_gen_display_clear_learn_table_groups(void)
   lcdm_table_active_cache = 0U;
 }
 
+void first_gen_display_set_learn_table_group_connection(uint16_t out_point,
+                                                        uint16_t in_point,
+                                                        uint16_t group_index)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_learn_set_group_connection(out_point, in_point, group_index);
+}
+
 void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
                                                 const uint16_t in_groups[],
                                                 uint16_t active_point)
@@ -2308,6 +1839,7 @@ void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
   uint16_t new_in_bg;
   uint16_t new_out_bg;
   uint8_t changed;
+  uint8_t redraw_started = 0U;
 
   if(display_is_lcdm == 0U || out_groups == 0 || in_groups == 0) {
     return;
@@ -2330,63 +1862,29 @@ void first_gen_display_apply_learn_table_groups(const uint16_t out_groups[],
     if(changed != 0U &&
        lcdm_layout_mode == 3U &&
        lcdm_table_point_visible(lcdm_table_page_cache, point) != 0U) {
+      if(redraw_started == 0U) {
+        lcdm_tjc_draw_batch_begin();
+        redraw_started = 1U;
+      }
       lcdm_draw_learn_table_pair(lcdm_table_page_cache, point, active_point);
     }
+  }
+
+  if(redraw_started != 0U) {
+    lcdm_tjc_draw_batch_end();
   }
 }
 
 void first_gen_display_clear_auto_test_lines(void)
 {
-  uint8_t keep_auto_layout;
-  uint8_t current_page;
-
   if(display_is_lcdm == 0U) {
     return;
   }
 
-  keep_auto_layout = (lcdm_layout_mode == 4U) ? 1U : 0U;
-  current_page = lcdm_auto_page_cache;
   lcdm_auto_test_clear();
-  if(keep_auto_layout != 0U) {
-    lcdm_auto_page_cache = current_page;
-    lcdm_raw_fill(0U,
-                  LCDM_AUTO_LIST_Y0,
-                  LCDM_W,
-                  LCDM_AUTO_LIST_H,
-                  LCDM_WHITE);
-  } else {
-    lcdm_layout_mode = 0U;
-    lcdm_auto_page_cache = 0U;
-  }
+  lcdm_layout_mode = 0U;
+  lcdm_auto_page_cache = 0U;
   lcdm_auto_active_cache = 0U;
-}
-
-void first_gen_display_reset_auto_test_line_cache(void)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  lcdm_auto_line_data_clear();
-}
-
-void first_gen_display_cache_auto_test_line(uint16_t line_index, const char *line)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-  if(line_index == 0U || line_index > LCDM_TOTAL_POINTS || line == 0 || line[0] == '\0') {
-    return;
-  }
-
-  (void)snprintf(lcdm_auto_line_cache[line_index],
-                 sizeof(lcdm_auto_line_cache[line_index]),
-                 "%s",
-                 line);
-  if(line_index > lcdm_auto_line_count) {
-    lcdm_auto_line_count = line_index;
-  }
-  lcdm_auto_point_count += (uint32_t)lcdm_auto_count_line_points(line);
 }
 
 void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line, uint8_t done)
@@ -2404,7 +1902,9 @@ void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line,
     if(stored_point != 0U) {
       page = (uint8_t)(((stored_point - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
       lcdm_prepare_auto_test_page(page, stored_point, done);
-      lcdm_draw_auto_test_all(page, stored_point);
+      if(lcdm_auto_test_point_visible(page, stored_point) != 0U) {
+        lcdm_draw_auto_test_line(page, stored_point, stored_point);
+      }
       lcdm_auto_active_cache = stored_point;
     }
   } else {
@@ -2421,218 +1921,7 @@ void first_gen_display_show_auto_test_line(uint16_t out_point, const char *line,
     lcdm_draw_auto_footer(done);
     return;
   }
-}
 
-uint8_t first_gen_display_auto_test_page_count(void)
-{
-  if(display_is_lcdm == 0U) {
-    return 1U;
-  }
-
-  return lcdm_auto_test_page_count();
-}
-
-uint8_t first_gen_display_auto_test_page_for_line(uint16_t line_index)
-{
-  uint8_t page;
-  uint8_t page_count;
-
-  if(display_is_lcdm == 0U || line_index == 0U) {
-    return 1U;
-  }
-
-  page = (uint8_t)(((line_index - 1U) / LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
-  page_count = lcdm_auto_test_page_count();
-  if(page_count == 0U) {
-    page_count = 1U;
-  }
-  if(page > page_count) {
-    page = page_count;
-  }
-
-  return page;
-}
-
-uint16_t first_gen_display_auto_test_line_count(void)
-{
-  if(display_is_lcdm == 0U) {
-    return 0U;
-  }
-
-  return lcdm_auto_line_count;
-}
-
-void first_gen_display_refresh_auto_test_page(uint8_t page, uint8_t done)
-{
-  uint8_t page_count;
-  uint8_t slot;
-  uint8_t full_page_refresh;
-  uint16_t point;
-  uint16_t first;
-  const char *line;
-
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  page_count = lcdm_auto_test_page_count();
-  if(page == 0U) {
-    page = 1U;
-  }
-  if(page > page_count) {
-    page = page_count;
-  }
-
-  full_page_refresh = (lcdm_auto_drawn_page_cache != page) ? 1U : 0U;
-  lcdm_auto_page_cache = page;
-  lcdm_auto_active_cache = 0U;
-  if(full_page_refresh != 0U) {
-    lcdm_raw_fill(0U, LCDM_AUTO_LIST_Y0, LCDM_W, LCDM_AUTO_LIST_H, LCDM_WHITE);
-    for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-      lcdm_auto_drawn_line_cache[slot][0] = '\0';
-    }
-    lcdm_auto_drawn_page_cache = page;
-  }
-
-  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
-  for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-    point = (uint16_t)(first + slot);
-    line = (point <= lcdm_auto_line_count) ? lcdm_auto_line_cache[point] : "";
-    if(full_page_refresh != 0U || strcmp(lcdm_auto_drawn_line_cache[slot], line) != 0) {
-      lcdm_draw_auto_test_line(page, point, 0U);
-      (void)snprintf(lcdm_auto_drawn_line_cache[slot],
-                     sizeof(lcdm_auto_drawn_line_cache[slot]),
-                     "%s",
-                     line);
-    }
-  }
-  lcdm_draw_auto_footer(done);
-}
-
-void first_gen_display_refresh_auto_test_page_body(uint8_t page)
-{
-  uint8_t page_count;
-  uint8_t slot;
-  uint8_t full_page_refresh;
-  uint16_t point;
-  uint16_t first;
-  const char *line;
-
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  page_count = lcdm_auto_test_page_count();
-  if(page == 0U) {
-    page = 1U;
-  }
-  if(page > page_count) {
-    page = page_count;
-  }
-
-  full_page_refresh = (lcdm_auto_drawn_page_cache != page) ? 1U : 0U;
-  lcdm_auto_page_cache = page;
-  lcdm_auto_active_cache = 0U;
-  if(full_page_refresh != 0U) {
-    lcdm_raw_fill(0U, LCDM_AUTO_LIST_Y0, LCDM_W, LCDM_AUTO_LIST_H, LCDM_WHITE);
-    for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-      lcdm_auto_drawn_line_cache[slot][0] = '\0';
-    }
-    lcdm_auto_drawn_page_cache = page;
-  }
-
-  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
-  for(slot = 0U; slot < LCDM_AUTO_LIST_PAGE_SIZE; slot++) {
-    point = (uint16_t)(first + slot);
-    line = (point <= lcdm_auto_line_count) ? lcdm_auto_line_cache[point] : "";
-    if(full_page_refresh != 0U || strcmp(lcdm_auto_drawn_line_cache[slot], line) != 0) {
-      lcdm_draw_auto_test_line(page, point, 0U);
-      (void)snprintf(lcdm_auto_drawn_line_cache[slot],
-                     sizeof(lcdm_auto_drawn_line_cache[slot]),
-                     "%s",
-                     line);
-    }
-  }
-  lcdm_draw_auto_footer(1U);
-}
-
-void first_gen_display_refresh_auto_test_footer(uint8_t done)
-{
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  lcdm_draw_auto_footer(done);
-}
-
-void first_gen_display_show_auto_test_diag(uint32_t scan_count, uint32_t change_count)
-{
-  char line_a[24];
-  char line_b[24];
-  uint8_t force;
-
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  (void)snprintf(line_a, sizeof(line_a), "A%lu", (unsigned long)scan_count);
-  (void)snprintf(line_b, sizeof(line_b), "B%lu", (unsigned long)change_count);
-
-  force = (lcdm_auto_diag_visible == 0U) ? 1U : 0U;
-  if(force != 0U) {
-    lcdm_raw_fill(0U, LCDM_AUTO_LIST_Y0, LCDM_W, LCDM_AUTO_LIST_H, LCDM_WHITE);
-    lcdm_auto_diag_visible = 1U;
-  }
-
-  if(force != 0U || strcmp(lcdm_auto_diag_a_cache, line_a) != 0) {
-    (void)snprintf(lcdm_auto_diag_a_cache, sizeof(lcdm_auto_diag_a_cache), "%s", line_a);
-    lcdm_raw_fill(24U, (uint16_t)(LCDM_AUTO_LIST_Y0 + 8U), 432U, 42U, LCDM_WHITE);
-    lcdm_raw_xstr_full(24U,
-                       (uint16_t)(LCDM_AUTO_LIST_Y0 + 8U),
-                       432U,
-                       42U,
-                       LCDM_FONT_SCROLL,
-                       LCDM_BLUE,
-                       LCDM_WHITE,
-                       1U,
-                       line_a);
-  }
-
-  if(force != 0U || strcmp(lcdm_auto_diag_b_cache, line_b) != 0) {
-    (void)snprintf(lcdm_auto_diag_b_cache, sizeof(lcdm_auto_diag_b_cache), "%s", line_b);
-    lcdm_raw_fill(24U, (uint16_t)(LCDM_AUTO_LIST_Y0 + 58U), 432U, 42U, LCDM_WHITE);
-    lcdm_raw_xstr_full(24U,
-                       (uint16_t)(LCDM_AUTO_LIST_Y0 + 58U),
-                       432U,
-                       42U,
-                       LCDM_FONT_SCROLL,
-                       LCDM_NAVY,
-                       LCDM_WHITE,
-                       1U,
-                       line_b);
-  }
-}
-
-void first_gen_display_show_auto_test_page(uint8_t page, uint8_t done)
-{
-  uint8_t page_count;
-
-  if(display_is_lcdm == 0U) {
-    return;
-  }
-
-  page_count = lcdm_auto_test_page_count();
-  if(page == 0U) {
-    page = 1U;
-  }
-  if(page > page_count) {
-    page = page_count;
-  }
-
-  lcdm_prepare_auto_test_page(page, 0U, done);
-  lcdm_raw_fill(0U, LCDM_AUTO_LIST_Y0, LCDM_W, LCDM_AUTO_LIST_H, LCDM_WHITE);
-  lcdm_draw_auto_test_all(page, 0U);
-  lcdm_auto_drawn_cache_sync(page);
   lcdm_draw_auto_footer(done);
 }
 
@@ -2647,7 +1936,6 @@ static void lcdm_raw_draw_font_probe(void)
   uint16_t bg;
   char label[8];
 
-  lcdm_tjc_send_cmd("bkcmd=0");
   lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
   lcdm_tjc_send_cmd("cls 65535");
@@ -2655,7 +1943,7 @@ static void lcdm_raw_draw_font_probe(void)
   lcdm_raw_fill(0U, 0U, LCDM_W, 30U, LCDM_NAVY);
   lcdm_raw_xstr(8U, 3U, 464U, 24U, LCDM_FONT_SMALL, LCDM_WHITE, LCDM_NAVY, 1U, "LCDM LARGE FONT SELECT");
 
-  for(font = 0U; font < 16U; font++) {
+  for(font = 0U; font < LCDM_FONT_COUNT; font++) {
     col = (uint16_t)(font & 3U);
     row = (uint16_t)(font >> 2U);
     x = (uint16_t)(col * 120U);
@@ -2710,10 +1998,6 @@ static void lcdm_raw_update(const char *state, const char *value, uint16_t state
   }
   if(value == 0) {
     value = "";
-  }
-
-  if(lcdm_layout_mode == 4U) {
-    return;
   }
 
   if(lcdm_parse_digit_pair(value, &left, &right) != 0U) {
@@ -2874,7 +2158,6 @@ static uint8_t lcdm_coord_to_key(uint16_t x, uint16_t y)
   return lcdm_coord_to_key_direct(x, y);
 }
 
-#if LCDM_TOUCH_DEBUG_TEXT
 static void lcdm_raw_show_touch(uint16_t x, uint16_t y, uint8_t key)
 {
   char text[32];
@@ -2899,7 +2182,6 @@ static void lcdm_raw_show_touch(uint16_t x, uint16_t y, uint8_t key)
     lcdm_raw_write_cached(lcdm_raw_sub_cache, sizeof(lcdm_raw_sub_cache), 24U, (uint16_t)(LCDM_SUB_Y + 3U), 432U, 22U, LCDM_BLUE, LCDM_WHITE, 1U, lcdm_raw_touch_cache);
   }
 }
-#endif
 
 static uint8_t lcdm_latch_key(uint8_t key)
 {
@@ -2972,6 +2254,7 @@ static void lcdm_display_init(void)
   lcdm_tjc_send_cmd("dim=100");
   lcdm_tjc_send_cmd("tsw 255,0");
   lcdm_tjc_send_cmd("sendxy=1");
+  lcdm_tjc_set_command_ack(1U);
 #if LCDM_FONT_PROBE_MODE
   lcdm_raw_draw_font_probe();
   return;
@@ -3004,6 +2287,9 @@ static uint8_t lcdm_display_key_read_raw(void)
       key = lcdm_coord_to_key(event.x, event.y);
       g_first_gen_lcdm_last_x = event.x;
       g_first_gen_lcdm_last_y = event.y;
+      if(key == FIRST_GEN_KEY_NONE) {
+        lcdm_raw_show_touch(event.x, event.y, key);
+      }
       if(event.touch_event == 0U) {
         lcdm_release_key(key);
         return FIRST_GEN_KEY_NONE;
