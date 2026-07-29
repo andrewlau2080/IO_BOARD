@@ -6,10 +6,10 @@
 
 /* The previous verified scan tuning reduced this wait from 20 us to 10 us.
  * A CD4051 address change is followed by several GPIO writes before this
- * point; 3 us leaves a conservative settle margin while avoiding 8,836 long
- * SysTick delays in every 94 x 94 matrix scan. */
+ * point; 2 us remains far above the mux switching interval while removing a
+ * third of the per-pair SysTick wait in every 94 x 94 matrix scan. */
 #ifndef IO_SCAN_SETTLE_US
-#define IO_SCAN_SETTLE_US 3U
+#define IO_SCAN_SETTLE_US 2U
 #endif
 
 volatile uint16_t g_scan_active_out_pos;

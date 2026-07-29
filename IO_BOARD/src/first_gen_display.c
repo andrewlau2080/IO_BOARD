@@ -86,12 +86,15 @@
 #define LCDM_AUTO_LIST_TEXT_X       8U
 #define LCDM_AUTO_LIST_TEXT_Y       5U
 #define LCDM_AUTO_LIST_TEXT_H       18U
-/* AUTO PASS/NG uses the entire work area above K1-K4.  Give RESULT 2/5
- * of the normal 432 px content width and reserve the remaining 3/5 for
- * TOTAL or the active NG connection group. */
+/* Compress the AUTO RESULT/DETAILS caption directly under STANDARD CABLE so
+ * the middle panel has enough vertical room for three complete PASS totals.
+ * PASS remains 2/5 : 3/5; NG uses the complete middle width for its I/O
+ * connection group. */
 #define LCDM_AUTO_SUMMARY_X          24U
 #define LCDM_AUTO_SUMMARY_W          432U
-#define LCDM_AUTO_SUMMARY_Y          84U
+#define LCDM_AUTO_SUMMARY_LABEL_Y    33U
+#define LCDM_AUTO_SUMMARY_LABEL_H    20U
+#define LCDM_AUTO_SUMMARY_Y          57U
 #define LCDM_AUTO_SUMMARY_H          (LCDM_KEY_Y0 - LCDM_AUTO_SUMMARY_Y)
 #define LCDM_AUTO_SUMMARY_LEFT_W     (((LCDM_AUTO_SUMMARY_W * 2U) + 2U) / 5U)
 #define LCDM_AUTO_SUMMARY_RIGHT_X    (LCDM_AUTO_SUMMARY_X + LCDM_AUTO_SUMMARY_LEFT_W)
@@ -99,8 +102,10 @@
 #define LCDM_AUTO_SUMMARY_DIVIDER_X  (LCDM_AUTO_SUMMARY_RIGHT_X - 1U)
 #define LCDM_AUTO_SUMMARY_TEXT_X     (LCDM_AUTO_SUMMARY_RIGHT_X + 4U)
 #define LCDM_AUTO_SUMMARY_TEXT_W     (LCDM_AUTO_SUMMARY_RIGHT_W - 8U)
+#define LCDM_AUTO_SUMMARY_FULL_TEXT_X (LCDM_AUTO_SUMMARY_X + 4U)
+#define LCDM_AUTO_SUMMARY_FULL_TEXT_W (LCDM_AUTO_SUMMARY_W - 8U)
 #define LCDM_AUTO_SUMMARY_NG_MAX_LINES       10U
-#define LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX   32U
+#define LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX   64U
 /* font-0song used by the AUTO list is a 10 px cell font.  Keep the layout
  * geometry on that real cell width so an I/O background ends with its text
  * instead of leaving a large coloured blank area after the last endpoint. */
@@ -173,11 +178,24 @@ static char lcdm_auto_drawn_row_cache[LCDM_AUTO_LIST_PAGE_SIZE][LCDM_AUTO_ROW_TE
 static uint16_t lcdm_auto_line_count;
 static uint16_t lcdm_auto_input_count;
 static uint32_t lcdm_auto_point_count;
+/* A result row can deliberately retain a learned open endpoint so the user
+ * can locate it.  These are the real measured counts used by the footer. */
+static uint16_t lcdm_auto_actual_input_count;
+static uint16_t lcdm_auto_actual_output_count;
+static uint8_t lcdm_auto_actual_counts_valid;
 static uint8_t lcdm_learn_outcome_blink_on;
 static uint8_t lcdm_k1_page_hint;
 static uint8_t lcdm_auto_test_blink_active;
 static uint8_t lcdm_auto_test_blink_on;
 static uint8_t lcdm_auto_test_blink_steps;
+/* A live AUTO fault is stored separately from the CSV-style result lines.
+ * Both bitmaps contain the entire electrically associated I/O group, so a
+ * cross-short highlights every endpoint involved rather than only its first
+ * missing learned pair. */
+static uint32_t lcdm_auto_fault_out_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS];
+static uint32_t lcdm_auto_fault_in_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS];
+static uint8_t lcdm_auto_fault_type;
+static uint8_t lcdm_auto_fault_blink_on;
 
 typedef struct {
   char text[LCDM_AUTO_ROW_TEXT_MAX];
@@ -209,9 +227,17 @@ static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point);
 static void lcdm_auto_test_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *y);
 static uint16_t lcdm_auto_visual_row_count(void);
 static uint8_t lcdm_auto_get_visual_row(uint16_t visual_row, lcdm_auto_visual_row_t *row);
+static uint8_t lcdm_auto_row_has_endpoint(const lcdm_auto_visual_row_t *row,
+                                          char endpoint,
+                                          uint16_t point);
+static uint8_t lcdm_auto_fault_has_endpoint(char endpoint, uint16_t point);
+static uint8_t lcdm_auto_row_has_fault_endpoint(const lcdm_auto_visual_row_t *row,
+                                                char endpoint);
+static uint8_t lcdm_auto_fault_has_any_endpoint(void);
 static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point);
 static void lcdm_draw_auto_test_all(uint8_t page);
 static void lcdm_draw_auto_test_changed(uint8_t page);
+static void lcdm_draw_auto_test_fault_rows(uint8_t page);
 static uint16_t lcdm_auto_test_set_line(uint16_t point, const char *line);
 static uint8_t lcdm_auto_test_page_count(void);
 static void lcdm_draw_auto_footer(uint8_t page, uint8_t done);
@@ -315,6 +341,24 @@ static void lcdm_raw_fill(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16
   lcdm_tjc_send_cmd(cmd);
 }
 
+/* The NG blink is intentionally a best-effort animation.  It must never
+ * hold up the 94 x 94 electrical monitor while waiting for a LCDM command
+ * acknowledgement, so it uses the non-ACK transport path below. */
+static void lcdm_raw_fill_fast(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
+{
+  char cmd[48];
+
+  (void)snprintf(cmd,
+                 sizeof(cmd),
+                 "fill %u,%u,%u,%u,%u",
+                 (unsigned int)x,
+                 (unsigned int)y,
+                 (unsigned int)w,
+                 (unsigned int)h,
+                 (unsigned int)color);
+  lcdm_tjc_send_cmd_fast(cmd);
+}
+
 static void lcdm_raw_cirs(uint16_t x, uint16_t y, uint16_t r, uint16_t color)
 {
   char cmd[48];
@@ -403,6 +447,38 @@ static void lcdm_raw_xstr_full(uint16_t x,
                                const char *text)
 {
   lcdm_raw_xstr(x, y, w, h, font, fg, bg, align, text);
+}
+
+static void lcdm_raw_xstr_full_fast(uint16_t x,
+                                    uint16_t y,
+                                    uint16_t w,
+                                    uint16_t h,
+                                    uint16_t font,
+                                    uint16_t fg,
+                                    uint16_t bg,
+                                    uint8_t align,
+                                    const char *text)
+{
+  char cmd[LCDM_XSTR_CMD_MAX];
+
+  if(text == 0) {
+    text = "";
+  }
+
+  (void)snprintf(cmd,
+                 sizeof(cmd),
+                 "xstr %u,%u,%u,%u,%u,%u,%u,%u,1,%u,\"%s\"",
+                 (unsigned int)x,
+                 (unsigned int)y,
+                 (unsigned int)w,
+                 (unsigned int)h,
+                 (unsigned int)font,
+                 (unsigned int)fg,
+                 (unsigned int)bg,
+                 (unsigned int)align,
+                 1U,
+                 text);
+  lcdm_tjc_send_cmd_fast(cmd);
 }
 
 static void lcdm_raw_write_cached(char *cache,
@@ -1067,6 +1143,11 @@ static void lcdm_draw_auto_result_pass_body(const char *detail_text)
   char points_text[24];
   unsigned int pairs = 0U;
   unsigned int points = 0U;
+  uint16_t total_h;
+  uint16_t pairs_y;
+  uint16_t pairs_h;
+  uint16_t points_y;
+  uint16_t points_h;
 
   if(detail_text == 0) {
     detail_text = "";
@@ -1080,19 +1161,24 @@ static void lcdm_draw_auto_result_pass_body(const char *detail_text)
     points_text[0] = '\0';
   }
 
-  /* PASS only needs 2/5 of the body.  The 3/5 TOTAL side and both green
-   * blocks continue all the way to the top edge of K1-K4, giving all three
-   * statistics their own full-height line. */
+  /* TOTAL and POINTS retain their original cells.  PAIRS is deliberately
+   * lowered inside the middle region so its smaller Song glyph does not sit
+   * too close to the larger TOTAL text above it. */
+  total_h = (uint16_t)(LCDM_AUTO_SUMMARY_H / 3U);
+  points_y = (uint16_t)(LCDM_AUTO_SUMMARY_Y + ((LCDM_AUTO_SUMMARY_H * 2U) / 3U));
+  points_h = (uint16_t)(LCDM_AUTO_SUMMARY_H - ((LCDM_AUTO_SUMMARY_H * 2U) / 3U));
+  pairs_y = (uint16_t)(LCDM_AUTO_SUMMARY_Y + total_h + 11U);
+  pairs_h = (uint16_t)(points_y - pairs_y);
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_X,
                 LCDM_AUTO_SUMMARY_Y,
                 LCDM_AUTO_SUMMARY_LEFT_W,
                 LCDM_AUTO_SUMMARY_H,
-                LCDM_GREEN);
+                LCDM_DARK_GREEN);
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_RIGHT_X,
                 LCDM_AUTO_SUMMARY_Y,
                 LCDM_AUTO_SUMMARY_RIGHT_W,
                 LCDM_AUTO_SUMMARY_H,
-                LCDM_GREEN);
+                LCDM_DARK_GREEN);
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_DIVIDER_X,
                 LCDM_AUTO_SUMMARY_Y,
                 2U,
@@ -1104,41 +1190,45 @@ static void lcdm_draw_auto_result_pass_body(const char *detail_text)
                      LCDM_AUTO_SUMMARY_H,
                      LCDM_FONT_POINT,
                      LCDM_WHITE,
-                     LCDM_GREEN,
+                     LCDM_DARK_GREEN,
                      1U,
                      "PASS");
   lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_TEXT_X,
                      LCDM_AUTO_SUMMARY_Y,
                      LCDM_AUTO_SUMMARY_TEXT_W,
-                     (uint16_t)(LCDM_AUTO_SUMMARY_H / 3U),
+                     total_h,
                      LCDM_FONT_RESULT,
                      LCDM_WHITE,
-                     LCDM_GREEN,
+                     LCDM_DARK_GREEN,
                      1U,
                      total_text);
   lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_TEXT_X,
-                     (uint16_t)(LCDM_AUTO_SUMMARY_Y + (LCDM_AUTO_SUMMARY_H / 3U)),
+                     pairs_y,
                      LCDM_AUTO_SUMMARY_TEXT_W,
-                     (uint16_t)(LCDM_AUTO_SUMMARY_H / 3U),
-                     LCDM_FONT_RESULT,
+                     pairs_h,
+                     /* "047 PAIRS" and "094 POINTS" are respectively 9
+                      * and 10 characters.  The 29 px resource clips their
+                      * last letters in the 3/5 panel; the 16 px Song font
+                      * keeps both values complete while retaining a large
+                      * three-line summary. */
+                     LCDM_FONT_TITLE,
                      LCDM_WHITE,
-                     LCDM_GREEN,
+                     LCDM_DARK_GREEN,
                      1U,
                      pairs_text);
   lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_TEXT_X,
-                     (uint16_t)(LCDM_AUTO_SUMMARY_Y + ((LCDM_AUTO_SUMMARY_H * 2U) / 3U)),
+                     points_y,
                      LCDM_AUTO_SUMMARY_TEXT_W,
-                     (uint16_t)(LCDM_AUTO_SUMMARY_H - ((LCDM_AUTO_SUMMARY_H * 2U) / 3U)),
-                     LCDM_FONT_RESULT,
+                     points_h,
+                     LCDM_FONT_TITLE,
                      LCDM_WHITE,
-                     LCDM_GREEN,
+                     LCDM_DARK_GREEN,
                      1U,
                      points_text);
 }
 
 /* Append comma-separated endpoint labels without ever splitting an Ixxx or
- * Oxxx token.  For a wrapped group, reserve one character in the I rows so
- * the final I row can retain the connecting '-'. */
+ * Oxxx token.  The caller controls whether a row break is needed. */
 static uint8_t lcdm_auto_ng_append_csv_lines(
     const char *text,
     uint16_t text_len,
@@ -1217,21 +1307,18 @@ static uint8_t lcdm_auto_ng_append_csv_lines(
   return 1U;
 }
 
-/* Keep a short fault group on one maximum-font row.  Once it no longer fits,
- * I labels occupy the upper rows and O labels start below them. */
-static uint8_t lcdm_auto_ng_format_lines(
-    const char *detail_text,
+/* Format one endpoint group only.  The caller places the I group in the
+ * upper half of the NG body and the O group in the lower half, so NG itself
+ * never needs to consume display space. */
+static uint8_t lcdm_auto_ng_format_group_lines(
+    const char *text,
+    uint16_t text_len,
     uint8_t char_limit,
     uint8_t max_lines,
     char lines[LCDM_AUTO_SUMMARY_NG_MAX_LINES][LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX],
     uint8_t *overflow)
 {
-  const char *separator;
-  uint16_t text_len;
-  uint16_t input_len;
-  uint16_t output_len;
   uint8_t line_count = 0U;
-  uint8_t last_len;
 
   (void)memset(lines,
                0,
@@ -1239,202 +1326,197 @@ static uint8_t lcdm_auto_ng_format_lines(
   if(overflow != 0) {
     *overflow = 0U;
   }
-  if(detail_text == 0 || detail_text[0] == '\0' || char_limit == 0U || max_lines == 0U) {
+  if(text == 0 || text_len == 0U || char_limit == 0U || max_lines == 0U) {
     return 0U;
   }
 
-  text_len = (uint16_t)strlen(detail_text);
   if(text_len <= char_limit && text_len < LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX) {
-    (void)snprintf(lines[0], LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX, "%s", detail_text);
+    memcpy(lines[0], text, text_len);
+    lines[0][text_len] = '\0';
     return 1U;
   }
 
-  separator = strchr(detail_text, '-');
-  if(separator != 0 && separator != detail_text && separator[1] != '\0') {
-    input_len = (uint16_t)(separator - detail_text);
-    output_len = (uint16_t)(text_len - input_len - 1U);
-    if(lcdm_auto_ng_append_csv_lines(detail_text,
-                                     input_len,
-                                     char_limit,
-                                     1U,
-                                     0U,
-                                     lines,
-                                     &line_count,
-                                     max_lines) == 0U) {
-      if(overflow != 0) {
-        *overflow = 1U;
-      }
-      return line_count;
-    }
-
-    last_len = (uint8_t)strlen(lines[line_count - 1U]);
-    if(last_len >= char_limit || (uint16_t)last_len + 1U >= LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX) {
-      if(overflow != 0) {
-        *overflow = 1U;
-      }
-      return line_count;
-    }
-    lines[line_count - 1U][last_len++] = '-';
-    lines[line_count - 1U][last_len] = '\0';
-
-    if(lcdm_auto_ng_append_csv_lines(separator + 1,
-                                     output_len,
-                                     char_limit,
-                                     0U,
-                                     1U,
-                                     lines,
-                                     &line_count,
-                                     max_lines) == 0U) {
-      if(overflow != 0) {
-        *overflow = 1U;
-      }
-    }
-  } else if(lcdm_auto_ng_append_csv_lines(detail_text,
-                                            text_len,
-                                            char_limit,
-                                            0U,
-                                            0U,
-                                            lines,
-                                            &line_count,
-                                            max_lines) == 0U) {
-    if(overflow != 0) {
-      *overflow = 1U;
-    }
+  if(lcdm_auto_ng_append_csv_lines(text,
+                                   text_len,
+                                   char_limit,
+                                   0U,
+                                   0U,
+                                   lines,
+                                   &line_count,
+                                   max_lines) == 0U && overflow != 0) {
+    *overflow = 1U;
   }
 
   return line_count;
 }
 
-static void lcdm_auto_ng_mark_overflow(
-    char lines[LCDM_AUTO_SUMMARY_NG_MAX_LINES][LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX],
-    uint8_t line_count,
-    uint8_t char_limit)
-{
-  char *line;
-  uint8_t text_len;
-
-  if(line_count == 0U || char_limit < 3U) {
-    return;
-  }
-
-  line = lines[line_count - 1U];
-  text_len = (uint8_t)strlen(line);
-  if(text_len > (uint8_t)(char_limit - 3U)) {
-    text_len = (uint8_t)(char_limit - 3U);
-  }
-  line[text_len++] = '.';
-  line[text_len++] = '.';
-  line[text_len++] = '.';
-  line[text_len] = '\0';
-}
-
-static void lcdm_draw_auto_result_ng_detail(const char *detail_text)
+static void lcdm_draw_auto_ng_group(const char *text,
+                                    uint16_t text_len,
+                                    uint16_t y,
+                                    uint16_t h,
+                                    uint8_t fast)
 {
   char lines[LCDM_AUTO_SUMMARY_NG_MAX_LINES][LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX];
   uint8_t line_count;
-  uint8_t line;
-  uint8_t overflow;
-  uint8_t char_limit = 14U;
-  uint8_t max_lines = 3U;
+  /* Do not wrap an NG endpoint list: show the first (lowest) labels at the
+   * largest readable font and hide later labels until earlier faults clear. */
+  uint8_t char_limit = 24U;
   uint16_t font = LCDM_FONT_POINT;
-  uint16_t y;
-  uint16_t next_y;
 
-  if(detail_text == 0) {
-    detail_text = "";
-  }
-
-  lcdm_raw_fill(LCDM_AUTO_SUMMARY_RIGHT_X,
-                LCDM_AUTO_SUMMARY_Y,
-                LCDM_AUTO_SUMMARY_RIGHT_W,
-                LCDM_AUTO_SUMMARY_H,
-                LCDM_RED);
-  if(detail_text[0] == '\0') {
+  if(text == 0 || text_len == 0U) {
     return;
   }
 
-  line_count = lcdm_auto_ng_format_lines(detail_text,
-                                          char_limit,
-                                          max_lines,
-                                          lines,
-                                          &overflow);
-  if(overflow != 0U) {
-    font = LCDM_FONT_RESULT;
-    char_limit = 16U;
-    max_lines = 4U;
-    line_count = lcdm_auto_ng_format_lines(detail_text,
-                                            char_limit,
-                                            max_lines,
-                                            lines,
-                                            &overflow);
-  }
-  if(overflow != 0U) {
-    font = LCDM_FONT_TITLE;
-    char_limit = 28U;
-    max_lines = 7U;
-    line_count = lcdm_auto_ng_format_lines(detail_text,
-                                            char_limit,
-                                            max_lines,
-                                            lines,
-                                            &overflow);
-  }
-  if(overflow != 0U) {
-    font = LCDM_FONT_SMALL;
-    char_limit = 25U;
-    max_lines = LCDM_AUTO_SUMMARY_NG_MAX_LINES;
-    line_count = lcdm_auto_ng_format_lines(detail_text,
-                                            char_limit,
-                                            max_lines,
-                                            lines,
-                                            &overflow);
-  }
+  line_count = lcdm_auto_ng_format_group_lines(text,
+                                                text_len,
+                                                char_limit,
+                                                1U,
+                                                lines,
+                                                0);
 
   if(line_count == 0U) {
     line_count = 1U;
     (void)snprintf(lines[0], sizeof(lines[0]), "%s", "FAULT");
   }
-  if(overflow != 0U) {
-    lcdm_auto_ng_mark_overflow(lines, line_count, char_limit);
-  }
 
-  for(line = 0U; line < line_count; line++) {
-    y = (uint16_t)(LCDM_AUTO_SUMMARY_Y +
-                   ((LCDM_AUTO_SUMMARY_H * (uint16_t)line) / line_count));
-    next_y = (uint16_t)(LCDM_AUTO_SUMMARY_Y +
-                        ((LCDM_AUTO_SUMMARY_H * (uint16_t)(line + 1U)) / line_count));
-    lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_TEXT_X,
+  if(fast != 0U) {
+    lcdm_raw_xstr_full_fast(LCDM_AUTO_SUMMARY_FULL_TEXT_X,
+                             y,
+                             LCDM_AUTO_SUMMARY_FULL_TEXT_W,
+                             h,
+                             font,
+                             LCDM_WHITE,
+                             LCDM_RED,
+                             1U,
+                             lines[0]);
+  } else {
+    lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_FULL_TEXT_X,
                        y,
-                       LCDM_AUTO_SUMMARY_TEXT_W,
-                       (uint16_t)(next_y - y),
+                       LCDM_AUTO_SUMMARY_FULL_TEXT_W,
+                       h,
                        font,
                        LCDM_WHITE,
                        LCDM_RED,
                        1U,
-                       lines[line]);
+                       lines[0]);
   }
+}
+
+static void lcdm_draw_auto_result_ng_detail(const char *detail_text)
+{
+  const char *input_text;
+  const char *output_text;
+  const char *separator;
+  uint16_t input_len;
+  uint16_t output_len;
+  uint16_t top_h;
+  uint16_t divider_y;
+  uint16_t bottom_y;
+  uint16_t bottom_h;
+
+  if(detail_text == 0) {
+    detail_text = "";
+  }
+
+  /* NG is a full-width red I/O record.  Do not reserve a left "NG" cell;
+   * the actual Ixxx/Oxxx labels are the information the operator needs. */
+  lcdm_raw_fill(LCDM_AUTO_SUMMARY_X,
+                LCDM_AUTO_SUMMARY_Y,
+                LCDM_AUTO_SUMMARY_W,
+                LCDM_AUTO_SUMMARY_H,
+                LCDM_RED);
+
+  top_h = (uint16_t)((LCDM_AUTO_SUMMARY_H - 2U) / 2U);
+  divider_y = (uint16_t)(LCDM_AUTO_SUMMARY_Y + top_h);
+  bottom_y = (uint16_t)(divider_y + 2U);
+  bottom_h = (uint16_t)(LCDM_AUTO_SUMMARY_H - top_h - 2U);
+
+  if(detail_text[0] != '\0') {
+    separator = strchr(detail_text, '-');
+    input_text = detail_text;
+    input_len = (uint16_t)strlen(detail_text);
+    output_text = 0;
+    output_len = 0U;
+    if(separator != 0 && separator != detail_text && separator[1] != '\0') {
+      input_len = (uint16_t)(separator - detail_text);
+      output_text = separator + 1;
+      output_len = (uint16_t)strlen(output_text);
+    }
+
+    lcdm_draw_auto_ng_group(input_text,
+                            input_len,
+                            LCDM_AUTO_SUMMARY_Y,
+                            top_h,
+                            0U);
+    lcdm_draw_auto_ng_group(output_text, output_len, bottom_y, bottom_h, 0U);
+  }
+
+  lcdm_raw_fill(LCDM_AUTO_SUMMARY_X,
+                divider_y,
+                LCDM_AUTO_SUMMARY_W,
+                2U,
+                LCDM_BLACK);
+}
+
+/* The initial NG page is drawn through the reliable acknowledged path above.
+ * Later blink frames do not need to rebuild the fixed red body: hiding the
+ * text takes two fast fills, while restoring it sends only the text rows.
+ * That keeps the scanner running even when the display is busy rendering a
+ * blink frame. */
+static void lcdm_draw_auto_result_ng_blink_detail(const char *detail_text)
+{
+  const char *input_text;
+  const char *output_text;
+  const char *separator;
+  uint16_t input_len;
+  uint16_t output_len;
+  uint16_t top_h;
+  uint16_t divider_y;
+  uint16_t bottom_y;
+  uint16_t bottom_h;
+
+  top_h = (uint16_t)((LCDM_AUTO_SUMMARY_H - 2U) / 2U);
+  divider_y = (uint16_t)(LCDM_AUTO_SUMMARY_Y + top_h);
+  bottom_y = (uint16_t)(divider_y + 2U);
+  bottom_h = (uint16_t)(LCDM_AUTO_SUMMARY_H - top_h - 2U);
+
+  if(detail_text == 0 || detail_text[0] == '\0') {
+    /* The red body was already established by the reliable initial draw.
+     * Clear only its text content, then restore the fixed I/O divider. */
+    lcdm_raw_fill_fast(LCDM_AUTO_SUMMARY_X,
+                       LCDM_AUTO_SUMMARY_Y,
+                       LCDM_AUTO_SUMMARY_W,
+                       LCDM_AUTO_SUMMARY_H,
+                       LCDM_RED);
+    lcdm_raw_fill_fast(LCDM_AUTO_SUMMARY_X,
+                       divider_y,
+                       LCDM_AUTO_SUMMARY_W,
+                       2U,
+                       LCDM_BLACK);
+    return;
+  }
+
+  separator = strchr(detail_text, '-');
+  input_text = detail_text;
+  input_len = (uint16_t)strlen(detail_text);
+  output_text = 0;
+  output_len = 0U;
+  if(separator != 0 && separator != detail_text && separator[1] != '\0') {
+    input_len = (uint16_t)(separator - detail_text);
+    output_text = separator + 1;
+    output_len = (uint16_t)strlen(output_text);
+  }
+
+  lcdm_draw_auto_ng_group(input_text,
+                          input_len,
+                          LCDM_AUTO_SUMMARY_Y,
+                          top_h,
+                          1U);
+  lcdm_draw_auto_ng_group(output_text, output_len, bottom_y, bottom_h, 1U);
 }
 
 static void lcdm_draw_auto_result_ng_body(const char *detail_text)
 {
-  lcdm_raw_fill(LCDM_AUTO_SUMMARY_X,
-                LCDM_AUTO_SUMMARY_Y,
-                LCDM_AUTO_SUMMARY_LEFT_W,
-                LCDM_AUTO_SUMMARY_H,
-                LCDM_RED);
-  lcdm_raw_fill(LCDM_AUTO_SUMMARY_DIVIDER_X,
-                LCDM_AUTO_SUMMARY_Y,
-                2U,
-                LCDM_AUTO_SUMMARY_H,
-                LCDM_BLACK);
-  lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_X,
-                     LCDM_AUTO_SUMMARY_Y,
-                     LCDM_AUTO_SUMMARY_LEFT_W,
-                     LCDM_AUTO_SUMMARY_H,
-                     LCDM_FONT_POINT,
-                     LCDM_WHITE,
-                     LCDM_RED,
-                     1U,
-                     "NG");
   lcdm_draw_auto_result_ng_detail(detail_text);
 }
 
@@ -1519,34 +1601,34 @@ static void lcdm_draw_auto_summary_top_labels(const char *left_text, const char 
   }
 
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_X,
-                LCDM_STATUS_Y,
+                LCDM_AUTO_SUMMARY_LABEL_Y,
                 LCDM_AUTO_SUMMARY_LEFT_W,
-                LCDM_STATUS_H,
+                LCDM_AUTO_SUMMARY_LABEL_H,
                 LCDM_WHITE);
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_RIGHT_X,
-                LCDM_STATUS_Y,
+                LCDM_AUTO_SUMMARY_LABEL_Y,
                 LCDM_AUTO_SUMMARY_RIGHT_W,
-                LCDM_STATUS_H,
+                LCDM_AUTO_SUMMARY_LABEL_H,
                 LCDM_WHITE);
   lcdm_raw_fill(LCDM_AUTO_SUMMARY_DIVIDER_X,
-                LCDM_STATUS_Y,
+                LCDM_AUTO_SUMMARY_LABEL_Y,
                 2U,
-                LCDM_STATUS_H,
+                LCDM_AUTO_SUMMARY_LABEL_H,
                 LCDM_BLACK);
   lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_X,
-                     LCDM_STATUS_Y,
+                     LCDM_AUTO_SUMMARY_LABEL_Y,
                      LCDM_AUTO_SUMMARY_LEFT_W,
-                     LCDM_STATUS_H,
-                     LCDM_FONT_STATUS,
+                     LCDM_AUTO_SUMMARY_LABEL_H,
+                     LCDM_FONT_SMALL,
                      LCDM_BLACK,
                      LCDM_WHITE,
                      1U,
                      left_text);
   lcdm_raw_xstr_full(LCDM_AUTO_SUMMARY_RIGHT_X,
-                     LCDM_STATUS_Y,
+                     LCDM_AUTO_SUMMARY_LABEL_Y,
                      LCDM_AUTO_SUMMARY_RIGHT_W,
-                     LCDM_STATUS_H,
-                     LCDM_FONT_STATUS,
+                     LCDM_AUTO_SUMMARY_LABEL_H,
+                     LCDM_FONT_SMALL,
                      LCDM_BLACK,
                      LCDM_WHITE,
                      1U,
@@ -1686,14 +1768,25 @@ static void lcdm_auto_test_clear_result_lines(void)
   lcdm_auto_line_count = 0U;
   lcdm_auto_input_count = 0U;
   lcdm_auto_point_count = 0UL;
+  lcdm_auto_actual_input_count = 0U;
+  lcdm_auto_actual_output_count = 0U;
+  lcdm_auto_actual_counts_valid = 0U;
 }
 
 static void lcdm_auto_test_clear(void)
 {
+  uint8_t word;
+
   lcdm_auto_test_clear_result_lines();
   lcdm_auto_page_cache = 0U;
   lcdm_auto_footer_cache[0] = '\0';
   lcdm_auto_drawn_rows_invalidate();
+  for(word = 0U; word < FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS; word++) {
+    lcdm_auto_fault_out_bits[word] = 0U;
+    lcdm_auto_fault_in_bits[word] = 0U;
+  }
+  lcdm_auto_fault_type = 0U;
+  lcdm_auto_fault_blink_on = 0U;
 }
 
 static uint16_t lcdm_learn_group_color(uint16_t out_point)
@@ -1941,6 +2034,17 @@ static uint16_t lcdm_auto_collect_visual_rows(uint16_t wanted_row,
                                       output_start,
                                       output_end,
                                       2U);
+      } else {
+        /* A learned I can be completely open while its expected O has moved
+         * to another I.  Preserve the trailing '-' so the record reads
+         * "I003-" instead of looking like a truncated identifier. */
+        lcdm_auto_visual_append_unit(&row,
+                                     &row_count,
+                                     wanted_row,
+                                     wanted,
+                                     "-",
+                                     1U,
+                                     1U);
       }
     }
     lcdm_auto_visual_row_emit(&row, &row_count, wanted_row, wanted);
@@ -1961,6 +2065,79 @@ static uint8_t lcdm_auto_get_visual_row(uint16_t visual_row, lcdm_auto_visual_ro
   }
 
   return (lcdm_auto_collect_visual_rows(visual_row, row) >= visual_row) ? 1U : 0U;
+}
+
+static uint8_t lcdm_auto_row_has_endpoint(const lcdm_auto_visual_row_t *row,
+                                          char endpoint,
+                                          uint16_t point)
+{
+  char token[8];
+
+  if(row == 0 || point == 0U || point > LCDM_TOTAL_POINTS) {
+    return 0U;
+  }
+
+  (void)snprintf(token, sizeof(token), "%c%03u", endpoint, (unsigned int)point);
+  return (strstr(row->text, token) != 0) ? 1U : 0U;
+}
+
+/* The AUTO browse cache is organized as complete electrical groups, but a
+ * group can occupy more than one physical row.  Keep the fault identity as
+ * endpoint bitmaps instead of one "first bad" pair so every part of a merged
+ * circuit can be redrawn together. */
+static uint8_t lcdm_auto_fault_has_endpoint(char endpoint, uint16_t point)
+{
+  uint8_t word;
+  uint8_t bit;
+
+  if(point == 0U || point > LCDM_TOTAL_POINTS) {
+    return 0U;
+  }
+
+  word = (uint8_t)((point - 1U) >> 5);
+  bit = (uint8_t)((point - 1U) & 0x1FU);
+  if(word >= FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS) {
+    return 0U;
+  }
+
+  if(endpoint == 'I') {
+    return ((lcdm_auto_fault_in_bits[word] & (1UL << bit)) != 0U) ? 1U : 0U;
+  }
+  if(endpoint == 'O') {
+    return ((lcdm_auto_fault_out_bits[word] & (1UL << bit)) != 0U) ? 1U : 0U;
+  }
+  return 0U;
+}
+
+static uint8_t lcdm_auto_row_has_fault_endpoint(const lcdm_auto_visual_row_t *row,
+                                                char endpoint)
+{
+  uint16_t point;
+
+  if(row == 0) {
+    return 0U;
+  }
+
+  for(point = 1U; point <= LCDM_TOTAL_POINTS; point++) {
+    if(lcdm_auto_fault_has_endpoint(endpoint, point) != 0U &&
+       lcdm_auto_row_has_endpoint(row, endpoint, point) != 0U) {
+      return 1U;
+    }
+  }
+  return 0U;
+}
+
+static uint8_t lcdm_auto_fault_has_any_endpoint(void)
+{
+  uint8_t word;
+
+  for(word = 0U; word < FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS; word++) {
+    if(lcdm_auto_fault_out_bits[word] != 0U ||
+       lcdm_auto_fault_in_bits[word] != 0U) {
+      return 1U;
+    }
+  }
+  return 0U;
 }
 
 static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point)
@@ -2119,6 +2296,14 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
   uint16_t output_x;
   uint16_t input_bg_width;
   uint16_t output_width;
+  uint16_t input_bg = LCDM_PALE_BLUE;
+  uint16_t output_bg = LCDM_PALE_CYAN;
+  uint16_t separator_bg = LCDM_WHITE;
+  uint16_t input_fg = LCDM_NAVY;
+  uint16_t output_fg = LCDM_NAVY;
+  uint16_t separator_fg = LCDM_NAVY;
+  uint8_t input_fault;
+  uint8_t output_fault;
   lcdm_auto_visual_row_t row;
   char input_text[LCDM_AUTO_ROW_TEXT_MAX];
   char output_text[LCDM_AUTO_ROW_TEXT_MAX];
@@ -2140,13 +2325,33 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
   output_text_width = (uint16_t)(row.out_len * LCDM_AUTO_CHAR_W_ESTIMATE);
   text_x = (uint16_t)(x + LCDM_AUTO_LIST_TEXT_X);
 
+  /* K1 result browsing keeps normal I/O colours for every verified record.
+   * Only the exact endpoints of the live open/short invert to white on red;
+   * when the blink phase is off this same row redraws in its normal colour. */
+  input_fault = (lcdm_auto_fault_blink_on != 0U &&
+                 lcdm_auto_row_has_fault_endpoint(&row, 'I') != 0U) ? 1U : 0U;
+  output_fault = (lcdm_auto_fault_blink_on != 0U &&
+                  lcdm_auto_row_has_fault_endpoint(&row, 'O') != 0U) ? 1U : 0U;
+  if(input_fault != 0U) {
+    input_bg = LCDM_RED;
+    input_fg = LCDM_WHITE;
+  }
+  if(output_fault != 0U) {
+    output_bg = LCDM_RED;
+    output_fg = LCDM_WHITE;
+  }
+  if((input_fault != 0U) || (output_fault != 0U)) {
+    separator_bg = LCDM_RED;
+    separator_fg = LCDM_WHITE;
+  }
+
   lcdm_raw_fill(x, y, LCDM_RESULT_W, (uint16_t)(LCDM_AUTO_LIST_ROW_H - 1U), LCDM_WHITE);
   if(row.in_len != 0U) {
     input_bg_width = (uint16_t)(LCDM_AUTO_LIST_TEXT_X + input_width + 2U);
     if(input_bg_width > LCDM_RESULT_W) {
       input_bg_width = LCDM_RESULT_W;
     }
-    lcdm_raw_fill(x, y, input_bg_width, (uint16_t)(LCDM_AUTO_LIST_ROW_H - 1U), LCDM_PALE_BLUE);
+    lcdm_raw_fill(x, y, input_bg_width, (uint16_t)(LCDM_AUTO_LIST_ROW_H - 1U), input_bg);
   }
 
   output_x = (uint16_t)(text_x + input_width + separator_width);
@@ -2165,7 +2370,7 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
                   y,
                   output_width,
                   (uint16_t)(LCDM_AUTO_LIST_ROW_H - 1U),
-                  LCDM_PALE_CYAN);
+                  output_bg);
   }
   lcdm_raw_fill(x,
                 (uint16_t)(y + LCDM_AUTO_LIST_ROW_H - 1U),
@@ -2181,8 +2386,8 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
                        (uint16_t)(input_width + 2U),
                        LCDM_AUTO_LIST_TEXT_H,
                        LCDM_FONT_SMALL,
-                       LCDM_NAVY,
-                       LCDM_PALE_BLUE,
+                       input_fg,
+                       input_bg,
                        0U,
                        input_text);
   }
@@ -2192,8 +2397,8 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
                        separator_width,
                        LCDM_AUTO_LIST_TEXT_H,
                        LCDM_FONT_SMALL,
-                       LCDM_NAVY,
-                       LCDM_WHITE,
+                       separator_fg,
+                       separator_bg,
                        0U,
                        "-");
   }
@@ -2207,8 +2412,8 @@ static void lcdm_draw_auto_test_line(uint8_t page, uint16_t point)
                        (uint16_t)(output_text_width + 2U),
                        LCDM_AUTO_LIST_TEXT_H,
                        LCDM_FONT_SMALL,
-                       LCDM_NAVY,
-                       LCDM_PALE_CYAN,
+                       output_fg,
+                       output_bg,
                        0U,
                        output_text);
   }
@@ -2303,6 +2508,41 @@ static void lcdm_draw_auto_test_changed(uint8_t page)
   }
 }
 
+/* Redraw only physical rows containing the current fault endpoints.  This is
+ * used for the result-page blink and deliberately never touches the header,
+ * summary labels, footer, or K1-K4 band. */
+static void lcdm_draw_auto_test_fault_rows(uint8_t page)
+{
+  uint16_t point;
+  uint16_t first;
+  uint16_t last;
+  lcdm_auto_visual_row_t row;
+
+  if(lcdm_auto_fault_type == 0U ||
+     lcdm_auto_fault_has_any_endpoint() == 0U) {
+    return;
+  }
+  if(page == 0U) {
+    page = 1U;
+  }
+  if(page > lcdm_auto_test_page_count()) {
+    page = lcdm_auto_test_page_count();
+  }
+
+  first = (uint16_t)(((page - 1U) * LCDM_AUTO_LIST_PAGE_SIZE) + 1U);
+  last = (uint16_t)(first + LCDM_AUTO_LIST_PAGE_SIZE - 1U);
+  for(point = first; point <= last; point++) {
+    if(lcdm_auto_get_visual_row(point, &row) == 0U) {
+      continue;
+    }
+    if(lcdm_auto_row_has_fault_endpoint(&row, 'I') == 0U &&
+       lcdm_auto_row_has_fault_endpoint(&row, 'O') == 0U) {
+      continue;
+    }
+    lcdm_draw_auto_test_line(page, point);
+  }
+}
+
 static void lcdm_draw_auto_footer(uint8_t page, uint8_t done)
 {
   char page_text[24];
@@ -2310,6 +2550,8 @@ static void lcdm_draw_auto_footer(uint8_t page, uint8_t done)
   char output_text[20];
   char cache_text[80];
   uint8_t page_count = lcdm_auto_test_page_count();
+  uint16_t input_count;
+  uint32_t output_count;
 
   if(page == 0U) {
     page = 1U;
@@ -2324,8 +2566,12 @@ static void lcdm_draw_auto_footer(uint8_t page, uint8_t done)
                  (done != 0U) ? "RESULT" : "AUTO",
                  (unsigned int)page,
                  (unsigned int)page_count);
-  (void)snprintf(input_text, sizeof(input_text), "I-%03u", (unsigned int)lcdm_auto_input_count);
-  (void)snprintf(output_text, sizeof(output_text), "O-%03lu", (unsigned long)lcdm_auto_point_count);
+  input_count = (lcdm_auto_actual_counts_valid != 0U) ?
+                  lcdm_auto_actual_input_count : lcdm_auto_input_count;
+  output_count = (lcdm_auto_actual_counts_valid != 0U) ?
+                   (uint32_t)lcdm_auto_actual_output_count : lcdm_auto_point_count;
+  (void)snprintf(input_text, sizeof(input_text), "I-%03u", (unsigned int)input_count);
+  (void)snprintf(output_text, sizeof(output_text), "O-%03lu", (unsigned long)output_count);
 
   (void)snprintf(cache_text, sizeof(cache_text), "%s|%s|%s", page_text, input_text, output_text);
   if(strcmp(lcdm_auto_footer_cache, cache_text) == 0) {
@@ -2360,13 +2606,24 @@ static void lcdm_prepare_auto_test_page(uint8_t page)
       lcdm_layout_top_cache[0] = '\0';
       lcdm_draw_auto_header("AUTO TESTING");
     }
+
+    /* A PASS/NG summary occupies the entire middle work area.  On an actual
+     * K1 record-page turn, clear that area once before the five result rows
+     * are drawn.  This removes residual green/red above and below the rows
+     * while deliberately preserving STANDARD CABLE and the K1-K4 strip. */
+    lcdm_raw_fill(0U,
+                  LCDM_AUTO_SUMMARY_LABEL_Y,
+                  LCDM_W,
+                  (uint16_t)(LCDM_KEY_Y0 - LCDM_AUTO_SUMMARY_LABEL_Y),
+                  LCDM_WHITE);
+    lcdm_auto_drawn_rows_invalidate();
   }
 }
 
 /* AUTO summary, AUTO record pages, and their K1 page turns intentionally
  * share layout mode 4.  Once the AUTO frame has been drawn, this function
- * clears only the middle work area (y=42..213); STANDARD CABLE and K1-K4 are
- * never redrawn while PASS/NG and record pages cycle. */
+ * clears only the compressed summary work area (y=33..213); STANDARD CABLE
+ * and K1-K4 are never redrawn while PASS/NG and record pages cycle. */
 static void lcdm_prepare_auto_summary_page(void)
 {
   if(lcdm_layout_mode != 4U) {
@@ -2380,9 +2637,9 @@ static void lcdm_prepare_auto_summary_page(void)
   lcdm_auto_footer_cache[0] = '\0';
   lcdm_auto_drawn_rows_invalidate();
   lcdm_raw_fill(0U,
-                LCDM_STATUS_Y,
+                LCDM_AUTO_SUMMARY_LABEL_Y,
                 LCDM_W,
-                (uint16_t)(LCDM_KEY_Y0 - LCDM_STATUS_Y),
+                (uint16_t)(LCDM_KEY_Y0 - LCDM_AUTO_SUMMARY_LABEL_Y),
                 LCDM_WHITE);
   lcdm_raw_state_cache[0] = '\0';
   lcdm_raw_main_cache[0] = '\0';
@@ -2994,9 +3251,10 @@ void first_gen_display_update_auto_test_ng_detail(const char *fault_text)
     return;
   }
 
-  /* Called for the 0.5 s NG blink.  The fixed header, NG panel, and K1-K4
-   * strip are intentionally untouched. */
-  lcdm_draw_auto_result_ng_detail(fault_text);
+  /* Called for the NG blink.  Its fast path touches only the middle red
+   * body and never waits for an LCDM acknowledgement, so K1-K4 stay intact
+   * and the next IO row can be scanned without a display-timeout pause. */
+  lcdm_draw_auto_result_ng_blink_detail(fault_text);
 }
 
 void first_gen_display_show_auto_table_page(uint8_t page, uint16_t active_point)
@@ -3221,6 +3479,21 @@ void first_gen_display_add_auto_test_result_line(uint16_t row_index, const char 
   (void)lcdm_auto_test_set_line(row_index, line);
 }
 
+void first_gen_display_set_auto_test_result_actual_counts(uint16_t input_count,
+                                                          uint16_t output_count)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  lcdm_auto_actual_input_count = input_count;
+  lcdm_auto_actual_output_count = output_count;
+  lcdm_auto_actual_counts_valid = 1U;
+  /* The result rows may be unchanged while only the measured status count
+   * changed, so do not reuse an old footer cache. */
+  lcdm_auto_footer_cache[0] = '\0';
+}
+
 uint8_t first_gen_display_auto_test_page_count(void)
 {
   if(display_is_lcdm == 0U) {
@@ -3228,6 +3501,113 @@ uint8_t first_gen_display_auto_test_page_count(void)
   }
 
   return lcdm_auto_test_page_count();
+}
+
+void first_gen_display_set_auto_test_result_fault(uint16_t out_point,
+                                                  uint16_t in_point,
+                                                  uint8_t problem_type)
+{
+  uint32_t out_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS] = {0U};
+  uint32_t in_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS] = {0U};
+  uint8_t out_word;
+  uint8_t in_word;
+
+  if(out_point == 0U || out_point > LCDM_TOTAL_POINTS ||
+     in_point == 0U || in_point > LCDM_TOTAL_POINTS) {
+    return;
+  }
+
+  out_word = (uint8_t)((out_point - 1U) >> 5);
+  in_word = (uint8_t)((in_point - 1U) >> 5);
+  out_bits[out_word] = (1UL << ((out_point - 1U) & 0x1FU));
+  in_bits[in_word] = (1UL << ((in_point - 1U) & 0x1FU));
+  first_gen_display_set_auto_test_result_fault_group(out_bits,
+                                                      in_bits,
+                                                      FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS,
+                                                      problem_type);
+}
+
+void first_gen_display_set_auto_test_result_fault_group(const uint32_t out_bits[],
+                                                        const uint32_t in_bits[],
+                                                        uint8_t word_count,
+                                                        uint8_t problem_type)
+{
+  uint8_t word;
+  uint8_t changed;
+  uint32_t next_out_bits;
+  uint32_t next_in_bits;
+
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  changed = (lcdm_auto_fault_type != problem_type) ? 1U : 0U;
+  for(word = 0U; word < FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS; word++) {
+    next_out_bits = (out_bits != 0 && word < word_count) ? out_bits[word] : 0U;
+    next_in_bits = (in_bits != 0 && word < word_count) ? in_bits[word] : 0U;
+    if(lcdm_auto_fault_out_bits[word] != next_out_bits ||
+       lcdm_auto_fault_in_bits[word] != next_in_bits) {
+      changed = 1U;
+    }
+    lcdm_auto_fault_out_bits[word] = next_out_bits;
+    lcdm_auto_fault_in_bits[word] = next_in_bits;
+  }
+
+  if(problem_type == 0U || lcdm_auto_fault_has_any_endpoint() == 0U) {
+    lcdm_auto_fault_type = 0U;
+    lcdm_auto_fault_blink_on = 0U;
+  } else {
+    lcdm_auto_fault_type = problem_type;
+    lcdm_auto_fault_blink_on = 1U;
+  }
+
+  /* A wiring change may occur while K1 is already showing a record page.
+   * Redraw those five middle rows once so removed old marks are cleared and
+   * every endpoint in the new group becomes visible immediately. */
+  if(changed != 0U && lcdm_layout_mode == 4U &&
+     lcdm_auto_page_cache != 0U &&
+     lcdm_auto_drawn_page == lcdm_auto_page_cache) {
+    lcdm_draw_auto_test_all(lcdm_auto_page_cache);
+  }
+}
+
+void first_gen_display_clear_auto_test_result_fault(void)
+{
+  uint8_t word;
+
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  for(word = 0U; word < FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS; word++) {
+    lcdm_auto_fault_out_bits[word] = 0U;
+    lcdm_auto_fault_in_bits[word] = 0U;
+  }
+  lcdm_auto_fault_type = 0U;
+  lcdm_auto_fault_blink_on = 0U;
+}
+
+void first_gen_display_set_auto_test_result_fault_blink(uint8_t visible)
+{
+  if(display_is_lcdm == 0U ||
+     lcdm_auto_fault_type == 0U ||
+     lcdm_auto_fault_has_any_endpoint() == 0U) {
+    return;
+  }
+
+  visible = (visible != 0U) ? 1U : 0U;
+  if(lcdm_auto_fault_blink_on == visible) {
+    return;
+  }
+  lcdm_auto_fault_blink_on = visible;
+
+  /* A summary page has no cached record page (page cache is zero), so retain
+   * only the state here.  The next K1 page draw will use it immediately. */
+  if(lcdm_layout_mode == 4U &&
+     lcdm_auto_page_cache != 0U &&
+     lcdm_auto_drawn_page == lcdm_auto_page_cache) {
+    lcdm_draw_auto_test_fault_rows(lcdm_auto_page_cache);
+  }
 }
 
 void first_gen_display_show_auto_test_result_page(uint8_t page, uint8_t done)

@@ -5,6 +5,8 @@
 
 #define FIRST_GEN_DISPLAY_DIGITS 6U
 #define FIRST_GEN_DISPLAY_AUTO_RESULT_PAGE_ROWS 5U
+/* 94 active first-generation points occupy three 32-bit endpoint bitmaps. */
+#define FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS 3U
 
 #define FIRST_GEN_KEY_NONE       0xFFU
 #define FIRST_GEN_KEY_SET        0xF3U
@@ -76,18 +78,35 @@ void first_gen_display_clear_auto_test_lines(void);
 /* Clear cached AUTO rows while retaining the current LCDM page/key strip.
  * Used when a newly scanned edge merges two electrical circuits. */
 void first_gen_display_reset_auto_test_result_lines(void);
-/* Cache one completed AUTO result row.  Only connected I rows are appended,
- * so row_index is compact and the footer I count is the true connected count. */
+/* Cache one ordered AUTO result row.  The scan layer may add a visual-only
+ * open-endpoint locator row; actual I/O counts are supplied separately. */
 void first_gen_display_add_auto_test_result_line(uint16_t row_index, const char *line);
+/* Result rows may retain an open learned endpoint solely to show where the
+ * fault is.  Keep the footer status based on the actual measured I/O count,
+ * not on those visual-only placeholder labels. */
+void first_gen_display_set_auto_test_result_actual_counts(uint16_t input_count,
+                                                          uint16_t output_count);
 uint8_t first_gen_display_auto_test_page_count(void);
 void first_gen_display_show_auto_test_result_page(uint8_t page, uint8_t done);
-/* Final AUTO summary pages follow the approved fifth-section layout:
- * RESULT/DETAILES at the top, then the left PASS/NG panel and the right
- * TOTAL/fault-group panel.  NG detail updates redraw only the right panel so
- * its 0.5 s blink never refreshes the key strip or the left NG panel. */
+/* Final AUTO summary pages use a compressed RESULT/DETAILS caption below the
+ * main title. PASS retains its 2/5 result panel and 3/5 three-line TOTAL
+ * panel. NG has no separate "NG" word: its full-width red body shows Ixxx
+ * above and Oxxx below. NG blink updates only that body, never K1-K4. */
 void first_gen_display_show_auto_test_pass_summary(const char *total_text);
 void first_gen_display_show_auto_test_ng_summary(const char *fault_text);
 void first_gen_display_update_auto_test_ng_detail(const char *fault_text);
+/* The live AUTO monitor keeps the ordinary result records in RAM.  When an
+ * open/short is found after PASS, tag every associated I/O endpoint so K1
+ * result pages can flash the complete affected connection group. */
+void first_gen_display_set_auto_test_result_fault(uint16_t out_point,
+                                                  uint16_t in_point,
+                                                  uint8_t problem_type);
+void first_gen_display_set_auto_test_result_fault_group(const uint32_t out_bits[],
+                                                        const uint32_t in_bits[],
+                                                        uint8_t word_count,
+                                                        uint8_t problem_type);
+void first_gen_display_clear_auto_test_result_fault(void);
+void first_gen_display_set_auto_test_result_fault_blink(uint8_t visible);
 /* Update one already-cached AUTO row immediately and return its displayed
  * page.  Used while the matrix is still being scanned. */
 uint8_t first_gen_display_show_auto_test_result_row(uint16_t row_index, uint8_t done);

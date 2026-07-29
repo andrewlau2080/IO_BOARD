@@ -69,6 +69,9 @@ void lcdm_tjc_force_baudrate(uint32_t target_baudrate);
 void lcdm_tjc_rx_falling_edge_isr(void);
 void lcdm_tjc_usart_irq_handler(void);
 void lcdm_tjc_send_cmd(const char *cmd);
+/* Animation-only path: retains the command gap but never waits for a TJC
+ * acknowledgement. It must not be used for persistent page construction. */
+void lcdm_tjc_send_cmd_fast(const char *cmd);
 /* Enable TJC command acknowledgements and serialize direct draw commands. */
 void lcdm_tjc_set_command_ack(uint8_t enable);
 /*

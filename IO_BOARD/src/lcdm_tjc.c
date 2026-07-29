@@ -592,6 +592,18 @@ void lcdm_tjc_send_cmd(const char *cmd)
   }
 }
 
+void lcdm_tjc_send_cmd_fast(const char *cmd)
+{
+  if(cmd == 0) {
+    return;
+  }
+
+  /* A flashing status is disposable: preserving the normal inter-command
+   * gap keeps the panel reliable while skipping a potentially long ACK wait
+   * leaves the IO scanner free to finish the recovery pass. */
+  send_cmd_raw(cmd);
+}
+
 void lcdm_tjc_set_command_ack(uint8_t enable)
 {
   uint32_t sequence;
