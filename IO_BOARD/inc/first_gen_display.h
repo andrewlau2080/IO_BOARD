@@ -7,6 +7,8 @@
 #define FIRST_GEN_DISPLAY_AUTO_RESULT_PAGE_ROWS 5U
 /* 94 active first-generation points occupy three 32-bit endpoint bitmaps. */
 #define FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS 3U
+#define FIRST_GEN_PRINT_DISPLAY_START    1U
+#define FIRST_GEN_PRINT_DISPLAY_COMPLETE 2U
 
 #define FIRST_GEN_KEY_NONE       0xFFU
 #define FIRST_GEN_KEY_SET        0xF3U
@@ -38,6 +40,12 @@ void first_gen_display_init(void);
 void first_gen_display_clear(void);
 uint8_t first_gen_display_is_lcdm(void);
 uint8_t first_gen_display_key_read_raw(void);
+/* PB8/HALL_SW is low-active.  The LCDM header keeps this small indicator
+ * visible across normal, result, and print workflow pages. */
+void first_gen_display_set_hall_input(uint8_t active);
+/* Draw the full-width PDF print workflow body: START PRINTING or COMPLETE.
+ * The fixed title and K1-K4 band remain part of the same single LCDM page. */
+void first_gen_display_show_print_progress(uint8_t state);
 void first_gen_display_effect_step(void);
 void first_gen_display_write_raw6(const uint8_t segments[FIRST_GEN_DISPLAY_DIGITS]);
 void first_gen_display_write_text6(const char text[FIRST_GEN_DISPLAY_DIGITS]);

@@ -106,6 +106,20 @@
 #define LCDM_AUTO_SUMMARY_FULL_TEXT_W (LCDM_AUTO_SUMMARY_W - 8U)
 #define LCDM_AUTO_SUMMARY_NG_MAX_LINES       10U
 #define LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX   64U
+/* PB8/HALL_SW remains visible at the upper-right corner on every generated
+ * tester page.  It is intentionally outside the centred STANDARD CABLE
+ * title, so a Hall transition never requires a full page redraw. */
+/* "HALL IN" has seven Song glyphs.  Use the 10 px resource here: the
+ * former 16 px title font needed more than the 96 px corner span and could
+ * spill outside the 32 px header on the LCDM. */
+#define LCDM_HALL_X                394U
+#define LCDM_HALL_Y                6U
+#define LCDM_HALL_W                80U
+#define LCDM_HALL_H                20U
+#define LCDM_PRINT_STATUS_Y        32U
+#define LCDM_PRINT_STATUS_H        26U
+#define LCDM_PRINT_BODY_Y          (LCDM_PRINT_STATUS_Y + LCDM_PRINT_STATUS_H)
+#define LCDM_PRINT_BODY_H          (LCDM_KEY_Y0 - LCDM_PRINT_BODY_Y)
 /* font-0song used by the AUTO list is a 10 px cell font.  Keep the layout
  * geometry on that real cell width so an I/O background ends with its text
  * instead of leaving a large coloured blank area after the last endpoint. */
@@ -196,6 +210,10 @@ static uint32_t lcdm_auto_fault_out_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS];
 static uint32_t lcdm_auto_fault_in_bits[FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS];
 static uint8_t lcdm_auto_fault_type;
 static uint8_t lcdm_auto_fault_blink_on;
+/* PB8 is sampled by the scan service; this cache means an unchanged Hall
+ * level sends no TJC traffic while matrix scanning is active. */
+static uint8_t lcdm_hall_input_active;
+static uint8_t lcdm_hall_input_drawn;
 
 typedef struct {
   char text[LCDM_AUTO_ROW_TEXT_MAX];
@@ -222,6 +240,8 @@ static void lcdm_table_ng_clear(void);
 static void lcdm_learn_table_clear(void);
 static void lcdm_auto_test_clear(void);
 static void lcdm_auto_test_clear_result_lines(void);
+static void lcdm_draw_hall_indicator(uint8_t force);
+static void lcdm_draw_print_progress_body(uint8_t state);
 static void lcdm_auto_drawn_rows_invalidate(void);
 static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point);
 static void lcdm_auto_test_point_rect(uint8_t page, uint16_t point, uint16_t *x, uint16_t *y);
@@ -1029,6 +1049,28 @@ static void lcdm_reset_dynamic_effects(void)
   lcdm_auto_test_blink_steps = 0U;
 }
 
+static void lcdm_draw_hall_indicator(uint8_t force)
+{
+  uint16_t color;
+
+  if(force == 0U && lcdm_hall_input_drawn != 0U) {
+    return;
+  }
+
+  color = (lcdm_hall_input_active != 0U) ? LCDM_RED : LCDM_GRAY;
+  lcdm_raw_fill(LCDM_HALL_X, LCDM_HALL_Y, LCDM_HALL_W, LCDM_HALL_H, LCDM_NAVY);
+  lcdm_raw_xstr_full(LCDM_HALL_X,
+                     LCDM_HALL_Y,
+                     LCDM_HALL_W,
+                     LCDM_HALL_H,
+                     LCDM_FONT_SMALL,
+                     color,
+                     LCDM_NAVY,
+                     1U,
+                     "HALL IN");
+  lcdm_hall_input_drawn = 1U;
+}
+
 static void lcdm_draw_common_header(const char *top_right)
 {
   if(top_right == 0) {
@@ -1044,6 +1086,7 @@ static void lcdm_draw_common_header(const char *top_right)
   (void)top_right;
   lcdm_k1_page_hint = 0U;
   lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
+  lcdm_draw_hall_indicator(1U);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
 }
@@ -1064,8 +1107,44 @@ static void lcdm_draw_auto_header(const char *title)
                      LCDM_NAVY,
                      1U,
                      "STANDARD CABLE");
+  lcdm_draw_hall_indicator(1U);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
+}
+
+static void lcdm_draw_print_progress_body(uint8_t state)
+{
+  const char *text = (state == FIRST_GEN_PRINT_DISPLAY_COMPLETE) ?
+                     "COMPLETE" : "START PRINTING";
+
+  lcdm_raw_fill(0U,
+                LCDM_PRINT_STATUS_Y,
+                LCDM_W,
+                LCDM_PRINT_STATUS_H,
+                LCDM_WHITE);
+  lcdm_raw_xstr_full(0U,
+                     LCDM_PRINT_STATUS_Y,
+                     LCDM_W,
+                     LCDM_PRINT_STATUS_H,
+                     LCDM_FONT_TITLE,
+                     LCDM_BLACK,
+                     LCDM_WHITE,
+                     1U,
+                     "WAITING FOR PRINTING");
+  lcdm_raw_fill(0U,
+                LCDM_PRINT_BODY_Y,
+                LCDM_W,
+                LCDM_PRINT_BODY_H,
+                LCDM_GREEN);
+  lcdm_raw_xstr_full(0U,
+                     LCDM_PRINT_BODY_Y,
+                     LCDM_W,
+                     LCDM_PRINT_BODY_H,
+                     LCDM_FONT_POINT,
+                     LCDM_WHITE,
+                     LCDM_GREEN,
+                     1U,
+                     text);
 }
 
 static void lcdm_draw_body_text(uint16_t y, uint16_t h, const char *text, uint16_t fg, uint16_t bg)
@@ -3986,6 +4065,8 @@ static void lcdm_display_init(void)
   lcdm_auto_test_blink_active = 0U;
   lcdm_auto_test_blink_on = 1U;
   lcdm_auto_test_blink_steps = 0U;
+  lcdm_hall_input_active = 0U;
+  lcdm_hall_input_drawn = 0U;
   lcdm_tjc_init();
   lcdm_tjc_force_baudrate(LCDM_TJC_BAUDRATE);
   delay_ms(150U);
@@ -4108,6 +4189,37 @@ uint8_t first_gen_display_key_read_raw(void)
     return lcdm_display_key_read_raw();
   }
   return tm1637_key_read_raw();
+}
+
+void first_gen_display_set_hall_input(uint8_t active)
+{
+  active = (active != 0U) ? 1U : 0U;
+  if(lcdm_hall_input_active != active) {
+    lcdm_hall_input_active = active;
+    lcdm_hall_input_drawn = 0U;
+  }
+
+  if(display_is_lcdm != 0U && lcdm_hall_input_drawn == 0U) {
+    lcdm_draw_hall_indicator(0U);
+  }
+}
+
+void first_gen_display_show_print_progress(uint8_t state)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  if(state != FIRST_GEN_PRINT_DISPLAY_COMPLETE) {
+    state = FIRST_GEN_PRINT_DISPLAY_START;
+  }
+
+  lcdm_tjc_draw_batch_begin();
+  lcdm_reset_dynamic_effects();
+  lcdm_layout_mode = 5U;
+  lcdm_draw_auto_header("PRINT");
+  lcdm_draw_print_progress_body(state);
+  lcdm_tjc_draw_batch_end();
 }
 
 void first_gen_display_effect_step(void)

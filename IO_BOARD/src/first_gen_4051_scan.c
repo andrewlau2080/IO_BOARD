@@ -5,10 +5,8 @@
 #include "at32f45x_flash.h"
 #include "io_board.h"
 #include "io_scan.h"
-#include "line_comm_bridge.h"
-#include "line_comm_transport.h"
-#include "ir_remote.h"
 #include "first_gen_display.h"
+#include "tester_wifi_print.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +28,7 @@
 #define FIRST_GEN_4051_SCAN_PERIOD_MS 0U
 #define FIRST_GEN_4051_ERROR_PERIOD_MS 120U
 #define FIRST_GEN_4051_ADC_TIMEOUT    20000U
-#define FIRST_GEN_PRINT_POLL_WAIT_MS  100U
+#define FIRST_GEN_HALL_DEBOUNCE_MS    20U
 #define FIRST_GEN_PASS_HOLD_MS        900U
 #define FIRST_GEN_REMOVE_CHECK_MS     250U
 #define FIRST_GEN_REMOVE_CONFIRM_MS   10000U
@@ -48,12 +46,6 @@
 #define FIRST_GEN_PANEL_K1_DOUBLE_WINDOW_MS 160U
 #define FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS 200U
 #define FIRST_GEN_IDLE_SCROLL_MS      60000U
-#define FIRST_GEN_IR_TEST_BURST_US    800U
-#define FIRST_GEN_IR_TEST_BURST_COUNT 2U
-#define FIRST_GEN_PRINT_RETRY_SCAN_PERIODS 40U
-#define FIRST_GEN_PRINT_READY_HINT_MS 300U
-#define FIRST_GEN_IR_PRINT_ENABLE     1U
-#define FIRST_GEN_IR_PRINT_TEST_ONLY  0U
 #define FIRST_GEN_TRIGGER_DIAG_ONLY   0U
 #define FIRST_GEN_BUZZER_PASS_ON_MS   1000U
 #define FIRST_GEN_BUZZER_PASS_OFF_MS  1000U
@@ -111,22 +103,24 @@ volatile uint32_t g_first_gen_scan_counter;
 volatile uint32_t g_first_gen_missing_counter;
 volatile uint32_t g_first_gen_unexpected_counter;
 volatile uint32_t g_first_gen_learn_counter;
-volatile uint32_t g_first_gen_print_poll_match_counter;
-volatile uint32_t g_first_gen_print_poll_reject_counter;
-volatile uint32_t g_first_gen_print_response_counter;
+volatile uint32_t g_first_gen_print_request_counter;
+volatile uint32_t g_first_gen_print_ack_counter;
+volatile uint32_t g_first_gen_print_done_counter;
+volatile uint32_t g_first_gen_print_error_counter;
 volatile uint32_t g_first_gen_print_blocked_counter;
 volatile uint8_t g_first_gen_recipe_valid;
 volatile uint8_t g_first_gen_learn_status;
 volatile uint8_t g_first_gen_last_pass;
 volatile uint8_t g_first_gen_print_ready;
-volatile uint8_t g_first_gen_print_waiting_for_poll;
-volatile uint8_t g_first_gen_print_response_ready;
+volatile uint8_t g_first_gen_print_waiting_for_wifi;
 volatile uint8_t g_first_gen_panel_mode;
 volatile uint8_t g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
 volatile uint8_t g_first_gen_pass_hold_active;
 volatile uint8_t g_first_gen_print_done;
 volatile uint8_t g_first_gen_print_trigger_level;
 volatile uint8_t g_first_gen_print_trigger_count;
+volatile uint8_t g_first_gen_hall_active;
+volatile uint8_t g_first_gen_print_state;
 volatile uint32_t g_first_gen_last_connected_pairs;
 volatile uint32_t g_first_gen_learn_connected_pairs;
 volatile uint16_t g_first_gen_learn_out_count;
@@ -161,20 +155,20 @@ static uint16_t panel_ng_tick;
 static uint8_t panel_ng_phase;
 static uint16_t panel_scan_tick;
 static uint8_t panel_scan_phase;
-static uint8_t print_event_pending;
-static uint8_t print_event_displayed;
-static uint8_t print_event_sent;
-static uint8_t print_trigger_waiting;
-static uint8_t print_trigger_released;
-static uint8_t print_trigger_press_count;
-static uint16_t print_retry_scan_counter;
-static uint8_t pass_print_started;
+static uint16_t print_hall_active_ms;
+static uint32_t print_event_sequence;
+static uint32_t print_event_id;
+static uint32_t print_test_count;
 static uint8_t printed_hold_active;
 static uint16_t printed_hold_out = 1U;
-static uint16_t printed_hold_in = 1U;
 static uint8_t self_test_result_ready;
 static uint8_t self_test_result_page = 1U;
 static uint8_t auto_result_ready;
+/* The LCDM summary has priority over the result list.  A completed physical
+ * matrix is retained immediately, but its formatted K1 records are prepared
+ * on the following service pass so first AUTO never waits on (or shows) an
+ * empty result page before PASS/NG. */
+static uint8_t auto_result_cache_pending;
 static uint8_t auto_result_page = 1U;
 static uint8_t auto_result_summary_active;
 /* After a live PASS monitor finds its first NG, make one complete physical
@@ -237,7 +231,6 @@ static void matrix_clear(uint32_t matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MAT
 static void panel_wait_all_keys_released(uint16_t stable_ms);
 static uint8_t panel_priority_delay_ms(uint32_t duration_ms);
 static uint8_t panel_handle_key(void);
-static uint8_t first_gen_ir_send_logic_tx_once(void);
 static uint8_t scan_one_row(uint16_t out_point);
 static uint8_t scan_and_check_current_row(void);
 static uint8_t scan_and_check_unlearned_row(void);
@@ -248,15 +241,19 @@ static uint8_t expected_harness_find_next_problem(uint16_t start_out,
                                                   uint16_t start_in,
                                                   uint16_t *problem_out,
                                                   uint16_t *problem_in);
+static void panel_arm_print_workflow(void);
+static uint8_t panel_service_print_event(uint16_t elapsed_ms);
+static uint8_t panel_all_connections_open_for_out(uint16_t out_point);
 static uint8_t panel_printed_hold_service(void);
-static void first_gen_ir_sync_print_test_service(void);
 static void display_auto_idle(void);
+static void display_auto_wait_for_harness(void);
 static void display_self_test_result_page(uint8_t page);
 static void auto_result_store_current_row(uint16_t out_point);
 static void auto_result_merge_current_row(uint16_t out_point);
 static void auto_result_live_reset(void);
 static void auto_result_update_lcdm_for_out(uint16_t out_point);
 static void auto_result_publish_completed_fault_marks(void);
+static void auto_result_complete_pending_cache(void);
 static uint8_t auto_result_find_first_problem_line(char out[FIRST_GEN_AUTO_RESULT_LINE_MAX]);
 static uint8_t auto_result_build_immediate_problem_line(uint16_t out_point,
                                                          uint16_t in_point,
@@ -406,6 +403,7 @@ static void panel_reset_scan_state(void)
   matrix_clear(auto_result_record_matrix);
   auto_result_live_reset();
   auto_result_ready = 0U;
+  auto_result_cache_pending = 0U;
   auto_result_page = 1U;
   auto_result_summary_active = 0U;
   auto_result_fault_collecting = 0U;
@@ -433,30 +431,23 @@ static void panel_reset_scan_state(void)
   scan_cycle_has_problem = 0U;
   panel_display_state = FIRST_GEN_DISPLAY_UNKNOWN;
   g_first_gen_pass_hold_active = 0U;
-  pass_print_started = 0U;
   printed_hold_active = 0U;
   printed_hold_out = 1U;
-  printed_hold_in = 1U;
   buzzer_stop();
   first_gen_display_clear_auto_test_result_fault();
 }
 
 static void panel_reset_print_state(void)
 {
-#if FIRST_GEN_IR_PRINT_ENABLE
-  ir_pwm_stop();
-#endif
   g_first_gen_print_ready = 0U;
   g_first_gen_print_done = 0U;
-  print_event_pending = 0U;
-  print_event_displayed = 0U;
-  print_event_sent = 0U;
-  print_trigger_waiting = 0U;
-  print_trigger_released = 0U;
-  print_trigger_press_count = 0U;
-  print_retry_scan_counter = 0U;
-  pass_print_started = 0U;
+  g_first_gen_print_waiting_for_wifi = 0U;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_IDLE;
+  print_hall_active_ms = 0U;
+  print_event_id = 0U;
   printed_hold_active = 0U;
+  printed_hold_out = 1U;
+  tester_wifi_print_cancel();
 }
 
 typedef struct {
@@ -1647,6 +1638,20 @@ static void auto_result_update_lcdm_for_out(uint16_t out_point)
   }
 }
 
+/* Keep electrical verdict first, list formatting second.  This function only
+ * rebuilds RAM/cache data while the PASS/NG summary is on screen; it draws a
+ * result page only when the operator has deliberately opened K1 browsing. */
+static void auto_result_complete_pending_cache(void)
+{
+  if(auto_result_cache_pending == 0U || first_gen_display_is_lcdm() == 0U) {
+    return;
+  }
+
+  auto_result_publish_completed_fault_marks();
+  auto_result_update_lcdm_for_out(FIRST_GEN_ACTIVE_POINT_COUNT);
+  auto_result_cache_pending = 0U;
+}
+
 static void panel_show_lcdm_auto_ng_now(void)
 {
   if(first_gen_display_is_lcdm() == 0U) {
@@ -1770,12 +1775,7 @@ static void panel_finish_lcdm_auto_result(void)
   first_gen_display_set_auto_test_blink(0U);
   auto_result_ready = 1U;
   g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_AUTO_TEST;
-  g_first_gen_print_ready = 0U;
   g_first_gen_pass_hold_active = 0U;
-  print_trigger_waiting = 0U;
-  print_event_pending = 0U;
-  print_event_sent = 0U;
-  pass_print_started = 0U;
   panel_display_state = FIRST_GEN_DISPLAY_SCAN;
   buzzer_stop();
   if(auto_result_page == 0U) {
@@ -1791,7 +1791,11 @@ static void panel_finish_lcdm_auto_result(void)
     if(g_first_gen_last_pass == 0U) {
       panel_show_lcdm_auto_pass(0U);
     }
+    /* A PASS is armed once for its Hall-triggered print workflow.  Later
+     * monitor frames preserve that state instead of rearming/reprinting. */
+    panel_arm_print_workflow();
   } else {
+    panel_reset_print_state();
     g_first_gen_last_pass = 0U;
     if(auto_result_summary_active == 0U) {
       panel_show_lcdm_auto_ng_now();
@@ -1966,6 +1970,10 @@ static uint8_t panel_handle_result_page_k1(void)
                              g_first_gen_panel_mode == FIRST_GEN_PANEL_MODE_AUTO_TEST) ? 1U : 0U;
 
   if(auto_result_page_active != 0U) {
+    /* PASS/NG is allowed to appear before the formatted result records.  If
+     * K1 is touched immediately afterwards, finish that RAM-only work first
+     * so this first page is complete rather than an empty white list. */
+    auto_result_complete_pending_cache();
     if(auto_k1_double_remaining_ms != 0U) {
       /* The first touch already advanced immediately.  A second touch inside
        * the short window converts that pair into one page backward. */
@@ -2236,6 +2244,25 @@ static void display_auto_idle(void)
     first_gen_display_show_page("",
                                 "WIRE TESTER",
                                 "",
+                                "",
+                                "",
+                                FIRST_GEN_DISPLAY_COLOR_BLUE,
+                                FIRST_GEN_DISPLAY_COLOR_WHITE,
+                                FIRST_GEN_DISPLAY_COLOR_BLUE);
+    return;
+  }
+
+  first_gen_display_write_text6(text);
+}
+
+static void display_auto_wait_for_harness(void)
+{
+  char text[FIRST_GEN_DISPLAY_DIGITS] = {'A', 'U', 'T', 'O', ' ', ' '};
+
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_page("",
+                                "AUTO TESTING",
+                                "WAITING HARNESS",
                                 "",
                                 "",
                                 FIRST_GEN_DISPLAY_COLOR_BLUE,
@@ -2581,11 +2608,13 @@ static void panel_start_auto_test(void)
   panel_scan_tick = FIRST_GEN_SCAN_DISPLAY_PERIOD_SCANS;
   panel_scan_phase = 2U;
   first_gen_display_clear_auto_test_lines();
-  if(first_gen_display_is_lcdm() != 0U) {
-    first_gen_display_show_auto_test_result_page(1U, 0U);
-  } else {
+  if(first_gen_display_is_lcdm() == 0U) {
     display_auto_test_pair(1U);
   }
+  /* Do not draw an empty AUTO result page here.  The first physical verdict
+   * owns the next LCDM update: a clean scan goes straight to PASS, and any
+   * open/short goes straight to NG.  Result records are filled afterwards
+   * for K1 browsing without replacing that summary. */
   /* Keep K1-K4 static throughout acquisition.  The result rows themselves
    * provide the live indication without the former flashing K2 caption. */
   panel_display_state = FIRST_GEN_DISPLAY_SCAN;
@@ -2825,8 +2854,7 @@ static void panel_record_current_problem(uint16_t problem_out, uint16_t problem_
     panel_ng_phase = 1U;
   }
   g_first_gen_last_pass = 0U;
-  g_first_gen_print_ready = 0U;
-  pass_print_started = 0U;
+  panel_reset_print_state();
   waiting_on_error = 1U;
 }
 
@@ -3335,235 +3363,187 @@ static uint8_t scan_and_check_unlearned_row(void)
 
 static void first_gen_print_link_init(void)
 {
-  line_comm_transport_init(LINE_COMM_TRANSPORT_IR);
-  if(line_comm_code_available(LINE_COMM_CODE_TESTER_RESPONSE) != 0U) {
-    g_first_gen_print_response_ready = 1U;
-  } else {
-    g_first_gen_print_response_ready = 0U;
-  }
-}
-
-static uint8_t first_gen_print_send_request(void)
-{
-#if FIRST_GEN_IR_PRINT_ENABLE
-  const line_comm_ir_code_t *response_code = 0;
-
-  if(g_first_gen_print_ready == 0U || g_first_gen_print_response_ready == 0U) {
-    return 0U;
-  }
-
-  if(line_comm_get_code(LINE_COMM_CODE_TESTER_RESPONSE, &response_code) != LINE_COMM_OK ||
-     response_code == 0) {
-    return 0U;
-  }
-
-  io_debug_write(1U);
-  ir_transmit_timings(response_code->start_level,
-                      response_code->durations_us,
-                      response_code->count,
-                      1U,
-                      0U);
-  io_debug_write(0U);
-  ir_force_space_us(LINE_COMM_TESTER_RESPONSE_POST_TX_GUARD_US);
-  g_first_gen_print_response_counter++;
-  g_first_gen_print_ready = 0U;
-  return 1U;
-#else
-  g_first_gen_print_ready = 0U;
-  g_first_gen_print_done = 1U;
-  return 1U;
-#endif
-}
-
-static void first_gen_ir_sync_print_test_service(void)
-{
-  uint8_t key;
-
-  display_print_ready();
-
-  key = first_gen_display_key_read_raw();
-  if(key == FIRST_GEN_KEY_NONE) {
-    g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
-    return;
-  }
-
-  if(key != FIRST_GEN_KEY_MINUS || key == g_first_gen_last_panel_key) {
-    g_first_gen_last_panel_key = key;
-    return;
-  }
-
-  g_first_gen_last_panel_key = key;
-  if(first_gen_ir_send_logic_tx_once() == 0U) {
-    display_error_code(4U);
-    return;
-  }
-
-  display_print_done();
-  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_MINUS) {
-    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
-  }
-  g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
-}
-
-static uint8_t first_gen_ir_send_logic_tx_once(void)
-{
-  const line_comm_ir_code_t *response_code = 0;
-
-  if(line_comm_get_code(LINE_COMM_CODE_TESTER_RESPONSE, &response_code) != LINE_COMM_OK ||
-     response_code == 0) {
-    return 0U;
-  }
-
-  io_debug_write(1U);
-  ir_transmit_timings(response_code->start_level,
-                      response_code->durations_us,
-                      response_code->count,
-                      1U,
-                      0U);
-  io_debug_write(0U);
-  ir_force_space_us(LINE_COMM_TESTER_RESPONSE_POST_TX_GUARD_US);
-  g_first_gen_print_response_counter++;
-  return 1U;
+  /* LCDM high-end tester print traffic is exclusively PC3/PB9 WiFi UART.
+   * The legacy PB6/PB7 IR machinery remains in the separate IR_PRINT_BRIDGE
+   * application and is intentionally not initialized by this local tester. */
+  tester_wifi_print_init();
 }
 
 static void panel_hold_pass_until_restart(void)
 {
-  if(pass_print_started != 0U) {
+  panel_arm_print_workflow();
+  g_first_gen_last_pass = 1U;
+  panel_display_pass_once();
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    display_print_ready();
+  }
+}
+
+static void panel_arm_print_workflow(void)
+{
+  if(g_first_gen_recipe_valid == 0U || g_first_gen_last_pass == 0U ||
+     g_first_gen_print_state != FIRST_GEN_PRINT_STATE_IDLE) {
     return;
   }
 
-  print_event_pending = 0U;
-  print_event_displayed = 0U;
-  print_event_sent = 0U;
-  print_trigger_waiting = 1U;
-  print_trigger_released = 0U;
-  print_trigger_press_count = 0U;
-  g_first_gen_last_pass = 1U;
+  g_first_gen_print_ready = 1U;
   g_first_gen_print_done = 0U;
-  print_retry_scan_counter = FIRST_GEN_PRINT_RETRY_SCAN_PERIODS;
-  pass_print_started = 1U;
-  panel_display_pass_once();
+  g_first_gen_print_waiting_for_wifi = 0U;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_HALL;
+  print_hall_active_ms = 0U;
+  print_event_id = 0U;
 }
 
-static uint8_t panel_service_print_event(void)
+static uint8_t panel_service_print_event(uint16_t elapsed_ms)
 {
-#if FIRST_GEN_IR_PRINT_ENABLE
-  if(print_trigger_waiting != 0U) {
-    g_first_gen_print_trigger_level = io_print_trigger_level_read();
-    if(g_first_gen_print_trigger_level != 0U) {
-      print_trigger_released = 1U;
-      print_trigger_press_count = 0U;
-      return 0U;
-    }
-    if(print_trigger_released == 0U) {
-      print_trigger_press_count = 0U;
-      return 0U;
-    }
-    delay_ms(20U);
-    if(io_print_trigger_level_read() != 0U) {
-      g_first_gen_print_trigger_level = 1U;
-      print_trigger_press_count = 0U;
-      return 0U;
-    }
-    g_first_gen_print_trigger_level = 0U;
-    print_trigger_waiting = 0U;
-    print_trigger_released = 0U;
-    print_trigger_press_count = 0U;
-    g_first_gen_print_trigger_count = 0U;
-    print_event_pending = 1U;
-    print_event_displayed = 0U;
-    print_event_sent = 0U;
-  }
+  tester_wifi_print_event_t event;
 
-  if(print_event_pending == 0U) {
+  if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_IDLE) {
     return 0U;
   }
 
-  if(print_event_sent == 0U) {
-    if(first_gen_ir_send_logic_tx_once() != 0U) {
-      print_event_sent = 1U;
-      display_printing();
+  if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_HALL) {
+    if(g_first_gen_hall_active == 0U) {
+      print_hall_active_ms = 0U;
+      return 0U;
+    }
+
+    if(print_hall_active_ms < FIRST_GEN_HALL_DEBOUNCE_MS) {
+      uint32_t next_ms = (uint32_t)print_hall_active_ms + elapsed_ms;
+      print_hall_active_ms = (next_ms > FIRST_GEN_HALL_DEBOUNCE_MS) ?
+                             FIRST_GEN_HALL_DEBOUNCE_MS : (uint16_t)next_ms;
+      if(print_hall_active_ms < FIRST_GEN_HALL_DEBOUNCE_MS) {
+        return 0U;
+      }
+    }
+
+    /* PDF 第五部分第 4 项：Hall 有效后先完整显示 START PRINTING，
+     * 然后只通过独立 WiFi 链路向打印控制器提交本次 PASS。 */
+    print_event_sequence++;
+    if(print_event_sequence == 0U) {
+      print_event_sequence = 1U;
+    }
+    print_event_id = print_event_sequence;
+    print_test_count++;
+    g_first_gen_print_trigger_count++;
+    if(first_gen_display_is_lcdm() != 0U) {
+      first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_START);
     } else {
-      g_first_gen_print_poll_reject_counter++;
-      print_event_pending = 0U;
-      return 0U;
+      display_printing();
     }
+    if(tester_wifi_print_request(print_event_id,
+                                 print_test_count,
+                                 g_first_gen_learn_out_count,
+                                 (uint16_t)g_first_gen_learn_connected_pairs) == 0U) {
+      g_first_gen_print_error_counter++;
+      print_hall_active_ms = 0U;
+      return 1U;
+    }
+
+    g_first_gen_print_request_counter++;
+    g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK;
+    g_first_gen_print_waiting_for_wifi = 1U;
+    return 1U;
   }
 
-  if(g_first_gen_print_done == 0U && ir_ack_edge_seen() != 0U) {
-    g_first_gen_print_done = 1U;
-  }
-
-  if(g_first_gen_print_done != 0U && print_event_displayed == 0U) {
-    display_print_done();
-    printed_hold_active = 1U;
-    printed_hold_out = 1U;
-    printed_hold_in = 1U;
-    print_event_displayed = 1U;
-    print_event_pending = 0U;
+  if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK) {
+    event = tester_wifi_print_poll_event(print_event_id);
+    if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED) {
+      g_first_gen_print_ack_counter++;
+      g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE;
+      return 1U;
+    }
+    if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
+      g_first_gen_print_error_counter++;
+      return 1U;
+    }
+    /* A DONE received before the queue acknowledgement still proves that
+     * the host accepted and printed this exact event. */
+    if(event != TESTER_WIFI_PRINT_EVENT_DONE) {
+      return 1U;
+    }
+  } else if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE) {
+    event = tester_wifi_print_poll_event(print_event_id);
+    if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
+      g_first_gen_print_error_counter++;
+      return 1U;
+    }
+    if(event != TESTER_WIFI_PRINT_EVENT_DONE) {
+      return 1U;
+    }
+  } else {
     return 0U;
+  }
+
+  g_first_gen_print_waiting_for_wifi = 0U;
+  g_first_gen_print_done_counter++;
+  g_first_gen_print_done = 1U;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_REMOVE;
+  printed_hold_active = 1U;
+  printed_hold_out = 1U;
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_COMPLETE);
+  } else {
+    display_print_done();
   }
   return 1U;
-#else
-  if(print_event_pending != 0U) {
-    g_first_gen_print_done = 1U;
-    display_print_done();
-    printed_hold_active = 1U;
-    printed_hold_out = 1U;
-    printed_hold_in = 1U;
-    print_event_pending = 0U;
-    print_event_displayed = 1U;
+}
+
+/* The product is considered removed only after a complete reverse AUTO
+ * sweep sees every OUT/IN combination open.  Finding any connection resets
+ * the verification to OUT001; a fully unplugged fixture must pass all 94
+ * rows before the next product can autostart. */
+static uint8_t panel_all_connections_open_for_out(uint16_t out_point)
+{
+  uint16_t in_point;
+  io_scan_pair_result_t pair;
+
+  if(out_point == 0U || out_point > FIRST_GEN_ACTIVE_POINT_COUNT ||
+     io_scan_begin_out_row(IO_POS_OUT(out_point)) != IO_SCAN_OK) {
+    io_mux_disable_all();
     return 0U;
   }
-  return 0U;
-#endif
+
+  for(in_point = 1U; in_point <= FIRST_GEN_ACTIVE_POINT_COUNT; in_point++) {
+    if(io_scan_read_selected_out_in(IO_POS_IN(in_point), &pair) != IO_SCAN_OK ||
+       pair.connected != 0U) {
+      io_mux_disable_all();
+      return 0U;
+    }
+  }
+
+  io_mux_disable_all();
+  return 1U;
 }
 
 static uint8_t panel_printed_hold_service(void)
 {
-  uint16_t out_point;
-  uint16_t in_point;
-  uint8_t word;
-  uint8_t bit;
-  io_scan_pair_result_t pair;
-
-  if(printed_hold_active == 0U) {
+  if(printed_hold_active == 0U ||
+     g_first_gen_print_state != FIRST_GEN_PRINT_STATE_WAIT_REMOVE) {
     return 0U;
   }
 
-  for(out_point = printed_hold_out; out_point <= FIRST_GEN_ACTIVE_POINT_COUNT; out_point++) {
-    for(in_point = (out_point == printed_hold_out) ? printed_hold_in : 1U;
-        in_point <= FIRST_GEN_ACTIVE_POINT_COUNT;
-        in_point++) {
-      word = (uint8_t)((in_point - 1U) >> 5);
-      bit = (uint8_t)((in_point - 1U) & 0x1FU);
-      if((expected_matrix[out_point - 1U][word] & (1UL << bit)) == 0U) {
-        continue;
-      }
-
-      printed_hold_in = (uint16_t)(in_point + 1U);
-      printed_hold_out = out_point;
-      if(printed_hold_in > FIRST_GEN_ACTIVE_POINT_COUNT) {
-        printed_hold_in = 1U;
-        printed_hold_out = (uint16_t)(out_point + 1U);
-        if(printed_hold_out > FIRST_GEN_ACTIVE_POINT_COUNT) {
-          printed_hold_out = 1U;
-        }
-      }
-
-      if(io_scan_read_pair(IO_POS_OUT(out_point), IO_POS_IN(in_point), &pair) != IO_SCAN_OK ||
-         pair.connected == 0U) {
-        io_mux_disable_all();
-        printed_hold_active = 0U;
-        panel_record_current_problem(out_point, in_point, FIRST_GEN_PROBLEM_MISSING);
-        display_pair(out_point, in_point);
-      }
-      return 1U;
-    }
+  if(panel_all_connections_open_for_out(printed_hold_out) == 0U) {
+    /* One remaining learned or unexpected connection means the product has
+     * not been removed.  Restart from the lowest OUT so the final all-open
+     * confirmation is a complete, contiguous sweep. */
+    printed_hold_out = 1U;
+    return 1U;
   }
 
-  printed_hold_out = 1U;
-  printed_hold_in = 1U;
+  printed_hold_out++;
+  if(printed_hold_out > FIRST_GEN_ACTIVE_POINT_COUNT) {
+    printed_hold_active = 0U;
+    printed_hold_out = 1U;
+    g_first_gen_print_ready = 0U;
+    g_first_gen_print_state = FIRST_GEN_PRINT_STATE_IDLE;
+    panel_auto_enabled = 0U;
+    panel_waiting_for_reconnect = 1U;
+    g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_AUTO_TEST;
+    display_auto_wait_for_harness();
+  }
+
   return 1U;
 }
 
@@ -3584,7 +3564,7 @@ void first_gen_4051_scan_init(void)
                                         (uint32_t)g_first_gen_learn_in_count;
   }
   g_first_gen_print_ready = 0U;
-  g_first_gen_print_waiting_for_poll = 0U;
+  g_first_gen_print_waiting_for_wifi = 0U;
   g_first_gen_pass_hold_active = 0U;
   g_first_gen_print_done = 0U;
   g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
@@ -3595,11 +3575,9 @@ void first_gen_4051_scan_init(void)
   panel_reset_scan_state();
   panel_reset_print_state();
   learn_confirmed_hold_active = 0U;
-
-#if FIRST_GEN_IR_PRINT_TEST_ONLY
-  display_print_ready();
-  return;
-#endif
+  g_first_gen_print_trigger_level = io_print_trigger_level_read();
+  g_first_gen_hall_active = (g_first_gen_print_trigger_level == 0U) ? 1U : 0U;
+  first_gen_display_set_hall_input(g_first_gen_hall_active);
 
 #if FIRST_GEN_TRIGGER_DIAG_ONLY
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
@@ -3741,6 +3719,14 @@ void first_gen_4051_scan_service(void)
 
   buzzer_service(1U);
 
+  /* PB8 is low-active.  Sampling it here makes the persistent LCDM header
+   * change only on a physical Hall transition; the display backend caches
+   * the result so normal 4051 scans send no header refresh traffic. */
+  g_first_gen_print_trigger_level = io_print_trigger_level_read();
+  g_first_gen_hall_active = (g_first_gen_print_trigger_level == 0U) ? 1U : 0U;
+  first_gen_display_set_hall_input(g_first_gen_hall_active);
+  tester_wifi_print_service();
+
   /* Advance the K1 double-tap window before checking a new touch.  PASS uses
    * a long uninterrupted verification sweep, and a PAGE touch deliberately
    * exits that sweep early.  Advancing the timer only at the former end of
@@ -3757,21 +3743,21 @@ void first_gen_4051_scan_service(void)
   return;
 #endif
 
-#if FIRST_GEN_IR_PRINT_TEST_ONLY
-  first_gen_ir_sync_print_test_service();
-  return;
-#endif
-
   if(panel_handle_key() != 0U) {
     return;
   }
+
+  /* A just-completed verdict has already drawn PASS or NG.  Build the K1
+   * record cache on this subsequent service pass, without replacing that
+   * summary page. */
+  auto_result_complete_pending_cache();
 
   /* K1 has priority over the result-page fault animation. */
   panel_auto_result_fault_browse_service(monitor_elapsed_ms);
 
   panel_display_ng_service();
 
-  if(panel_service_print_event() != 0U) {
+  if(panel_service_print_event(monitor_elapsed_ms) != 0U) {
     return;
   }
 
@@ -3836,11 +3822,14 @@ void first_gen_4051_scan_service(void)
   }
 
   /* Every LCDM AUTO run, including its very first run after K2, uses the
-   * same ordered fast path: prove the learned edges first, publish PASS, and
-   * then sweep unlearned positions for extra connections.  Previously the
-   * first run took the row-by-row result-rendering path until all 94 rows
-   * had been drawn.  Those acknowledged LCDM transfers, rather than the mux
-   * reads, were the roughly four-second wait before the first PASS screen.
+   * same ordered fast path: prove the learned edges first, then sweep
+   * unlearned positions for extra connections.  A later live-monitor cycle
+   * may restore PASS immediately after its compact learned-edge check; the
+   * very first AUTO result must wait for its full sweep so an unseen short
+   * cannot flash PASS before the direct NG page.  Previously the first run
+   * took the row-by-row result-rendering path until all 94 rows had been
+   * drawn. Those acknowledged LCDM transfers, rather than the mux reads,
+   * were the roughly four-second wait before the first PASS screen.
    *
    * The complete physical record is still assembled by the sparse sweep and
    * becomes available to K1 at its completion; it simply no longer blocks
@@ -3902,7 +3891,10 @@ void first_gen_4051_scan_service(void)
         }
 
         if(learned_precheck_failed == 0U) {
-          if(g_first_gen_last_pass == 0U) {
+          /* The first AUTO cycle has no completed physical record yet.
+           * Do not publish green only because its learned edges are intact:
+           * the following unlearned sweep may still discover a short. */
+          if(auto_result_ready != 0U && g_first_gen_last_pass == 0U) {
             panel_show_lcdm_auto_pass(0U);
           }
           auto_monitor_expected_verified = 1U;
@@ -3957,11 +3949,9 @@ void first_gen_4051_scan_service(void)
     waiting_on_error = 0U;
     scan_out_point++;
     if(scan_out_point > FIRST_GEN_ACTIVE_POINT_COUNT) {
-      /* Rebuild the browse cache from the completed physical matrix before
-       * PASS/NG is shown.  This also repairs the former case where an early
-       * NG stopped the live list updates, leaving K1 pages shorter than the
-       * PASS TOTAL count after the cable was fixed.  OUT094 intentionally
-       * updates RAM cache only; it sends no result-page raster commands. */
+      /* The completed physical matrix is now authoritative.  Its formatted
+       * browse cache is scheduled below, after PASS/NG has been put on the
+       * LCDM, so list preparation cannot create a blank transition page. */
       if(priority_monitor != 0U && scan_cycle_has_problem == 0U) {
         /* The compact PASS monitor has verified every learned edge and every
          * unlearned position.  Its work matrix is now a complete physical
@@ -3969,11 +3959,10 @@ void first_gen_4051_scan_service(void)
         matrix_copy(auto_result_record_matrix, auto_result_matrix);
       }
       if(first_gen_display_is_lcdm() != 0U) {
-        /* At a completed pass this records every open/short group before
-         * the result lines are rebuilt.  The row builder retains an open
-         * locator line without turning the physical matrix into a union. */
-        auto_result_publish_completed_fault_marks();
-        auto_result_update_lcdm_for_out(FIRST_GEN_ACTIVE_POINT_COUNT);
+        /* Keep the completed physical matrix intact now, but defer result
+         * record formatting until after the immediate PASS/NG summary has
+         * been sent.  That is what prevents the initial blank list page. */
+        auto_result_cache_pending = 1U;
       }
       g_first_gen_scan_counter++;
       scan_out_point = 1U;
@@ -3986,10 +3975,7 @@ void first_gen_4051_scan_service(void)
         panel_hold_pass_until_restart();
       } else {
         g_first_gen_last_pass = 0U;
-        print_trigger_waiting = 0U;
-        print_event_pending = 0U;
-        print_event_sent = 0U;
-        pass_print_started = 0U;
+        panel_reset_print_state();
         panel_display_ng_once();
       }
     } else {
@@ -4000,10 +3986,7 @@ void first_gen_4051_scan_service(void)
 
     scan_cycle_has_problem = 1U;
     g_first_gen_last_pass = 0U;
-    print_trigger_waiting = 0U;
-    print_event_pending = 0U;
-    print_event_sent = 0U;
-    pass_print_started = 0U;
+    panel_reset_print_state();
     /* Present the first changed line of this scan cycle immediately, but
      * keep scanning.  A subsequent complete clean cycle is what safely
      * proves that the cable has recovered and may return to PASS. */
@@ -4030,8 +4013,7 @@ void first_gen_4051_scan_service(void)
         scan_out_point = 1U;
         auto_result_fault_collecting = 0U;
         if(first_gen_display_is_lcdm() != 0U) {
-          auto_result_publish_completed_fault_marks();
-          auto_result_update_lcdm_for_out(FIRST_GEN_ACTIVE_POINT_COUNT);
+          auto_result_cache_pending = 1U;
           panel_finish_lcdm_auto_result();
         }
       }

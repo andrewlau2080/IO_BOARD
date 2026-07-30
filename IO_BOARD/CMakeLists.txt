@@ -18,6 +18,7 @@ set(UNIFIED_DEFAULT_PRODUCT_MODE "FIRST_GEN_4051_LOCAL" CACHE STRING "Default pr
 set(PRINT_DRIVER_BACKEND "MOCK" CACHE STRING "Print backend: MOCK or ZPL_RS485")
 set(FIRST_GEN_DISPLAY_BACKEND "LEDM" CACHE STRING "First-gen tester display backend: LEDM or LCDM")
 set(FIRST_GEN_DISPLAY_AUTO_DETECT "ON" CACHE BOOL "Probe LCDM first, then fall back to LEDM/TM1637")
+set(TESTER_WIFI_PRINT_UART_BAUDRATE "38400" CACHE STRING "LCDM tester ESP32-C3 software UART baudrate")
 
 if(NOT EXISTS "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/at32f45x.h")
   message(FATAL_ERROR "AT32 BSP not found at ${AT32_BSP_DIR}")
@@ -42,10 +43,12 @@ set(AT32_DRIVER_SOURCES
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_can.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_crm.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_dac.c"
+  "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_exint.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_flash.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_gpio.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_misc.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_pwc.c"
+  "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_scfg.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_spi.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_tmr.c"
   "${AT32_BSP_DIR}/libraries/drivers/src/at32f45x_usart.c"
@@ -101,17 +104,37 @@ else()
   message(FATAL_ERROR "Unsupported FIRST_GEN_DISPLAY_BACKEND=${FIRST_GEN_DISPLAY_BACKEND}")
 endif()
 
+if(NOT TESTER_WIFI_PRINT_UART_BAUDRATE MATCHES "^[0-9]+$" OR
+   TESTER_WIFI_PRINT_UART_BAUDRATE EQUAL 0)
+  message(FATAL_ERROR "TESTER_WIFI_PRINT_UART_BAUDRATE must be a positive integer")
+endif()
+
+# The LCDM local tester has its own PC3/PB9 WiFi print path.  Do not even
+# link the PB6/PB7 legacy IR transport into that image.  The old IR bridge
+# and print-terminal modes retain their own independent source set.
+set(LEGACY_IR_COMM_SOURCES)
+if(IO_APP_MODE STREQUAL "IR_PRINT_BRIDGE" OR
+   IO_APP_MODE STREQUAL "PRINT_TERMINAL" OR
+   IO_APP_MODE STREQUAL "UNIFIED")
+  list(APPEND LEGACY_IR_COMM_SOURCES
+    src/line_comm_bridge.c
+    src/line_comm_transport.c
+    src/ir_remote.c
+    src/ir_learned_code.c
+    "${LINE_COMM_GENERATED_C}"
+  )
+endif()
+
 add_executable(${PROJECT_NAME}
   src/main.c
   src/first_gen_4051_scan.c
   src/first_gen_display.c
+  src/tester_wifi_print.c
   src/io_board.c
   src/io_scan.c
   src/lcdm_motor_ui.c
   src/lcdm_tjc.c
   src/lcdm_tjc_verify.c
-  src/line_comm_bridge.c
-  src/line_comm_transport.c
   src/print_driver.c
   src/print_job_model.c
   src/print_rs485.c
@@ -121,12 +144,10 @@ add_executable(${PROJECT_NAME}
   src/rpi_rs485_legacy.c
   src/tm1637_display.c
   src/tm1637_demo.c
-  src/ir_remote.c
-  src/ir_learned_code.c
   src/syscalls.c
   src/at32f45x_clock.c
   src/at32f45x_int.c
-  "${LINE_COMM_GENERATED_C}"
+  ${LEGACY_IR_COMM_SOURCES}
   "${AT32_BSP_DIR}/project/at32f45x_board/at32f45x_board.c"
   "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/system_at32f45x.c"
   "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/startup/gcc/startup_at32f45x.s"
@@ -153,6 +174,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   PRINT_DRIVER_BACKEND_ZPL_RS485=${PRINT_DRIVER_BACKEND_ZPL_RS485_VALUE}
   FIRST_GEN_DISPLAY_BACKEND_LCDM=${FIRST_GEN_DISPLAY_BACKEND_LCDM_VALUE}
   FIRST_GEN_DISPLAY_AUTO_DETECT=$<IF:$<BOOL:${FIRST_GEN_DISPLAY_AUTO_DETECT}>,1,0>
+  TESTER_WIFI_PRINT_UART_BAUDRATE=${TESTER_WIFI_PRINT_UART_BAUDRATE}UL
 )
 
 set(CPU_FLAGS
@@ -167,6 +189,12 @@ target_compile_options(${PROJECT_NAME} PRIVATE
   -ffunction-sections
   -fdata-sections
   $<$<COMPILE_LANGUAGE:C>:-O0>
+)
+
+# PC3/PB9 is a GPIO software UART.  Its DWT-cycle timing
+# and must not inherit the deliberately debug-friendly global -O0 setting.
+set_source_files_properties(src/tester_wifi_print.c PROPERTIES
+  COMPILE_OPTIONS "-O3"
 )
 
 target_link_options(${PROJECT_NAME} PRIVATE
