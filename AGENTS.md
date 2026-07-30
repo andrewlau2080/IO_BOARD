@@ -216,6 +216,26 @@ Ubuntu is running in Parallels at:
 5. 若目标内容相同而 pyOCD 显示 `programmed 0 bytes, identical ... bytes`，这是有效
    的烧录核验；仍必须完成第 4 步的运行确认。
 
+### 刘氏烧 ESP WIFI 模块专用主法（ESP-AT）
+
+当用户说“刘氏烧ESP WIFI模块”“烧 ESP-AT”或要求重新烧录当前
+`ESP32-C3-WROOM-02U-N4` 的 WiFi 固件时，直接执行
+[`LIU_ESP_WIFI_AT_FLASH_METHOD/README.md`](LIU_ESP_WIFI_AT_FLASH_METHOD/README.md)
+的完整流程；不要只提供镜像路径或让用户重新说明步骤。该流程固定为：
+
+1. Mac 使用 CH340 `/dev/cu.usbserial-1230` 烧 ESP；Ubuntu 使用 AT-Link/CMSIS-DAP
+   烧临时 AT32 控制程序。先强制释放 CH340 给 Mac、连接 CMSIS-DAP 给 Ubuntu。
+2. 使用独立 `IO_APP_MODE=ESP_AT_FLASH_ASSIST`，由 `PC3 -> ESP EN`、
+   `PB9 -> ESP IO9/BOOT` 进入下载模式；不得初始化正常产品的扫描、LCD 或 WiFi UART。
+3. 进入 ESP ROM 时必须核对 `IO8=高`、`IO9=低`，串口日志必须为
+   `boot:0x4 (DOWNLOAD(USB/UART0/1))`。`boot:0x0` 表示 IO8 未上拉，
+   `boot:0xC` 表示 PB9 未实际接到 IO9。
+4. 使用官方 C3 4 MB ESP-AT v4.1.1.0 镜像，并重建/写入定制 `mfg_nvs.bin`，将
+   AT 命令口固定为 UART0 `GPIO21/20`（模块 Pin12/Pin11）115200，不能保留
+   MINI-1 默认的 UART1 GPIO7/6。
+5. 最后必须在正常启动后从 Mac 验证 `AT -> OK` 和 `AT+GMR`；不自动恢复正常
+   AT32 产品固件或上传 GitHub，除非用户明确要求。
+
 Ubuntu pyOCD 仅作为 macOS 主机无法枚举探头时的后备方案。若改走 Ubuntu，先确认
 `lsusb` 可见 `2e3c:f000`，并处理 `/dev/hidraw*` 的 udev 权限，再进行烧录。
 

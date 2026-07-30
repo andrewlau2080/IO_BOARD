@@ -1,5 +1,6 @@
 #include "at32f45x_board.h"
 #include "at32f45x_clock.h"
+#include "esp_at_flash_assist.h"
 #include "first_gen_4051_scan.h"
 #include "io_board.h"
 #include "ir_remote.h"
@@ -19,6 +20,7 @@
 #define IO_APP_MODE_PRINT_TERMINAL        8
 #define IO_APP_MODE_UNIFIED               9
 #define IO_APP_MODE_LCDM_TJC_VERIFY       10
+#define IO_APP_MODE_ESP_AT_FLASH_ASSIST    12
 
 #define UNIFIED_PRODUCT_RPI_RS485_LEGACY     IO_APP_MODE_RPI_RS485_LEGACY
 #define UNIFIED_PRODUCT_FIRST_GEN_4051_LOCAL IO_APP_MODE_FIRST_GEN_4051_LOCAL
@@ -313,6 +315,18 @@ int main(void)
   while(1)
   {
     lcdm_tjc_verify_service();
+  }
+#elif IO_APP_MODE == IO_APP_MODE_ESP_AT_FLASH_ASSIST
+  /* Temporary ESP32-C3 ROM downloader entry.  It only owns PC3 (EN) and
+   * PB9 (BOOT); none of the normal tester, display, scan, or WiFi UART code
+   * is initialized in this intentionally isolated image. */
+  system_core_clock_update();
+  delay_init();
+  esp_at_flash_assist_init();
+
+  while(1)
+  {
+    /* Keep EN and BOOT released after the ROM downloader reset sequence. */
   }
 #elif IO_APP_MODE == IO_APP_MODE_UNIFIED
   {
