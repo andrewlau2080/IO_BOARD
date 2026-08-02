@@ -9,6 +9,7 @@
 #define FIRST_GEN_DISPLAY_AUTO_FAULT_WORDS 3U
 #define FIRST_GEN_PRINT_DISPLAY_START    1U
 #define FIRST_GEN_PRINT_DISPLAY_COMPLETE 2U
+#define FIRST_GEN_PRINT_DISPLAY_ERROR    3U
 
 #define FIRST_GEN_KEY_NONE       0xFFU
 #define FIRST_GEN_KEY_SET        0xF3U
@@ -40,10 +41,18 @@ void first_gen_display_init(void);
 void first_gen_display_clear(void);
 uint8_t first_gen_display_is_lcdm(void);
 uint8_t first_gen_display_key_read_raw(void);
+/* End a full-screen maintenance overlay and force the normal K1-K4-only
+ * tester page to rebuild on its next draw. */
+void first_gen_display_leave_maintenance(void);
 /* PB8/HALL_SW is low-active.  The LCDM header keeps this small indicator
  * visible across normal, result, and print workflow pages. */
 void first_gen_display_set_hall_input(uint8_t active);
-/* Draw the full-width PDF print workflow body: START PRINTING or COMPLETE.
+/* The normal LCDM header shows the AP association in WIFI above HALL IN.
+ * TCP print-host availability is independent; the display layer caches this
+ * flag and repaints only the small indicator cell. */
+void first_gen_display_set_wifi_connected(uint8_t connected);
+/* Draw the full-width PDF print workflow body: START PRINTING, COMPLETE, or
+ * a network error requiring K3 recovery.
  * The fixed title and K1-K4 band remain part of the same single LCDM page. */
 void first_gen_display_show_print_progress(uint8_t state);
 void first_gen_display_effect_step(void);

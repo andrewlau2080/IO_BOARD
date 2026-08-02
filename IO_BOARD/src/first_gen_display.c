@@ -53,7 +53,7 @@
 #define LCDM_BLACK                  0U
 #define LCDM_BLUE                   31U
 #define LCDM_RED                    63488U
-#define LCDM_GREEN                  2016U
+#define LCDM_GREEN                  FIRST_GEN_DISPLAY_COLOR_GREEN
 #define LCDM_DARK_GREEN             992U
 #define LCDM_DARK_RED               32768U
 #define LCDM_MAGENTA                63519U
@@ -106,16 +106,18 @@
 #define LCDM_AUTO_SUMMARY_FULL_TEXT_W (LCDM_AUTO_SUMMARY_W - 8U)
 #define LCDM_AUTO_SUMMARY_NG_MAX_LINES       10U
 #define LCDM_AUTO_SUMMARY_NG_LINE_TEXT_MAX   64U
-/* PB8/HALL_SW remains visible at the upper-right corner on every generated
- * tester page.  It is intentionally outside the centred STANDARD CABLE
- * title, so a Hall transition never requires a full page redraw. */
-/* "HALL IN" has seven Song glyphs.  Use the 10 px resource here: the
- * former 16 px title font needed more than the 96 px corner span and could
- * spill outside the 32 px header on the LCDM. */
+/* The upper-right corner is outside the centred STANDARD CABLE title.  Keep
+ * it as two compact cells so WIFI can communicate the production network
+ * state without disturbing the title or the K1-K4 strip.  Font ID 4 is the
+ * smallest Song resource in the loaded TFT and is shared by both labels. */
+#define LCDM_WIFI_X                394U
+#define LCDM_WIFI_Y                  1U
+#define LCDM_WIFI_W                80U
+#define LCDM_WIFI_H                13U
 #define LCDM_HALL_X                394U
-#define LCDM_HALL_Y                6U
+#define LCDM_HALL_Y                 17U
 #define LCDM_HALL_W                80U
-#define LCDM_HALL_H                20U
+#define LCDM_HALL_H                13U
 #define LCDM_PRINT_STATUS_Y        32U
 #define LCDM_PRINT_STATUS_H        26U
 #define LCDM_PRINT_BODY_Y          (LCDM_PRINT_STATUS_Y + LCDM_PRINT_STATUS_H)
@@ -214,6 +216,9 @@ static uint8_t lcdm_auto_fault_blink_on;
  * level sends no TJC traffic while matrix scanning is active. */
 static uint8_t lcdm_hall_input_active;
 static uint8_t lcdm_hall_input_drawn;
+/* The WiFi indicator follows the same local-refresh rule as HALL IN. */
+static uint8_t lcdm_wifi_connected;
+static uint8_t lcdm_wifi_indicator_drawn;
 
 typedef struct {
   char text[LCDM_AUTO_ROW_TEXT_MAX];
@@ -241,6 +246,7 @@ static void lcdm_learn_table_clear(void);
 static void lcdm_auto_test_clear(void);
 static void lcdm_auto_test_clear_result_lines(void);
 static void lcdm_draw_hall_indicator(uint8_t force);
+static void lcdm_draw_wifi_indicator(uint8_t force);
 static void lcdm_draw_print_progress_body(uint8_t state);
 static void lcdm_auto_drawn_rows_invalidate(void);
 static uint8_t lcdm_auto_test_point_visible(uint8_t page, uint16_t point);
@@ -1071,6 +1077,30 @@ static void lcdm_draw_hall_indicator(uint8_t force)
   lcdm_hall_input_drawn = 1U;
 }
 
+static void lcdm_draw_wifi_indicator(uint8_t force)
+{
+  uint16_t foreground;
+
+  if(force == 0U && lcdm_wifi_indicator_drawn != 0U) {
+    return;
+  }
+
+  /* Keep the label visible like HALL IN; green means the production ESP-AT
+   * session is ONLINE, while gray makes an offline/starting state explicit. */
+  foreground = (lcdm_wifi_connected != 0U) ? LCDM_GREEN : LCDM_GRAY;
+  lcdm_raw_fill(LCDM_WIFI_X, LCDM_WIFI_Y, LCDM_WIFI_W, LCDM_WIFI_H, LCDM_NAVY);
+  lcdm_raw_xstr_full(LCDM_WIFI_X,
+                     LCDM_WIFI_Y,
+                     LCDM_WIFI_W,
+                     LCDM_WIFI_H,
+                     LCDM_FONT_SMALL,
+                     foreground,
+                     LCDM_NAVY,
+                     1U,
+                     "WIFI");
+  lcdm_wifi_indicator_drawn = 1U;
+}
+
 static void lcdm_draw_common_header(const char *top_right)
 {
   if(top_right == 0) {
@@ -1086,6 +1116,7 @@ static void lcdm_draw_common_header(const char *top_right)
   (void)top_right;
   lcdm_k1_page_hint = 0U;
   lcdm_raw_xstr_full(0U, 1U, LCDM_W, 30U, LCDM_FONT_TITLE, LCDM_WHITE, LCDM_NAVY, 1U, "STANDARD CABLE");
+  lcdm_draw_wifi_indicator(1U);
   lcdm_draw_hall_indicator(1U);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
@@ -1107,6 +1138,7 @@ static void lcdm_draw_auto_header(const char *title)
                      LCDM_NAVY,
                      1U,
                      "STANDARD CABLE");
+  lcdm_draw_wifi_indicator(1U);
   lcdm_draw_hall_indicator(1U);
   lcdm_raw_draw_keys();
   lcdm_reset_text_caches();
@@ -1114,8 +1146,23 @@ static void lcdm_draw_auto_header(const char *title)
 
 static void lcdm_draw_print_progress_body(uint8_t state)
 {
-  const char *text = (state == FIRST_GEN_PRINT_DISPLAY_COMPLETE) ?
-                     "COMPLETE" : "START PRINTING";
+  const char *text;
+  const char *status;
+  uint16_t background;
+
+  if(state == FIRST_GEN_PRINT_DISPLAY_COMPLETE) {
+    text = "COMPLETE";
+    status = "WAITING FOR PRINTING";
+    background = LCDM_GREEN;
+  } else if(state == FIRST_GEN_PRINT_DISPLAY_ERROR) {
+    text = "NETWORK ERROR";
+    status = "K3 RESET / RETRY PRINT";
+    background = LCDM_RED;
+  } else {
+    text = "START PRINTING";
+    status = "WAITING FOR PRINTING";
+    background = LCDM_GREEN;
+  }
 
   lcdm_raw_fill(0U,
                 LCDM_PRINT_STATUS_Y,
@@ -1130,19 +1177,19 @@ static void lcdm_draw_print_progress_body(uint8_t state)
                      LCDM_BLACK,
                      LCDM_WHITE,
                      1U,
-                     "WAITING FOR PRINTING");
+                     status);
   lcdm_raw_fill(0U,
                 LCDM_PRINT_BODY_Y,
                 LCDM_W,
                 LCDM_PRINT_BODY_H,
-                LCDM_GREEN);
+                background);
   lcdm_raw_xstr_full(0U,
                      LCDM_PRINT_BODY_Y,
                      LCDM_W,
                      LCDM_PRINT_BODY_H,
                      LCDM_FONT_POINT,
                      LCDM_WHITE,
-                     LCDM_GREEN,
+                     background,
                      1U,
                      text);
 }
@@ -4067,6 +4114,8 @@ static void lcdm_display_init(void)
   lcdm_auto_test_blink_steps = 0U;
   lcdm_hall_input_active = 0U;
   lcdm_hall_input_drawn = 0U;
+  lcdm_wifi_connected = 0U;
+  lcdm_wifi_indicator_drawn = 0U;
   lcdm_tjc_init();
   lcdm_tjc_force_baudrate(LCDM_TJC_BAUDRATE);
   delay_ms(150U);
@@ -4191,6 +4240,30 @@ uint8_t first_gen_display_key_read_raw(void)
   return tm1637_key_read_raw();
 }
 
+void first_gen_display_leave_maintenance(void)
+{
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+
+  /* The settings overlay draws directly through lcdm_tjc, so invalidate the
+   * normal-page cache rather than allowing a same-title fast path to retain
+   * its field rows or unlocked touch state. */
+  lcdm_current_key = FIRST_GEN_KEY_NONE;
+  lcdm_key_hold_reads = 0U;
+  lcdm_key_waits_release = 0U;
+  g_first_gen_lcdm_last_key = FIRST_GEN_KEY_NONE;
+  lcdm_layout_mode = 0U;
+  lcdm_layout_top_cache[0] = '\0';
+  lcdm_reset_dynamic_effects();
+  lcdm_tjc_send_cmd("tsw 255,0");
+  lcdm_tjc_send_cmd("sendxy=1");
+  /* Settings deliberately disables blocking draw acknowledgements while its
+   * keyboard is repainting.  Restore the normal verified LCDM rendering mode
+   * before the tester grid/page code resumes. */
+  lcdm_tjc_set_command_ack(1U);
+}
+
 void first_gen_display_set_hall_input(uint8_t active)
 {
   active = (active != 0U) ? 1U : 0U;
@@ -4204,13 +4277,27 @@ void first_gen_display_set_hall_input(uint8_t active)
   }
 }
 
+void first_gen_display_set_wifi_connected(uint8_t connected)
+{
+  connected = (connected != 0U) ? 1U : 0U;
+  if(lcdm_wifi_connected != connected) {
+    lcdm_wifi_connected = connected;
+    lcdm_wifi_indicator_drawn = 0U;
+  }
+
+  if(display_is_lcdm != 0U && lcdm_wifi_indicator_drawn == 0U) {
+    lcdm_draw_wifi_indicator(0U);
+  }
+}
+
 void first_gen_display_show_print_progress(uint8_t state)
 {
   if(display_is_lcdm == 0U) {
     return;
   }
 
-  if(state != FIRST_GEN_PRINT_DISPLAY_COMPLETE) {
+  if(state != FIRST_GEN_PRINT_DISPLAY_COMPLETE &&
+     state != FIRST_GEN_PRINT_DISPLAY_ERROR) {
     state = FIRST_GEN_PRINT_DISPLAY_START;
   }
 

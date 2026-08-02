@@ -160,11 +160,13 @@ endif()
 
 add_executable(${PROJECT_NAME}
   src/main.c
+  src/device_config.c
   src/first_gen_4051_scan.c
   src/first_gen_display.c
   src/tester_wifi_print.c
   src/tester_wifi_link_diag.c
   src/tester_wifi_net_diag.c
+  src/tester_settings.c
   src/esp_at_flash_assist.c
   src/io_board.c
   src/io_scan.c

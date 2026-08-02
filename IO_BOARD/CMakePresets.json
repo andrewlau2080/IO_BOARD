@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "lcdm-tester-production",
+      "displayName": "LCDM Tester Production",
+      "description": "Final FIRST_GEN_4051_LOCAL tester with LCDM and ESP-AT TCP print-host transport.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-lcdm-tester-production",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/arm-none-eabi.cmake",
+        "IO_APP_MODE": "FIRST_GEN_4051_LOCAL",
+        "FIRST_GEN_DISPLAY_BACKEND": "LCDM",
+        "FIRST_GEN_DISPLAY_AUTO_DETECT": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "lcdm-tester-production",
+      "configurePreset": "lcdm-tester-production"
+    }
+  ]
+}

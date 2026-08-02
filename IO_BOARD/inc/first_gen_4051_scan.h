@@ -10,6 +10,7 @@
 #define FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK        2U
 #define FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE       3U
 #define FIRST_GEN_PRINT_STATE_WAIT_REMOVE          4U
+#define FIRST_GEN_PRINT_STATE_ERROR                5U
 
 extern volatile uint16_t g_first_gen_last_adc1;
 extern volatile uint16_t g_first_gen_last_adc2;

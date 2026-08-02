@@ -3,9 +3,11 @@
 #include "at32f45x.h"
 #include "at32f45x_board.h"
 #include "at32f45x_flash.h"
+#include "device_config.h"
 #include "io_board.h"
 #include "io_scan.h"
 #include "first_gen_display.h"
+#include "tester_settings.h"
 #include "tester_wifi_print.h"
 
 #include <stdio.h>
@@ -43,6 +45,7 @@
 #define FIRST_GEN_PANEL_KEY_POLL_MS   5U
 #define FIRST_GEN_PROBLEM_RECHECK_MS  50U
 #define FIRST_GEN_PANEL_K1_LONG_MS    3000U
+#define FIRST_GEN_PANEL_K3_LONG_MS    3000U
 #define FIRST_GEN_PANEL_K1_DOUBLE_WINDOW_MS 160U
 #define FIRST_GEN_PANEL_K1_RELEASE_GUARD_MS 200U
 #define FIRST_GEN_IDLE_SCROLL_MS      60000U
@@ -231,6 +234,8 @@ static void matrix_clear(uint32_t matrix[FIRST_GEN_4051_POINT_COUNT][IO_SCAN_MAT
 static void panel_wait_all_keys_released(uint16_t stable_ms);
 static uint8_t panel_priority_delay_ms(uint32_t duration_ms);
 static uint8_t panel_handle_key(void);
+static uint8_t panel_handle_k3_press(void);
+static uint8_t panel_settings_allowed(void);
 static uint8_t scan_one_row(uint16_t out_point);
 static uint8_t scan_and_check_current_row(void);
 static uint8_t scan_and_check_unlearned_row(void);
@@ -242,6 +247,7 @@ static uint8_t expected_harness_find_next_problem(uint16_t start_out,
                                                   uint16_t *problem_out,
                                                   uint16_t *problem_in);
 static void panel_arm_print_workflow(void);
+static void panel_hold_print_error(void);
 static uint8_t panel_service_print_event(uint16_t elapsed_ms);
 static uint8_t panel_all_connections_open_for_out(uint16_t out_point);
 static uint8_t panel_printed_hold_service(void);
@@ -447,7 +453,12 @@ static void panel_reset_print_state(void)
   print_event_id = 0U;
   printed_hold_active = 0U;
   printed_hold_out = 1U;
-  tester_wifi_print_cancel();
+  /* A normal print reset must not tear down the separate startup/configure
+   * ESP-AT exchange.  While that exchange owns raw AT capture, no print JSON
+   * has been sent and it will release the transport itself on completion. */
+  if(tester_settings_wifi_is_busy() == 0U) {
+    tester_wifi_print_cancel();
+  }
 }
 
 typedef struct {
@@ -2671,6 +2682,64 @@ static void panel_handle_k1_press(void)
   panel_run_self_test();
 }
 
+/* K3 retains its normal short-press RESET behaviour.  Only a high-end LCDM
+ * tester that is fully idle can reinterpret a deliberate three-second hold as
+ * entry to the maintenance page.  This keeps a running scan, learning flow,
+ * print handshake, and the K1 learning long-press isolated from WiFi setup. */
+static uint8_t panel_settings_allowed(void)
+{
+  if(first_gen_display_is_lcdm() == 0U ||
+     panel_auto_enabled != 0U ||
+     g_first_gen_learn_pending != 0U ||
+     learn_confirmed_hold_active != 0U ||
+     self_test_result_ready != 0U ||
+     g_first_gen_print_state != FIRST_GEN_PRINT_STATE_IDLE ||
+     panel_waiting_for_reconnect != 0U ||
+     (g_first_gen_panel_mode != FIRST_GEN_PANEL_MODE_IDLE &&
+      g_first_gen_panel_mode != FIRST_GEN_PANEL_MODE_RESET)) {
+    return 0U;
+  }
+
+  return 1U;
+}
+
+static uint8_t panel_handle_k3_press(void)
+{
+  uint16_t elapsed_ms = 0U;
+
+  if(panel_settings_allowed() == 0U) {
+    panel_reset_to_zero();
+    if(first_gen_display_is_lcdm() != 0U) {
+      tester_settings_start_saved_wifi();
+    }
+    return 1U;
+  }
+
+  while(first_gen_display_key_read_raw() == FIRST_GEN_KEY_PLUS) {
+    if(elapsed_ms >= FIRST_GEN_PANEL_K3_LONG_MS) {
+      /* Enter as soon as the hold reaches three seconds.  The old path waited
+       * for the finger to release before drawing the page, which made the
+       * operator think the long-press had been missed.  Settings consumes the
+       * following release event as a non-action, and leave_maintenance()
+       * clears the latched key before returning to the tester page. */
+      g_first_gen_last_panel_key = FIRST_GEN_KEY_NONE;
+      if(tester_settings_begin() != 0U) {
+        return 1U;
+      }
+      break;
+    }
+    delay_ms(FIRST_GEN_PANEL_KEY_POLL_MS);
+    elapsed_ms = (uint16_t)(elapsed_ms + FIRST_GEN_PANEL_KEY_POLL_MS);
+  }
+
+  /* A short K3 operation remains the established reset/retry action. */
+  panel_reset_to_zero();
+  if(first_gen_display_is_lcdm() != 0U) {
+    tester_settings_start_saved_wifi();
+  }
+  return 1U;
+}
+
 static uint8_t panel_handle_key(void)
 {
   uint8_t key = first_gen_display_key_read_raw();
@@ -2702,7 +2771,7 @@ static uint8_t panel_handle_key(void)
     return 1U;
 
   case FIRST_GEN_KEY_PLUS:
-    panel_reset_to_zero();
+    (void)panel_handle_k3_press();
     return 1U;
 
   case FIRST_GEN_KEY_MINUS:
@@ -2739,7 +2808,7 @@ static uint8_t panel_priority_key_service(void)
     return 1U;
 
   case FIRST_GEN_KEY_PLUS:
-    panel_reset_to_zero();
+    (void)panel_handle_k3_press();
     return 1U;
 
   case FIRST_GEN_KEY_MINUS:
@@ -3369,6 +3438,19 @@ static void first_gen_print_link_init(void)
   tester_wifi_print_init();
 }
 
+static void panel_hold_print_error(void)
+{
+  g_first_gen_print_error_counter++;
+  g_first_gen_print_waiting_for_wifi = 0U;
+  g_first_gen_print_done = 0U;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_ERROR;
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_ERROR);
+  } else {
+    display_error_code(3U);
+  }
+}
+
 static void panel_hold_pass_until_restart(void)
 {
   panel_arm_print_workflow();
@@ -3402,8 +3484,18 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_IDLE) {
     return 0U;
   }
+  if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_ERROR) {
+    /* Keep the failed product locked in view.  The operator's established K3
+     * reset/retry action clears this state and retains the learned recipe. */
+    return 1U;
+  }
 
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_HALL) {
+    /* Saved AP credentials are applied through ESP-AT in the background at
+     * startup.  Never inject a print JSON frame into that raw AT exchange. */
+    if(tester_settings_wifi_is_busy() != 0U) {
+      return 0U;
+    }
     if(g_first_gen_hall_active == 0U) {
       print_hall_active_ms = 0U;
       return 0U;
@@ -3436,7 +3528,7 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
                                  print_test_count,
                                  g_first_gen_learn_out_count,
                                  (uint16_t)g_first_gen_learn_connected_pairs) == 0U) {
-      g_first_gen_print_error_counter++;
+      panel_hold_print_error();
       print_hall_active_ms = 0U;
       return 1U;
     }
@@ -3455,7 +3547,7 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
       return 1U;
     }
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      g_first_gen_print_error_counter++;
+      panel_hold_print_error();
       return 1U;
     }
     /* A DONE received before the queue acknowledgement still proves that
@@ -3466,7 +3558,7 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
   } else if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE) {
     event = tester_wifi_print_poll_event(print_event_id);
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      g_first_gen_print_error_counter++;
+      panel_hold_print_error();
       return 1U;
     }
     if(event != TESTER_WIFI_PRINT_EVENT_DONE) {
@@ -3552,7 +3644,12 @@ void first_gen_4051_scan_init(void)
   panel_monitor_timebase_init();
   scan_signal_gpio_init();
   first_gen_display_init();
+  device_config_init();
   first_gen_print_link_init();
+  tester_settings_init();
+  if(first_gen_display_is_lcdm() != 0U) {
+    tester_settings_start_saved_wifi();
+  }
   io_scan_init(IO_SCAN_PROFILE_FIRST_GEN_1TH);
   io_scan_clear_result(&scan_result);
   matrix_clear(expected_matrix);
@@ -3578,6 +3675,10 @@ void first_gen_4051_scan_init(void)
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
   g_first_gen_hall_active = (g_first_gen_print_trigger_level == 0U) ? 1U : 0U;
   first_gen_display_set_hall_input(g_first_gen_hall_active);
+  /* The header represents the WiFi/AP link itself.  TCP print availability
+   * is a separate production capability and must not make a healthy AP look
+   * offline while the print-host fields are still being configured. */
+  first_gen_display_set_wifi_connected(tester_wifi_print_is_ap_connected());
 
 #if FIRST_GEN_TRIGGER_DIAG_ONLY
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
@@ -3718,6 +3819,28 @@ void first_gen_4051_scan_service(void)
   uint16_t monitor_elapsed_ms;
 
   buzzer_service(1U);
+  monitor_elapsed_ms = panel_monitor_elapsed_ms();
+
+  /* Settings owns the LCDM event queue while active.  The normal tester
+   * deliberately leaves every non-K1..K4 coordinate inert, and must not draw
+   * Hall/status changes across the maintenance page. */
+  if(tester_settings_is_active() != 0U) {
+    tester_settings_service();
+    if(tester_settings_take_reset_request() != 0U) {
+      /* A K3 cancel/retry must redraw the ordinary tester page even when the
+       * prior normal state was already RESET. */
+      first_gen_display_leave_maintenance();
+      g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
+      panel_reset_to_zero();
+      /* K3 is the available recovery action on this PCB: there is no MCU
+       * wired to ESP EN.  Always restart the saved ESP-AT TCP session after
+       * returning so an offline print host gets an immediate retry. */
+      tester_settings_start_saved_wifi();
+    }
+    return;
+  }
+
+  tester_settings_network_service(monitor_elapsed_ms);
 
   /* PB8 is low-active.  Sampling it here makes the persistent LCDM header
    * change only on a physical Hall transition; the display backend caches
@@ -3725,14 +3848,14 @@ void first_gen_4051_scan_service(void)
   g_first_gen_print_trigger_level = io_print_trigger_level_read();
   g_first_gen_hall_active = (g_first_gen_print_trigger_level == 0U) ? 1U : 0U;
   first_gen_display_set_hall_input(g_first_gen_hall_active);
-  tester_wifi_print_service();
+  /* Show AP association independently of the optional print-host TCP link. */
+  first_gen_display_set_wifi_connected(tester_wifi_print_is_ap_connected());
 
   /* Advance the K1 double-tap window before checking a new touch.  PASS uses
    * a long uninterrupted verification sweep, and a PAGE touch deliberately
    * exits that sweep early.  Advancing the timer only at the former end of
    * the sweep left its 160 ms state armed for the next physical tap, so that
    * tap was misread as a double-tap instead of the next page. */
-  monitor_elapsed_ms = panel_monitor_elapsed_ms();
   panel_auto_k1_double_tick(monitor_elapsed_ms);
   panel_auto_result_summary_service(monitor_elapsed_ms);
 

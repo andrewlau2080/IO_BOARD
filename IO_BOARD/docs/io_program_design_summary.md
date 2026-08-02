@@ -45,7 +45,13 @@ DEBUG_TTL, LCDM maintenance page, WiFi maintenance command, or line pairing.
 Required stored fields: `device_role`, `display_type`, `device_uid`,
 `line_id`, `station_id`, config revision, and CRC. If the config is missing or
 CRC fails, firmware enters unconfigured safe mode: no automatic scan and no
-printer command output.
+printer command output.  The currently implemented LCDM tester subset keeps
+the AT32 UID read-only and separately stores editable `machine_id`, `line_id`,
+`station_id`, WiFi SSID/password and print-host TCP address/port, version,
+sequence and CRC in two Flash copies; it does not reuse the learned-harness
+recipe sector.  The final LCDM tester uses ESP-AT `CIPSTART/CIPSEND` for its
+print-host session; `WIFI_NET_DIAG` remains diagnostic only.  See
+`docs/lcdm_tester_wifi_settings.md`.
 
 ## Scan Data Model
 

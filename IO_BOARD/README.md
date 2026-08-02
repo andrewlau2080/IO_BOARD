@@ -141,8 +141,14 @@ static const uint16_t archived_ir_signal_us[] = { ... };
 ## WiFi / ESP-AT Diagnostics
 
 The ESP32-C3 WiFi coprocessor uses the shared PC3/PB9 software-UART link at
-115200 8N1. Select one of these isolated app modes when bringing up the
-hardware:
+115200 8N1. The **final LCDM tester production target** is
+`FIRST_GEN_4051_LOCAL + LCDM`: it joins the saved AP, opens a TCP session to
+the configured line print host, then uses ESP-AT `CIPSEND` for the existing
+Hall -> `print_ack` -> `print_status DONE` workflow. The SSID/password and
+print-host address/port are set on LCDM after K3 long-press; they are not
+compiled into the production image.
+
+Use these isolated app modes only when bringing up the hardware:
 
 - `WIFI_LINK_DIAG`: repeated `AT`/`OK` link check.
 - `WIFI_NET_DIAG`: ESP-AT version, station/AP state, optional test-AP join,
@@ -153,6 +159,28 @@ Build and credential-handling instructions are in
 must not be committed; build directories and generated credential headers are
 ignored by Git. The physical pin mapping and EN/BOOT rules are documented in
 `docs/wifi_module_pcb_connection_plan.md`.
+
+For production tester builds, use the explicit target below rather than either
+diagnostic mode:
+
+```sh
+cmake -S . -B build-lcdm-tester-production -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \
+  -DIO_APP_MODE=FIRST_GEN_4051_LOCAL \
+  -DFIRST_GEN_DISPLAY_BACKEND=LCDM \
+  -DFIRST_GEN_DISPLAY_AUTO_DETECT=OFF
+cmake --build build-lcdm-tester-production
+```
+
+The complete TCP framing and print-host requirements are in
+`docs/tester_wifi_print_protocol.md`.
+
+The same target is pinned as the `lcdm-tester-production` CMake preset:
+
+```sh
+cmake --preset lcdm-tester-production
+cmake --build --preset lcdm-tester-production
+```
 
 ## Build
 

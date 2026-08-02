@@ -6,8 +6,10 @@
 2. `AT+CWMODE?`、`AT+CWJAP?`；
 3. 若构建时给出 SSID，则切换 STA、加入测试 AP，并用 `AT+CIFSR` 读取 IP。
 
-该模式只验证 ESP-AT 网络基础，不代表 `print_request` JSON 已经被 ESP-AT
-直接解析；打印闭环仍需后续的 ESP 桥接固件/AT32 TCP 状态机。
+该模式只验证 ESP-AT 网络基础，不代表生产打印已经闭环。正式 `print_request` 由
+`FIRST_GEN_4051_LOCAL + LCDM` 固件通过 `AT+CIPSTART` / `AT+CIPSEND` 送往已配置的
+打印主机；本诊断模式不会启动该 TCP 状态机或 4051/Hall 流程。详见
+[`tester_wifi_print_protocol.md`](tester_wifi_print_protocol.md)。
 
 默认 SSID/密码为空，固件只查询当前状态，不会把凭据写入仓库。带凭据的本地构建示例：
 
