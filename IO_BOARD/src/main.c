@@ -8,6 +8,8 @@
 #include "line_comm_bridge.h"
 #include "print_terminal.h"
 #include "rpi_rs485_legacy.h"
+#include "tester_wifi_link_diag.h"
+#include "tester_wifi_net_diag.h"
 #include "tm1637_demo.h"
 
 #define IO_APP_MODE_IR_PRINT_BRIDGE       1
@@ -20,7 +22,9 @@
 #define IO_APP_MODE_PRINT_TERMINAL        8
 #define IO_APP_MODE_UNIFIED               9
 #define IO_APP_MODE_LCDM_TJC_VERIFY       10
+#define IO_APP_MODE_WIFI_LINK_DIAG         11
 #define IO_APP_MODE_ESP_AT_FLASH_ASSIST    12
+#define IO_APP_MODE_WIFI_NET_DIAG          13
 
 #define UNIFIED_PRODUCT_RPI_RS485_LEGACY     IO_APP_MODE_RPI_RS485_LEGACY
 #define UNIFIED_PRODUCT_FIRST_GEN_4051_LOCAL IO_APP_MODE_FIRST_GEN_4051_LOCAL
@@ -203,10 +207,11 @@ int main(void)
 #elif IO_APP_MODE == IO_APP_MODE_FIRST_GEN_4051_LOCAL
   /*
    * The current fixture test board has not proven HEXT startup. Keep the
-   * first-gen local tester on the internal HICK clock so display and scan
-   * firmware start reliably on the assembled PCB.
+   * first-gen local tester on the proven internal-HICK PLL clock so display,
+   * scan, and the formal 115200-baud WiFi link start reliably on the assembled
+   * PCB.
    */
-  system_core_clock_update();
+  tester_wifi_clock_config();
   delay_init();
   io_board_init();
   first_gen_4051_scan_init();
@@ -316,6 +321,31 @@ int main(void)
   {
     lcdm_tjc_verify_service();
   }
+#elif IO_APP_MODE == IO_APP_MODE_WIFI_LINK_DIAG
+  /* Standalone PC3/PB9/ESP32-C3 link test.  It is intentionally separate
+   * from FIRST_GEN_4051_LOCAL so no cable-test, print, or key behaviour is
+   * changed while validating the WiFi hardware. */
+  tester_wifi_clock_config();
+  delay_init();
+  io_board_init();
+  tester_wifi_link_diag_init();
+
+  while(1)
+  {
+    tester_wifi_link_diag_service();
+  }
+#elif IO_APP_MODE == IO_APP_MODE_WIFI_NET_DIAG
+  /* Standalone ESP-AT/network test.  It owns only PC3/PB9 plus the LCDM;
+   * the 4051 scanner and production print workflow are not initialized. */
+  tester_wifi_clock_config();
+  delay_init();
+  io_board_init();
+  tester_wifi_net_diag_init();
+
+  while(1)
+  {
+    tester_wifi_net_diag_service();
+  }
 #elif IO_APP_MODE == IO_APP_MODE_ESP_AT_FLASH_ASSIST
   /* Temporary ESP32-C3 ROM downloader entry.  It only owns PC3 (EN) and
    * PB9 (BOOT); none of the normal tester, display, scan, or WiFi UART code
@@ -358,7 +388,7 @@ int main(void)
       }
     }
 
-    system_core_clock_update();
+    tester_wifi_clock_config();
     delay_init();
     io_board_init();
     first_gen_4051_scan_init();

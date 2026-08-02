@@ -22,10 +22,11 @@
 #define TESTER_WIFI_RX_PIN_SOURCE        SCFG_PINS_SOURCE9
 #define TESTER_WIFI_RX_EXINT_LINE        EXINT_LINE_9
 
-#define TESTER_WIFI_RX_EDGE_MAX          512U
+#define TESTER_WIFI_RX_EDGE_MAX          2048U
 #define TESTER_WIFI_RX_EDGE_MASK         (TESTER_WIFI_RX_EDGE_MAX - 1U)
 #define TESTER_WIFI_RX_LINE_MAX          128U
 #define TESTER_WIFI_EVENT_QUEUE_MAX      4U
+#define TESTER_WIFI_AT_LINE_QUEUE_MAX    16U
 
 typedef struct {
   tester_wifi_print_event_t type;
@@ -48,6 +49,13 @@ static uint8_t wifi_rx_line_len;
 static tester_wifi_print_event_slot_t wifi_event_queue[TESTER_WIFI_EVENT_QUEUE_MAX];
 static uint8_t wifi_event_head;
 static uint8_t wifi_event_tail;
+static char wifi_at_line_queue[TESTER_WIFI_AT_LINE_QUEUE_MAX][TESTER_WIFI_RX_LINE_MAX];
+static uint8_t wifi_at_line_head;
+static uint8_t wifi_at_line_tail;
+static uint8_t wifi_at_capture_enabled;
+/* Only WIFI_LINK_DIAG sets this token.  The normal print protocol never
+ * treats a bare ESP-AT OK/ERROR text as a print event. */
+static uint32_t wifi_link_test_sequence;
 
 static uint32_t wifi_cycles(void)
 {
@@ -186,10 +194,63 @@ static void wifi_queue_event(tester_wifi_print_event_t type, uint32_t event_id)
   wifi_event_head = next_head;
 }
 
+static void wifi_at_line_queue_reset(void)
+{
+  wifi_at_line_head = 0U;
+  wifi_at_line_tail = 0U;
+}
+
+static void wifi_at_queue_line(const char *line)
+{
+  uint8_t next_head;
+
+  if(line == 0) {
+    return;
+  }
+
+  next_head = (uint8_t)((wifi_at_line_head + 1U) % TESTER_WIFI_AT_LINE_QUEUE_MAX);
+  if(next_head == wifi_at_line_tail) {
+    g_tester_wifi_print_rx_overflow_count++;
+    return;
+  }
+
+  (void)snprintf(wifi_at_line_queue[wifi_at_line_head],
+                 TESTER_WIFI_RX_LINE_MAX,
+                 "%s",
+                 line);
+  wifi_at_line_head = next_head;
+  g_tester_wifi_print_rx_frame_count++;
+}
+
 static void wifi_handle_frame(const char *frame)
 {
   tester_wifi_print_event_t event = TESTER_WIFI_PRINT_EVENT_NONE;
   uint32_t event_id;
+
+  /* ESP32-C3 has no built-in JSON command parser.  The isolated diagnostic
+   * uses the standard ESP-AT command "AT\\r\\n" and accepts its documented
+   * text response.  Production JSON print frames retain the code below. */
+  if(wifi_link_test_sequence != 0U && strcmp(frame, "OK") == 0) {
+    g_tester_wifi_print_rx_frame_count++;
+    wifi_queue_event(TESTER_WIFI_PRINT_EVENT_LINK_ACK, wifi_link_test_sequence);
+    return;
+  }
+  if(wifi_link_test_sequence != 0U && strcmp(frame, "ERROR") == 0) {
+    g_tester_wifi_print_rx_frame_count++;
+    wifi_queue_event(TESTER_WIFI_PRINT_EVENT_LINK_ERROR, wifi_link_test_sequence);
+    return;
+  }
+  /* ESP32-C3 ROM output captured on PB9: an all-FF flash has no boot image,
+   * repeatedly reports this line, and cannot execute ESP-AT to answer AT.
+   * This branch is unreachable in the production print protocol because its
+   * diagnostic sequence token is always zero there. */
+  if(wifi_link_test_sequence != 0U &&
+     strstr(frame, "invalid header: 0xffffffff") != 0) {
+    g_tester_wifi_print_rx_frame_count++;
+    wifi_queue_event(TESTER_WIFI_PRINT_EVENT_LINK_FLASH_INVALID,
+                     wifi_link_test_sequence);
+    return;
+  }
 
   if(wifi_frame_event_id(frame, &event_id) == 0U) {
     g_tester_wifi_print_rx_error_count++;
@@ -228,7 +289,11 @@ static void wifi_store_rx_byte(uint8_t value)
   if(value == '\n') {
     if(wifi_rx_line_len != 0U) {
       wifi_rx_line[wifi_rx_line_len] = '\0';
-      wifi_handle_frame(wifi_rx_line);
+      if(wifi_at_capture_enabled != 0U) {
+        wifi_at_queue_line(wifi_rx_line);
+      } else {
+        wifi_handle_frame(wifi_rx_line);
+      }
     }
     wifi_rx_line_len = 0U;
     return;
@@ -339,6 +404,11 @@ void tester_wifi_print_init(void)
 
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+  /* DWT counts the selected system core clock (8 MHz HICK for a fallback
+   * image, or the shared 192 MHz HICK PLL for formal WiFi images), so derive
+   * the exact bit target from the per-image UART baud setting. Do not equate
+   * a scope's repeating-data waveform frequency with baud: a UART line has no
+   * separate clock. */
   wifi_bit_cycles = (system_core_clock + (TESTER_WIFI_PRINT_UART_BAUDRATE / 2U)) /
                     TESTER_WIFI_PRINT_UART_BAUDRATE;
   if(wifi_bit_cycles == 0U) {
@@ -370,6 +440,9 @@ void tester_wifi_print_init(void)
   wifi_rx_line_len = 0U;
   wifi_event_head = 0U;
   wifi_event_tail = 0U;
+  wifi_at_line_queue_reset();
+  wifi_at_capture_enabled = 0U;
+  wifi_link_test_sequence = 0U;
 
   crm_periph_clock_enable(CRM_SCFG_PERIPH_CLOCK, TRUE);
   scfg_exint_line_config(TESTER_WIFI_RX_PORT_SOURCE, TESTER_WIFI_RX_PIN_SOURCE);
@@ -418,6 +491,22 @@ uint8_t tester_wifi_print_request(uint32_t event_id,
   return 1U;
 }
 
+uint8_t tester_wifi_print_link_test_request(uint32_t sequence)
+{
+  if(g_tester_wifi_print_ready == 0U || sequence == 0U) {
+    return 0U;
+  }
+
+  /* The diagnostic has no print job in flight.  Discard a stale answer,
+   * retain its local sequence token, then issue a real ESP-AT command on
+   * PC3.  ESP-AT responds with the line "OK\\r\\n" or "ERROR\\r\\n". */
+  wifi_event_head = 0U;
+  wifi_event_tail = 0U;
+  wifi_link_test_sequence = sequence;
+  wifi_write_text("AT\r\n");
+  return 1U;
+}
+
 void tester_wifi_print_service(void)
 {
   if(g_tester_wifi_print_ready == 0U) {
@@ -444,7 +533,70 @@ void tester_wifi_print_cancel(void)
 {
   wifi_event_head = 0U;
   wifi_event_tail = 0U;
+  wifi_at_line_queue_reset();
   wifi_rx_line_len = 0U;
+  wifi_at_capture_enabled = 0U;
+  wifi_link_test_sequence = 0U;
+}
+
+void tester_wifi_print_at_begin(void)
+{
+  if(g_tester_wifi_print_ready == 0U) {
+    return;
+  }
+
+  /* Discard boot text or a former test's partial line before the diagnostic
+   * begins its own command/response sequence. */
+  wifi_rx_edge_tail = wifi_rx_edge_head;
+  wifi_rx_line_len = 0U;
+  wifi_event_head = 0U;
+  wifi_event_tail = 0U;
+  wifi_at_line_queue_reset();
+  wifi_link_test_sequence = 0U;
+  wifi_at_capture_enabled = 1U;
+}
+
+void tester_wifi_print_at_end(void)
+{
+  wifi_at_capture_enabled = 0U;
+  wifi_at_line_queue_reset();
+  wifi_rx_line_len = 0U;
+}
+
+uint8_t tester_wifi_print_at_send(const char *command)
+{
+  size_t length;
+
+  if(g_tester_wifi_print_ready == 0U || wifi_at_capture_enabled == 0U ||
+     command == 0 || command[0] == '\0') {
+    return 0U;
+  }
+
+  length = strlen(command);
+  wifi_write_text(command);
+  if(command[length - 1U] == '\n') {
+    return 1U;
+  }
+  if(command[length - 1U] == '\r') {
+    wifi_write_text("\n");
+  } else {
+    wifi_write_text("\r\n");
+  }
+  return 1U;
+}
+
+uint8_t tester_wifi_print_at_poll_line(char *line, uint8_t line_size)
+{
+  if(line == 0 || line_size == 0U || wifi_at_line_tail == wifi_at_line_head) {
+    return 0U;
+  }
+
+  (void)snprintf(line,
+                 line_size,
+                 "%s",
+                 wifi_at_line_queue[wifi_at_line_tail]);
+  wifi_at_line_tail = (uint8_t)((wifi_at_line_tail + 1U) % TESTER_WIFI_AT_LINE_QUEUE_MAX);
+  return 1U;
 }
 
 void tester_wifi_print_rx_edge_isr(void)

@@ -138,6 +138,22 @@ static const uint8_t archived_ir_start_level = 0;
 static const uint16_t archived_ir_signal_us[] = { ... };
 ```
 
+## WiFi / ESP-AT Diagnostics
+
+The ESP32-C3 WiFi coprocessor uses the shared PC3/PB9 software-UART link at
+115200 8N1. Select one of these isolated app modes when bringing up the
+hardware:
+
+- `WIFI_LINK_DIAG`: repeated `AT`/`OK` link check.
+- `WIFI_NET_DIAG`: ESP-AT version, station/AP state, optional test-AP join,
+  and station-IP check.
+
+Build and credential-handling instructions are in
+`docs/wifi_net_diag.md`. SSID/password values are local CMake cache inputs and
+must not be committed; build directories and generated credential headers are
+ignored by Git. The physical pin mapping and EN/BOOT rules are documented in
+`docs/wifi_module_pcb_connection_plan.md`.
+
 ## Build
 
 ```sh

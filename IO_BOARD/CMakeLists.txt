@@ -13,12 +13,27 @@ set(LINE_COMM_TESTER_RESPONSE_CSV
 set(LINE_COMM_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(LINE_COMM_GENERATED_C "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.c")
 set(LINE_COMM_GENERATED_H "${LINE_COMM_GENERATED_DIR}/generated_line_comm_codes.h")
-set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY, IR_PRINT_BRIDGE, FIRST_GEN_4051_LOCAL, TM1637_DEMO, PA4_GPIO_DIAG, PA4_DAC_DIAG, MUX_A_DIAG, PRINT_TERMINAL, UNIFIED, LCDM_TJC_VERIFY, or ESP_AT_FLASH_ASSIST")
+set(WIFI_NET_DIAG_CONFIG_IN "${CMAKE_CURRENT_LIST_DIR}/cmake/wifi_net_diag_config.h.in")
+set(WIFI_NET_DIAG_CONFIG_H "${LINE_COMM_GENERATED_DIR}/wifi_net_diag_config.h")
+set(IO_APP_MODE "RPI_RS485_LEGACY" CACHE STRING "Firmware app mode: RPI_RS485_LEGACY, IR_PRINT_BRIDGE, FIRST_GEN_4051_LOCAL, TM1637_DEMO, PA4_GPIO_DIAG, PA4_DAC_DIAG, MUX_A_DIAG, PRINT_TERMINAL, UNIFIED, LCDM_TJC_VERIFY, WIFI_LINK_DIAG, WIFI_NET_DIAG, or ESP_AT_FLASH_ASSIST")
 set(UNIFIED_DEFAULT_PRODUCT_MODE "FIRST_GEN_4051_LOCAL" CACHE STRING "Default product when IO_APP_MODE=UNIFIED: FIRST_GEN_4051_LOCAL, PRINT_TERMINAL, or RPI_RS485_LEGACY")
 set(PRINT_DRIVER_BACKEND "MOCK" CACHE STRING "Print backend: MOCK or ZPL_RS485")
 set(FIRST_GEN_DISPLAY_BACKEND "LEDM" CACHE STRING "First-gen tester display backend: LEDM or LCDM")
 set(FIRST_GEN_DISPLAY_AUTO_DETECT "ON" CACHE BOOL "Probe LCDM first, then fall back to LEDM/TM1637")
-set(TESTER_WIFI_PRINT_UART_BAUDRATE "38400" CACHE STRING "LCDM tester ESP32-C3 software UART baudrate")
+set(TESTER_WIFI_PRINT_UART_BAUDRATE "115200" CACHE STRING "LCDM tester ESP32-C3 software UART baudrate")
+set(WIFI_NET_DIAG_SSID "" CACHE STRING "WIFI_NET_DIAG test AP SSID (leave empty for status-only mode)")
+set(WIFI_NET_DIAG_PASSWORD "" CACHE STRING "WIFI_NET_DIAG test AP password (never commit this cache/build directory)")
+
+# Keep credentials out of tracked source and out of the compiler command line.
+# They are copied only into the selected local build's generated header.
+file(MAKE_DIRECTORY "${LINE_COMM_GENERATED_DIR}")
+set(WIFI_NET_DIAG_SSID_C "${WIFI_NET_DIAG_SSID}")
+set(WIFI_NET_DIAG_PASSWORD_C "${WIFI_NET_DIAG_PASSWORD}")
+string(REPLACE "\\" "\\\\" WIFI_NET_DIAG_SSID_C "${WIFI_NET_DIAG_SSID_C}")
+string(REPLACE "\"" "\\\"" WIFI_NET_DIAG_SSID_C "${WIFI_NET_DIAG_SSID_C}")
+string(REPLACE "\\" "\\\\" WIFI_NET_DIAG_PASSWORD_C "${WIFI_NET_DIAG_PASSWORD_C}")
+string(REPLACE "\"" "\\\"" WIFI_NET_DIAG_PASSWORD_C "${WIFI_NET_DIAG_PASSWORD_C}")
+configure_file("${WIFI_NET_DIAG_CONFIG_IN}" "${WIFI_NET_DIAG_CONFIG_H}" @ONLY)
 
 if(NOT EXISTS "${AT32_BSP_DIR}/libraries/cmsis/cm4/device_support/at32f45x.h")
   message(FATAL_ERROR "AT32 BSP not found at ${AT32_BSP_DIR}")
@@ -74,6 +89,10 @@ elseif(IO_APP_MODE STREQUAL "UNIFIED")
   set(IO_APP_MODE_VALUE 9)
 elseif(IO_APP_MODE STREQUAL "LCDM_TJC_VERIFY")
   set(IO_APP_MODE_VALUE 10)
+elseif(IO_APP_MODE STREQUAL "WIFI_LINK_DIAG")
+  set(IO_APP_MODE_VALUE 11)
+elseif(IO_APP_MODE STREQUAL "WIFI_NET_DIAG")
+  set(IO_APP_MODE_VALUE 13)
 elseif(IO_APP_MODE STREQUAL "ESP_AT_FLASH_ASSIST")
   set(IO_APP_MODE_VALUE 12)
 else()
@@ -111,6 +130,18 @@ if(NOT TESTER_WIFI_PRINT_UART_BAUDRATE MATCHES "^[0-9]+$" OR
   message(FATAL_ERROR "TESTER_WIFI_PRINT_UART_BAUDRATE must be a positive integer")
 endif()
 
+# The formal tester path and both standalone diagnostics use the same measured
+# ESP32-C3 UART setting.  The WiFi software UART is clocked from the proven
+# internal-HICK PLL image (192 MHz), giving the edge receiver ample timing
+# margin at 115,200 baud.
+set(TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE ${TESTER_WIFI_PRINT_UART_BAUDRATE})
+if(IO_APP_MODE STREQUAL "FIRST_GEN_4051_LOCAL" OR
+   IO_APP_MODE STREQUAL "UNIFIED" OR
+   IO_APP_MODE STREQUAL "WIFI_LINK_DIAG" OR
+   IO_APP_MODE STREQUAL "WIFI_NET_DIAG")
+  set(TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE 115200)
+endif()
+
 # The LCDM local tester has its own PC3/PB9 WiFi print path.  Do not even
 # link the PB6/PB7 legacy IR transport into that image.  The old IR bridge
 # and print-terminal modes retain their own independent source set.
@@ -132,6 +163,8 @@ add_executable(${PROJECT_NAME}
   src/first_gen_4051_scan.c
   src/first_gen_display.c
   src/tester_wifi_print.c
+  src/tester_wifi_link_diag.c
+  src/tester_wifi_net_diag.c
   src/esp_at_flash_assist.c
   src/io_board.c
   src/io_scan.c
@@ -177,7 +210,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   PRINT_DRIVER_BACKEND_ZPL_RS485=${PRINT_DRIVER_BACKEND_ZPL_RS485_VALUE}
   FIRST_GEN_DISPLAY_BACKEND_LCDM=${FIRST_GEN_DISPLAY_BACKEND_LCDM_VALUE}
   FIRST_GEN_DISPLAY_AUTO_DETECT=$<IF:$<BOOL:${FIRST_GEN_DISPLAY_AUTO_DETECT}>,1,0>
-  TESTER_WIFI_PRINT_UART_BAUDRATE=${TESTER_WIFI_PRINT_UART_BAUDRATE}UL
+  TESTER_WIFI_PRINT_UART_BAUDRATE=${TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE}UL
 )
 
 set(CPU_FLAGS

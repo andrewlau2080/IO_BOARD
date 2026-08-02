@@ -9,7 +9,7 @@
 | 测试机发送 | `PC3 / WIFI_TX` | `RXD0 / Pin 11` |
 | 测试机接收 | `PB9 / WIFI_RX` | `TXD0 / Pin 12` |
 
-串口基准为 `38400 8N1`，使用 LF (`0x0A`) 结束一帧。当前 LCDM 测试机以 8 MHz HICK 运行，`38400` 为 PB9 GPIO 软件 UART 留出可靠的 EXINT 边沿处理余量；ESP32-C3 固件必须设为相同波特率。后续若将测试机改为已验证的高频 HICK PLL 或硬件 UART，可通过 CMake 的 `TESTER_WIFI_PRINT_UART_BAUDRATE` 提升至 `115200`。
+串口基准为 `115200 8N1`，使用 LF (`0x0A`) 结束一帧。正式测试机现在与 ESP32-C3 ESP-AT 统一使用已验证的内部 HICK PLL 192 MHz 软件 UART；ESP32-C3 固件必须设为相同波特率。诊断构建会固定为 `115200`，其它本地构建可通过 CMake 的 `TESTER_WIFI_PRINT_UART_BAUDRATE` 复核。
 
 AT32 用 GPIO 软件 UART；PB9 的双边沿 EXINT 只负责缓存 UART 边沿，解析和业务状态机仍在主循环完成，避免网络等待阻塞 4051 扫描。
 

@@ -1,0 +1,9 @@
+#ifndef WIFI_NET_DIAG_CONFIG_H
+#define WIFI_NET_DIAG_CONFIG_H
+
+/* Generated for one local build directory.  Do not place production WiFi
+ * credentials in tracked source files. */
+#define WIFI_NET_DIAG_SSID "@WIFI_NET_DIAG_SSID_C@"
+#define WIFI_NET_DIAG_PASSWORD "@WIFI_NET_DIAG_PASSWORD_C@"
+
+#endif
