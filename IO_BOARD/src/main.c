@@ -206,12 +206,14 @@ int main(void)
   }
 #elif IO_APP_MODE == IO_APP_MODE_FIRST_GEN_4051_LOCAL
   /*
-   * The current fixture test board has not proven HEXT startup. Keep the
-   * first-gen local tester on the proven internal-HICK PLL clock so display,
-   * scan, and the formal 115200-baud WiFi link start reliably on the assembled
-   * PCB.
+   * Keep the validated first-generation tester clock path from commit
+   * a6b990e: the board starts on the internal HICK default clock and only
+   * updates the CMSIS frequency variable.  The 4051 settle/read timing and
+   * the LCDM acknowledgement pacing were verified with this path.  The WiFi
+   * software-UART clock experiment must not change the production scan clock;
+   * WiFi is serviced independently after the tester core is running.
    */
-  tester_wifi_clock_config();
+  system_core_clock_update();
   delay_init();
   io_board_init();
   first_gen_4051_scan_init();
@@ -388,7 +390,10 @@ int main(void)
       }
     }
 
-    tester_wifi_clock_config();
+    /* Keep the first-generation product path identical to the validated
+     * a6b990e tester.  Do not switch the shared scan/display clock merely
+     * because the optional WiFi service is linked into this image. */
+    system_core_clock_update();
     delay_init();
     io_board_init();
     first_gen_4051_scan_init();
