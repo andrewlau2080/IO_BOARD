@@ -304,7 +304,10 @@ int main(void)
     }
   }
 #elif IO_APP_MODE == IO_APP_MODE_PRINT_TERMINAL
-  system_core_clock_update();
+  /* PRINT_TERMINAL owns the same PC3/PB9 ESP-AT software UART as the
+   * validated WiFi diagnostic.  Use its 192 MHz internal-HICK PLL clock;
+   * the first-generation tester path remains untouched. */
+  tester_wifi_clock_config();
   delay_init();
   io_board_init();
   print_terminal_init();
@@ -366,33 +369,35 @@ int main(void)
 
     g_unified_product_mode = product_mode;
 
-    if(product_mode == UNIFIED_PRODUCT_RPI_RS485_LEGACY) {
-      system_clock_config();
-      delay_init();
-      io_board_init();
-      rpi_rs485_legacy_init();
+    /* UNIFIED is presently a compile-time product selection.  Keep only the
+     * selected branch in its image: otherwise the 4051 result cache and the
+     * print-host template/ESP buffers coexist and leave too little RAM for
+     * an interrupt stack.  A future true runtime role selector must first
+     * move the large buffers to mutually-exclusive storage. */
+#if UNIFIED_DEFAULT_PRODUCT_MODE == UNIFIED_PRODUCT_RPI_RS485_LEGACY
+    system_clock_config();
+    delay_init();
+    io_board_init();
+    rpi_rs485_legacy_init();
 
-      while(1)
-      {
-        rpi_rs485_legacy_service();
-      }
+    while(1)
+    {
+      rpi_rs485_legacy_service();
     }
+#elif UNIFIED_DEFAULT_PRODUCT_MODE == UNIFIED_PRODUCT_PRINT_TERMINAL
+    tester_wifi_clock_config();
+    delay_init();
+    io_board_init();
+    print_terminal_init();
 
-    if(product_mode == UNIFIED_PRODUCT_PRINT_TERMINAL) {
-      system_core_clock_update();
-      delay_init();
-      io_board_init();
-      print_terminal_init();
-
-      while(1)
-      {
-        print_terminal_service();
-      }
+    while(1)
+    {
+      print_terminal_service();
     }
-
+#else
     /* Keep the first-generation product path identical to the validated
      * a6b990e tester.  Do not switch the shared scan/display clock merely
-     * because the optional WiFi service is linked into this image. */
+     * because optional WiFi code is linked into other product images. */
     system_core_clock_update();
     delay_init();
     io_board_init();
@@ -402,6 +407,7 @@ int main(void)
     {
       first_gen_4051_scan_service();
     }
+#endif
   }
 #else
 #error "Unsupported IO_APP_MODE"

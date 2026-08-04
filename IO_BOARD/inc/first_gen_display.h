@@ -21,6 +21,9 @@
 #define FIRST_GEN_DISPLAY_COLOR_BLUE        31U
 #define FIRST_GEN_DISPLAY_COLOR_RED         63488U
 #define FIRST_GEN_DISPLAY_COLOR_GREEN       2016U
+/* Exact dark-green background used by the automatic all-connection PASS
+ * summary.  WiFi setup uses this same value for a verified link. */
+#define FIRST_GEN_DISPLAY_COLOR_AUTO_PASS_GREEN 992U
 #define FIRST_GEN_DISPLAY_COLOR_WHITE       65535U
 #define FIRST_GEN_DISPLAY_COLOR_ROW_BG      61374U
 #define FIRST_GEN_DISPLAY_COLOR_PALE_BLUE   50719U

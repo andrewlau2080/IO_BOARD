@@ -31,10 +31,11 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-/* Reserve the final three 2 KiB sectors: two atomic device/WiFi config
- * copies at 0x0807E800/0x0807F000 and the learned harness recipe at
- * 0x0807F800.  Application code must never be linked into those sectors. */
-FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 506K
+/* Reserve the final five 2 KiB sectors: two atomic print-host copies at
+ * 0x0807D800/0x0807E000, two device/WiFi copies at
+ * 0x0807E800/0x0807F000, and the learned harness recipe at 0x0807F800.
+ * Application code must never be linked into any of these sectors. */
+FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 502K
 RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 144K
 }
 

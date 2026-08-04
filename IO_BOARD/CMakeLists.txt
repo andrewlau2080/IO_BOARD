@@ -135,11 +135,20 @@ endif()
 # internal-HICK PLL image (192 MHz), giving the edge receiver ample timing
 # margin at 115,200 baud.
 set(TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE ${TESTER_WIFI_PRINT_UART_BAUDRATE})
+set(TESTER_WIFI_AT_LINE_MAX_VALUE 256)
 if(IO_APP_MODE STREQUAL "FIRST_GEN_4051_LOCAL" OR
    IO_APP_MODE STREQUAL "UNIFIED" OR
    IO_APP_MODE STREQUAL "WIFI_LINK_DIAG" OR
-   IO_APP_MODE STREQUAL "WIFI_NET_DIAG")
+   IO_APP_MODE STREQUAL "WIFI_NET_DIAG" OR
+   IO_APP_MODE STREQUAL "PRINT_TERMINAL")
   set(TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE 115200)
+endif()
+if(IO_APP_MODE STREQUAL "PRINT_TERMINAL" OR
+   (IO_APP_MODE STREQUAL "UNIFIED" AND
+    UNIFIED_DEFAULT_PRODUCT_MODE STREQUAL "PRINT_TERMINAL"))
+  # The print host is an ESP-AT TCP server.  Its +IPD request contains the
+  # full tester JSON frame and needs more room than the client response line.
+  set(TESTER_WIFI_AT_LINE_MAX_VALUE 384)
 endif()
 
 # The LCDM local tester has its own PC3/PB9 WiFi print path.  Do not even
@@ -158,6 +167,25 @@ if(IO_APP_MODE STREQUAL "IR_PRINT_BRIDGE" OR
   )
 endif()
 
+# Keep the first-generation tester image completely free of the print-host
+# UI, Flash store, and ESP-AT server objects.  UNIFIED currently selects one
+# product at CMake build time, so include these objects only for its explicit
+# PRINT_TERMINAL product image as well.
+set(PRINT_TERMINAL_SOURCES)
+if(IO_APP_MODE STREQUAL "PRINT_TERMINAL" OR
+   (IO_APP_MODE STREQUAL "UNIFIED" AND
+    UNIFIED_DEFAULT_PRODUCT_MODE STREQUAL "PRINT_TERMINAL"))
+  list(APPEND PRINT_TERMINAL_SOURCES
+    src/print_driver.c
+    src/print_host_wifi.c
+    src/print_job_model.c
+    src/print_rs485.c
+    src/print_terminal.c
+    src/print_terminal_settings.c
+    src/print_terminal_store.c
+  )
+endif()
+
 add_executable(${PROJECT_NAME}
   src/main.c
   src/device_config.c
@@ -173,10 +201,7 @@ add_executable(${PROJECT_NAME}
   src/lcdm_motor_ui.c
   src/lcdm_tjc.c
   src/lcdm_tjc_verify.c
-  src/print_driver.c
-  src/print_job_model.c
-  src/print_rs485.c
-  src/print_terminal.c
+  ${PRINT_TERMINAL_SOURCES}
   src/rpi_protocol.c
   src/rpi_rs485.c
   src/rpi_rs485_legacy.c
@@ -213,6 +238,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   FIRST_GEN_DISPLAY_BACKEND_LCDM=${FIRST_GEN_DISPLAY_BACKEND_LCDM_VALUE}
   FIRST_GEN_DISPLAY_AUTO_DETECT=$<IF:$<BOOL:${FIRST_GEN_DISPLAY_AUTO_DETECT}>,1,0>
   TESTER_WIFI_PRINT_UART_BAUDRATE=${TESTER_WIFI_PRINT_UART_BAUDRATE_VALUE}UL
+  TESTER_WIFI_AT_LINE_MAX=${TESTER_WIFI_AT_LINE_MAX_VALUE}U
 )
 
 set(CPU_FLAGS

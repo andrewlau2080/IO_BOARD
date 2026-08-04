@@ -54,7 +54,7 @@
 #define LCDM_BLUE                   31U
 #define LCDM_RED                    63488U
 #define LCDM_GREEN                  FIRST_GEN_DISPLAY_COLOR_GREEN
-#define LCDM_DARK_GREEN             992U
+#define LCDM_DARK_GREEN             FIRST_GEN_DISPLAY_COLOR_AUTO_PASS_GREEN
 #define LCDM_DARK_RED               32768U
 #define LCDM_MAGENTA                63519U
 #define LCDM_PURPLE                 30735U

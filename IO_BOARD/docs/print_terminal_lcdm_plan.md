@@ -1,5 +1,11 @@
 # 打印终端与 LCDM 输入模块规划
 
+> 实施更新：当前 `PRINT_TERMINAL` 已改为直接绘制现有 `260728song.tft` 的共享字体和
+> K1--K4 带，不再要求该 TFT 含 `tTitle` / `tStatus` 等旧控件。实际的模板、Flash、WiFi
+> 服务端与通讯验收说明见
+> [`print_terminal_production_features.md`](print_terminal_production_features.md)。本文件其余
+> 内容保留为早期接口规划参考。
+
 本文记录打印终端模块的当前实现方向。三大模块保持独立：
 
 | 模块 | 构建模式 | 主要文件 | 说明 |

@@ -14,7 +14,12 @@
 #define TESTER_WIFI_PRINT_UART_BAUDRATE 115200UL
 #endif
 
+/* PRINT_TERMINAL selects 384 at CMake level for complete server-side +IPD
+ * records.  The validated tester image stays at its original 256-byte RAM
+ * footprint. */
+#ifndef TESTER_WIFI_AT_LINE_MAX
 #define TESTER_WIFI_AT_LINE_MAX 256U
+#endif
 
 /* Production ESP-AT transport state.  This is deliberately separate from
  * WIFI_NET_DIAG: the final LCDM tester uses the state machine below to join
@@ -85,8 +90,20 @@ void tester_wifi_print_cancel(void);
  * instead of being interpreted as print JSON frames. */
 void tester_wifi_print_at_begin(void);
 void tester_wifi_print_at_end(void);
+/* Keep the ESP-AT channel owned by a foreground settings page after a
+ * command sequence finishes.  This prevents the production reconnect state
+ * machine from transmitting a second command while the operator is still on
+ * the WiFi setup page.  Call tester_wifi_print_at_resume() when leaving the
+ * page. */
+void tester_wifi_print_at_end_hold(void);
+void tester_wifi_print_at_resume(void);
 uint8_t tester_wifi_print_at_send(const char *command);
+/* Raw payload path used by the print-host server after ESP-AT emits the
+ * CIPSEND prompt.  Unlike at_send(), this function never appends CR/LF. */
+uint8_t tester_wifi_print_at_send_bytes(const uint8_t *data, uint16_t length);
 uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size);
+/* Monotonic millisecond clock maintained by tester_wifi_print_service(). */
+uint32_t tester_wifi_print_now_ms(void);
 
 /* Called by EXINT9_5_IRQHandler for the PB9 WiFi RX edge stream. */
 void tester_wifi_print_rx_edge_isr(void);

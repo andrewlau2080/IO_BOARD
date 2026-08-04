@@ -44,8 +44,10 @@
 #define SETTINGS_NAVY                 16U
 #define SETTINGS_BLACK                0U
 #define SETTINGS_BLUE                 31U
-/* WiFi PASS cells/status use exactly the production tester PASS green. */
+/* The ordinary setting confirmation stays bright green.  A verified WiFi
+ * connection instead uses the exact dark-green background of AUTO PASS. */
 #define SETTINGS_GREEN                FIRST_GEN_DISPLAY_COLOR_GREEN
+#define SETTINGS_WIFI_PASS_GREEN      FIRST_GEN_DISPLAY_COLOR_AUTO_PASS_GREEN
 #define SETTINGS_RED                  63488U
 #define SETTINGS_WHITE                65535U
 #define SETTINGS_GRAY                 33808U
@@ -66,6 +68,14 @@
 
 #define SETTINGS_WIFI_COMMAND_TIMEOUT_MS  2500U
 #define SETTINGS_WIFI_JOIN_TIMEOUT_MS    20000U
+/* DHCP can complete a little after AT+CWJAP returns OK.  Keep the IP query
+ * phase alive long enough to poll CIFSR instead of treating the first
+ * 0.0.0.0/empty reply as an authentication failure. */
+#define SETTINGS_WIFI_IP_TIMEOUT_MS       10000U
+#define SETTINGS_WIFI_IP_RETRY_MS           300U
+/* Includes the three short setup commands, the AP association, DHCP/MAC and
+ * an optional print-host connect. */
+#define SETTINGS_WIFI_TEST_OVERALL_TIMEOUT_MS 60000U
 #define SETTINGS_WIFI_COMMAND_MAX        192U
 #define SETTINGS_STATUS_TEXT_MAX          64U
 #define SETTINGS_INPUT_MAX DEVICE_CONFIG_WIFI_PASSWORD_MAX
@@ -107,8 +117,11 @@ volatile uint32_t g_tester_settings_save_error_count;
 static device_config_t settings_draft;
 static settings_field_t settings_field;
 static settings_wifi_test_state_t settings_wifi_state;
-static uint16_t settings_wifi_elapsed_ms;
-static uint8_t settings_wifi_at_active;
+static uint32_t settings_wifi_command_deadline_ms;
+static uint32_t settings_wifi_overall_deadline_ms;
+static uint32_t settings_wifi_ip_retry_due_ms;
+static uint8_t settings_wifi_ip_retry_pending;
+static uint8_t settings_wifi_raw_owned;
 static uint8_t settings_wifi_got_ip;
 static uint8_t settings_wifi_got_mac;
 static uint8_t settings_wifi_link_ok;
@@ -117,6 +130,10 @@ static uint8_t settings_wifi_link_failed;
 static uint8_t settings_wifi_changed;
 static uint8_t settings_reset_requested;
 static uint8_t settings_input_active;
+/* The page is enabled while the three-second K3 press is still down.  Ignore
+ * that held press until its release packet arrives, or K3 immediately exits
+ * the new page and produces an apparent endless flash. */
+static uint8_t settings_touch_latched;
 static uint8_t settings_keyboard_upper;
 static uint8_t settings_keyboard_symbols;
 static char settings_input[SETTINGS_INPUT_MAX];
@@ -374,18 +391,18 @@ static void settings_field_value_style(settings_field_t field,
   }
 
   /* Normal values are blue on white.  A successful WiFi/print check uses the
-   * high-contrast production result style: white text on a green cell. */
+   * exact AUTO all-connection PASS style: white text on a dark-green cell. */
   *foreground = SETTINGS_BLUE;
   *background = SETTINGS_WHITE;
   if((field == SETTINGS_FIELD_SSID || field == SETTINGS_FIELD_PASSWORD) &&
      settings_wifi_link_ok != 0U) {
     *foreground = SETTINGS_WHITE;
-    *background = SETTINGS_GREEN;
+    *background = SETTINGS_WIFI_PASS_GREEN;
   } else if((field == SETTINGS_FIELD_SERVICE_HOST ||
              field == SETTINGS_FIELD_SERVICE_PORT) &&
             settings_print_host_connected != 0U) {
     *foreground = SETTINGS_WHITE;
-    *background = SETTINGS_GREEN;
+    *background = SETTINGS_WIFI_PASS_GREEN;
   }
 }
 
@@ -570,7 +587,7 @@ static void settings_main_link_text(char *out, uint8_t out_size,
     } else {
       (void)snprintf(out, out_size, "WIFI OK");
     }
-    *out_color = SETTINGS_GREEN;
+    *out_color = SETTINGS_WIFI_PASS_GREEN;
   } else if(settings_wifi_link_failed != 0U) {
     (void)snprintf(out, out_size, "FAIL");
     *out_color = SETTINGS_RED;
@@ -590,8 +607,8 @@ static void settings_draw_main_link(void)
   uint16_t y = SETTINGS_STATION_Y;
 
   settings_main_link_text(link, sizeof(link), &color);
-  background = (color == SETTINGS_GREEN) ? SETTINGS_GREEN : SETTINGS_WHITE;
-  if(color == SETTINGS_GREEN) {
+  background = (color == SETTINGS_WIFI_PASS_GREEN) ? SETTINGS_WIFI_PASS_GREEN : SETTINGS_WHITE;
+  if(color == SETTINGS_WIFI_PASS_GREEN) {
     color = SETTINGS_WHITE;
   }
   if(settings_main_link_cache_valid != 0U &&
@@ -624,8 +641,9 @@ static void settings_draw_main_status(void)
   uint16_t background;
   uint16_t foreground;
 
-  if(settings_status_color == SETTINGS_GREEN) {
-    background = SETTINGS_GREEN;
+  if(settings_status_color == SETTINGS_GREEN ||
+     settings_status_color == SETTINGS_WIFI_PASS_GREEN) {
+    background = settings_status_color;
     foreground = SETTINGS_WHITE;
   } else if(settings_status_color == SETTINGS_RED) {
     background = SETTINGS_RED;
@@ -775,6 +793,21 @@ static void settings_draw(void)
   settings_draw_main_status();
 }
 
+/* The normal per-cell cache avoids repainting unchanged text while typing.
+ * A completed WiFi transaction changes several dependent styles at once
+ * (SSID/PASSWORD, link cell, status and sometimes MAC), so invalidate only
+ * those cells before the one final result draw. */
+static void settings_invalidate_wifi_presentation(void)
+{
+  settings_main_row_cache_valid[SETTINGS_FIELD_SSID] = 0U;
+  settings_main_row_cache_valid[SETTINGS_FIELD_PASSWORD] = 0U;
+  settings_main_row_cache_valid[SETTINGS_FIELD_SERVICE_HOST] = 0U;
+  settings_main_row_cache_valid[SETTINGS_FIELD_SERVICE_PORT] = 0U;
+  settings_main_identity_cache_valid = 0U;
+  settings_main_link_cache_valid = 0U;
+  settings_main_status_cache_valid = 0U;
+}
+
 static uint8_t settings_copy_text(char *destination, uint8_t destination_size, const char *value)
 {
   uint8_t length = 0U;
@@ -911,12 +944,13 @@ static uint8_t settings_set_field(settings_field_t field, const char *value)
     g_tester_settings_wifi_test_passed = 0U;
     if(field == SETTINGS_FIELD_SSID || field == SETTINGS_FIELD_PASSWORD) {
       settings_wifi_got_ip = 0U;
-      settings_wifi_got_mac = 0U;
       settings_wifi_link_ok = 0U;
       settings_wifi_link_failed = 0U;
       settings_print_host_connected = 0U;
       settings_ip[0] = '\0';
-      settings_mac[0] = '\0';
+      /* The ESP module MAC identifies the module, not the AP.  Keep the last
+       * validated MAC visible when an operator replaces SSID/password; it is
+       * refreshed only by a successful MAC query. */
     } else {
       settings_print_host_connected = 0U;
     }
@@ -1507,38 +1541,50 @@ static void settings_finish_wifi_test(uint8_t passed, const char *detail)
   uint8_t mac_save_ok;
 
   /* The final MAC line has already been received by the time this function is
-   * entered.  Commit it before releasing raw AT ownership, so the next K3
+   * entered.  Commit it while raw AT ownership is still held, so the next K3
    * entry can show it even if the operator does not press K4. */
   mac_save_ok = settings_persist_read_mac();
 
-  if(settings_wifi_at_active != 0U) {
-    tester_wifi_print_at_end();
-    settings_wifi_at_active = 0U;
+  /* Do not hand the UART back to the production reconnect state machine while
+   * this page is still visible.  That state machine used to immediately send
+   * AT+CWMODE/AT+CWJAP after the final MAC line, racing the next K2 press and
+   * making the green result appear only after leaving/re-entering the page. */
+  if(settings_wifi_raw_owned != 0U) {
+    tester_wifi_print_at_end_hold();
   }
+  settings_wifi_ip_retry_pending = 0U;
+  settings_wifi_command_deadline_ms = 0U;
+  settings_wifi_overall_deadline_ms = 0U;
   g_tester_settings_wifi_test_running = 0U;
   settings_wifi_state = SETTINGS_WIFI_TEST_IDLE;
-  settings_wifi_link_failed = (settings_wifi_link_ok == 0U) ? 1U : 0U;
   if(passed != 0U) {
     g_tester_settings_wifi_test_passed = 1U;
+    settings_wifi_link_ok = 1U;
     settings_wifi_link_failed = 0U;
     if(settings_has_print_host() != 0U) {
       settings_print_host_connected = 1U;
     }
     (void)snprintf(status, sizeof(status), "NETWORK PASS %s - K4 SAVE", detail == 0 ? "" : detail);
-    settings_set_status(status, SETTINGS_GREEN);
+    settings_set_status(status, SETTINGS_WIFI_PASS_GREEN);
   } else {
     g_tester_settings_wifi_test_passed = 0U;
-    if(settings_wifi_link_ok == 0U) {
-      settings_print_host_connected = 0U;
-    }
-    (void)snprintf(status, sizeof(status), "NETWORK FAIL %s - K3 RESET", detail == 0 ? "" : detail);
+    /* A failed final step must clear any provisional IP/MAC-stage green
+     * styling.  Otherwise the red status and a stale green cell coexist until
+     * the page is opened again. */
+    settings_wifi_link_ok = 0U;
+    settings_wifi_link_failed = 1U;
+    settings_print_host_connected = 0U;
+    (void)snprintf(status, sizeof(status), "NETWORK FAIL %s - K2 RETRY", detail == 0 ? "" : detail);
     settings_set_status(status, SETTINGS_RED);
   }
   if(mac_save_ok == 0U) {
     g_tester_settings_wifi_test_passed = 0U;
+    settings_wifi_link_ok = 0U;
     settings_wifi_link_failed = 1U;
+    settings_print_host_connected = 0U;
     settings_set_status("MAC SAVE FAIL - K3 RETRY", SETTINGS_RED);
   }
+  settings_invalidate_wifi_presentation();
   settings_draw();
 }
 
@@ -1547,6 +1593,7 @@ static void settings_issue_wifi_command(settings_wifi_test_state_t state)
   const char *command = 0;
   char join_command[SETTINGS_WIFI_COMMAND_MAX];
   char tcp_start_command[SETTINGS_WIFI_COMMAND_MAX];
+  uint32_t timeout_ms;
 
   switch(state) {
   case SETTINGS_WIFI_TEST_CLOSE_OLD:
@@ -1590,13 +1637,19 @@ static void settings_issue_wifi_command(settings_wifi_test_state_t state)
     return;
   }
 
+  timeout_ms = (state == SETTINGS_WIFI_TEST_JOIN) ? SETTINGS_WIFI_JOIN_TIMEOUT_MS :
+               ((state == SETTINGS_WIFI_TEST_IP) ? SETTINGS_WIFI_IP_TIMEOUT_MS :
+                SETTINGS_WIFI_COMMAND_TIMEOUT_MS);
+  settings_wifi_state = state;
+  if(state == SETTINGS_WIFI_TEST_IP) {
+    settings_wifi_ip_retry_pending = 0U;
+  }
   settings_draw();
   if(tester_wifi_print_at_send(command) == 0U) {
     settings_finish_wifi_test(0U, "ESP UART NOT READY");
     return;
   }
-  settings_wifi_state = state;
-  settings_wifi_elapsed_ms = 0U;
+  settings_wifi_command_deadline_ms = tester_wifi_print_now_ms() + timeout_ms;
 }
 
 static void settings_start_wifi_test(void)
@@ -1622,9 +1675,14 @@ static void settings_start_wifi_test(void)
   settings_wifi_link_failed = 0U;
   settings_print_host_connected = 0U;
   settings_ip[0] = '\0';
+  settings_invalidate_wifi_presentation();
   tester_wifi_print_at_begin();
-  settings_wifi_at_active = 1U;
+  settings_wifi_raw_owned = 1U;
   g_tester_settings_wifi_test_running = 1U;
+  settings_wifi_ip_retry_pending = 0U;
+  settings_wifi_command_deadline_ms = 0U;
+  settings_wifi_overall_deadline_ms = tester_wifi_print_now_ms() +
+                                      SETTINGS_WIFI_TEST_OVERALL_TIMEOUT_MS;
   settings_issue_wifi_command(SETTINGS_WIFI_TEST_CLOSE_OLD);
 }
 
@@ -1669,11 +1727,18 @@ static void settings_process_wifi_ok(void)
     settings_issue_wifi_command(SETTINGS_WIFI_TEST_IP);
     break;
   case SETTINGS_WIFI_TEST_IP:
-    if(settings_wifi_got_ip != 0U && settings_ip[0] != '\0') {
-      settings_wifi_link_ok = 1U;
+    if(settings_wifi_got_ip != 0U && settings_ip[0] != '\0' &&
+       strcmp(settings_ip, "0.0.0.0") != 0) {
       settings_issue_wifi_command(SETTINGS_WIFI_TEST_MAC);
     } else {
-      settings_finish_wifi_test(0U, "NO STA IP");
+      /* ESP-AT can acknowledge CWJAP before the DHCP lease is visible to
+       * CIFSR.  Do not reject a valid AP merely because the first query is
+       * early; service() reissues CIFSR after a short, bounded wait. */
+      settings_wifi_ip_retry_pending = 1U;
+      settings_wifi_ip_retry_due_ms = tester_wifi_print_now_ms() +
+                                      SETTINGS_WIFI_IP_RETRY_MS;
+      settings_set_status("NETWORK TEST: WAIT DHCP / RETRY IP", SETTINGS_BLUE);
+      settings_draw();
     }
     break;
   case SETTINGS_WIFI_TEST_MAC:
@@ -1701,19 +1766,59 @@ static void settings_process_wifi_line(const char *line)
     settings_finish_wifi_test(0U, "ESP FLASH EMPTY");
     return;
   }
-  if(strstr(line, "+CIFSR:STAIP") != 0) {
+  if(strstr(line, "+CIFSR:STAIP") != 0 ||
+     strstr(line, "+CIPSTA:ip") != 0) {
     settings_copy_quoted(line, settings_ip, sizeof(settings_ip));
-    settings_wifi_got_ip = (settings_ip[0] != '\0') ? 1U : 0U;
+    settings_wifi_got_ip = (settings_ip[0] != '\0' &&
+                            strcmp(settings_ip, "0.0.0.0") != 0) ? 1U : 0U;
+    if(settings_wifi_got_ip != 0U &&
+       settings_wifi_state == SETTINGS_WIFI_TEST_IP &&
+       settings_wifi_ip_retry_pending != 0U) {
+      /* The IP line may arrive immediately after the preceding OK.  Let the
+       * pending retry run now, so its next OK advances cleanly to MAC. */
+      settings_wifi_ip_retry_due_ms = tester_wifi_print_now_ms();
+    }
     return;
   }
-  if(strstr(line, "+CIPSTAMAC") != 0) {
+  if(strstr(line, "+CIPSTAMAC") != 0 ||
+     strstr(line, "+CIFSR:STAMAC") != 0 ||
+     strstr(line, "+CIPSTA:mac") != 0) {
     settings_copy_quoted(line, settings_mac, sizeof(settings_mac));
     settings_wifi_got_mac = (settings_mac[0] != '\0') ? 1U : 0U;
-    settings_draw();
+    /* The final PASS draw updates this one read-only cell once.  Redrawing
+     * midway through an ESP response was the source of the visible flash. */
+    if(settings_wifi_got_mac != 0U &&
+       settings_wifi_state == SETTINGS_WIFI_TEST_MAC) {
+      /* The MAC response itself proves that STA is usable.  Completing here
+       * avoids a false timeout when a noisy 8 MHz software-UART capture loses
+       * only the trailing OK line. */
+      if(settings_has_print_host() == 0U) {
+        settings_finish_wifi_test(1U, settings_ip);
+      }
+    }
     return;
   }
   if(strstr(line, "WIFI GOT IP") != 0) {
     settings_wifi_got_ip = 1U;
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_JOIN) {
+      /* ESP-AT normally follows this indication with OK.  If that one small
+       * line is lost, fall through to CIFSR shortly instead of waiting the
+       * entire join timeout and declaring a healthy AP dead. */
+      settings_wifi_command_deadline_ms = tester_wifi_print_now_ms() +
+                                          SETTINGS_WIFI_IP_RETRY_MS;
+    }
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_IP &&
+       settings_wifi_ip_retry_pending != 0U) {
+      settings_wifi_ip_retry_due_ms = tester_wifi_print_now_ms();
+    }
+    return;
+  }
+  if(strncmp(line, "+CWJAP:", 7U) == 0 &&
+     settings_wifi_state == SETTINGS_WIFI_TEST_JOIN) {
+    /* ESP-AT's +CWJAP:<status> indications are terminal association errors
+     * (wrong key, AP not found, timeout, ...), unlike WIFI DISCONNECT which
+     * can be a transient pre-join notification. */
+    settings_finish_wifi_test(0U, "CHECK SSID/PASSWORD");
     return;
   }
   if(strcmp(line, "ERROR") == 0 || strstr(line, "FAIL") != 0) {
@@ -1725,6 +1830,14 @@ static void settings_process_wifi_line(const char *line)
      * is still valid, so continue to the optional print-host connection. */
     if(settings_wifi_state == SETTINGS_WIFI_TEST_MAC) {
       settings_process_wifi_ok();
+      return;
+    }
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_IP) {
+      settings_wifi_ip_retry_pending = 1U;
+      settings_wifi_ip_retry_due_ms = tester_wifi_print_now_ms() +
+                                      SETTINGS_WIFI_IP_RETRY_MS;
+      settings_set_status("NETWORK TEST: WAIT DHCP / RETRY IP", SETTINGS_BLUE);
+      settings_draw();
       return;
     }
     settings_finish_wifi_test(0U,
@@ -1739,21 +1852,9 @@ static void settings_process_wifi_line(const char *line)
   }
 }
 
-static uint16_t settings_wifi_timeout_ms(void)
-{
-  return (settings_wifi_state == SETTINGS_WIFI_TEST_JOIN) ?
-         SETTINGS_WIFI_JOIN_TIMEOUT_MS : SETTINGS_WIFI_COMMAND_TIMEOUT_MS;
-}
-
 static void settings_save(void)
 {
   if(g_tester_settings_wifi_test_running != 0U) {
-    return;
-  }
-  if(settings_wifi_changed != 0U && settings_draft.wifi_ssid[0] != '\0' &&
-     g_tester_settings_wifi_test_passed == 0U) {
-    settings_set_status("RUN NETWORK TEST BEFORE SAVE", SETTINGS_RED);
-    settings_draw();
     return;
   }
   if(device_config_save(&settings_draft) == 0U) {
@@ -1764,22 +1865,33 @@ static void settings_save(void)
   }
 
   g_tester_settings_save_count++;
-  /* The tested AP is now the stored source of truth. */
+  /* Editable WiFi parameters are allowed to be replaced even when the AP is
+   * currently out of range.  The new record is the operator's source of
+   * truth; K2 remains the explicit immediate verification action. */
   settings_wifi_changed = 0U;
-  /* A saved SSID/host replacement must never leave the former TCP session
-   * active.  The production service closes/reopens it from the new Flash
-   * record without requiring a hardware ESP EN line. */
+  /* restart() records the intent while raw AT ownership is held; the actual
+   * saved-session reconnect begins only at K3 exit. */
   tester_wifi_print_restart();
-  settings_set_status("SAVED - K3 RETURNS TO TESTER", SETTINGS_GREEN);
+  if(g_tester_settings_wifi_test_passed != 0U) {
+    settings_set_status("SAVED - K3 RETURNS TO TESTER", SETTINGS_WIFI_PASS_GREEN);
+  } else {
+    settings_set_status("SAVED - K2 TEST OR K3 EXIT", SETTINGS_BLUE);
+  }
   settings_draw();
 }
 
 static void settings_request_exit(void)
 {
-  if(settings_wifi_at_active != 0U) {
-    tester_wifi_print_at_end();
-    settings_wifi_at_active = 0U;
+  if(settings_wifi_raw_owned != 0U) {
+    /* Release the one ESP-AT owner only after the page is gone.  This starts
+     * the saved production session from Flash and prevents a test-page retry
+     * from interleaving with it. */
+    tester_wifi_print_at_resume();
+    settings_wifi_raw_owned = 0U;
   }
+  settings_wifi_ip_retry_pending = 0U;
+  settings_wifi_command_deadline_ms = 0U;
+  settings_wifi_overall_deadline_ms = 0U;
   g_tester_settings_wifi_test_running = 0U;
   settings_wifi_state = SETTINGS_WIFI_TEST_IDLE;
   /* Cancelling after a successful trial join must restore the AP held in
@@ -1788,6 +1900,7 @@ static void settings_request_exit(void)
     g_tester_settings_wifi_test_passed = 0U;
   }
   settings_input_active = 0U;
+  settings_touch_latched = 0U;
   g_tester_settings_active = 0U;
   settings_reset_requested = 1U;
 }
@@ -1796,9 +1909,14 @@ static void settings_handle_coordinate(uint16_t x, uint16_t y, uint8_t event)
 {
   settings_field_t touched_field = SETTINGS_FIELD_COUNT;
 
-  if(event == 0U || x >= SETTINGS_W || y >= SETTINGS_H) {
+  if(event == 0U) {
+    settings_touch_latched = 0U;
     return;
   }
+  if(x >= SETTINGS_W || y >= SETTINGS_H || settings_touch_latched != 0U) {
+    return;
+  }
+  settings_touch_latched = 1U;
 
   if(settings_input_active != 0U) {
     settings_handle_keyboard_coordinate(x, y, event);
@@ -1847,8 +1965,13 @@ static void settings_handle_coordinate(uint16_t x, uint16_t y, uint8_t event)
 static void settings_handle_component(uint8_t component_id, uint8_t event)
 {
   if(event == 0U) {
+    settings_touch_latched = 0U;
     return;
   }
+  if(settings_touch_latched != 0U) {
+    return;
+  }
+  settings_touch_latched = 1U;
 
   switch(component_id) {
   case 21U: settings_begin_edit(SETTINGS_FIELD_MACHINE); break;
@@ -1962,8 +2085,11 @@ void tester_settings_init(void)
   memset(&settings_draft, 0, sizeof(settings_draft));
   settings_field = SETTINGS_FIELD_MACHINE;
   settings_wifi_state = SETTINGS_WIFI_TEST_IDLE;
-  settings_wifi_elapsed_ms = 0U;
-  settings_wifi_at_active = 0U;
+  settings_wifi_command_deadline_ms = 0U;
+  settings_wifi_overall_deadline_ms = 0U;
+  settings_wifi_ip_retry_due_ms = 0U;
+  settings_wifi_ip_retry_pending = 0U;
+  settings_wifi_raw_owned = 0U;
   settings_wifi_got_ip = 0U;
   settings_wifi_got_mac = 0U;
   settings_wifi_link_ok = 0U;
@@ -1972,6 +2098,7 @@ void tester_settings_init(void)
   settings_wifi_changed = 0U;
   settings_reset_requested = 0U;
   settings_input_active = 0U;
+  settings_touch_latched = 0U;
   settings_keyboard_upper = 0U;
   settings_keyboard_symbols = 0U;
   settings_input[0] = '\0';
@@ -2002,20 +2129,21 @@ uint8_t tester_settings_begin(void)
     return 0U;
   }
 
-  /* A boot-time attempt may still be waiting for an unavailable AP.  Opening
-   * the router-style page deliberately takes ownership of ESP-AT so the
-   * operator can replace that SSID/password immediately. */
-  if(settings_wifi_at_active != 0U) {
-    tester_wifi_print_at_end();
-    settings_wifi_at_active = 0U;
-  }
+  /* Take exclusive raw ownership as soon as the setup page opens.  A
+   * production reconnect may otherwise emit a command while the operator is
+   * editing or pressing K2, which is indistinguishable from an AP failure on
+   * the shared PC3/PB9 software UART. */
+  tester_wifi_print_at_begin();
+  settings_wifi_raw_owned = 1U;
   g_tester_settings_wifi_test_running = 0U;
 
   device_config_copy(&settings_draft);
   settings_field = SETTINGS_FIELD_MACHINE;
   settings_wifi_state = SETTINGS_WIFI_TEST_IDLE;
-  settings_wifi_elapsed_ms = 0U;
-  settings_wifi_at_active = 0U;
+  settings_wifi_command_deadline_ms = 0U;
+  settings_wifi_overall_deadline_ms = 0U;
+  settings_wifi_ip_retry_due_ms = 0U;
+  settings_wifi_ip_retry_pending = 0U;
   settings_wifi_got_ip = 0U;
   settings_wifi_got_mac = 0U;
   settings_wifi_link_ok = 0U;
@@ -2024,6 +2152,7 @@ uint8_t tester_settings_begin(void)
   settings_wifi_changed = 0U;
   settings_reset_requested = 0U;
   settings_input_active = 0U;
+  settings_touch_latched = 1U;
   settings_keyboard_upper = 0U;
   settings_keyboard_symbols = 0U;
   settings_input[0] = '\0';
@@ -2076,7 +2205,8 @@ uint8_t tester_settings_take_reset_request(void)
 
 void tester_settings_start_saved_wifi(void)
 {
-  if(g_tester_settings_wifi_test_running == 0U) {
+  if(g_tester_settings_active == 0U &&
+     g_tester_settings_wifi_test_running == 0U) {
     tester_wifi_print_restart();
   }
 }
@@ -2084,25 +2214,69 @@ void tester_settings_start_saved_wifi(void)
 void tester_settings_network_service(uint16_t elapsed_ms)
 {
   char line[TESTER_WIFI_AT_LINE_MAX];
+  uint32_t now_ms;
 
   /* Keep the formal ESP-AT TCP state machine alive while the maintenance page
    * is open.  During a manual test raw AT ownership makes this call decode
    * only the test's response queue. */
   tester_wifi_print_service();
+  while(tester_wifi_print_at_poll_line(line, sizeof(line)) != 0U) {
+    if(g_tester_settings_wifi_test_running != 0U) {
+      settings_process_wifi_line(line);
+    }
+    /* Late asynchronous lines are deliberately discarded while idle.  This
+     * keeps the raw queue clean for the next K2 attempt. */
+  }
+
   if(g_tester_settings_wifi_test_running == 0U) {
     return;
   }
-  while(tester_wifi_print_at_poll_line(line, sizeof(line)) != 0U) {
-    settings_process_wifi_line(line);
-  }
 
-  if(g_tester_settings_wifi_test_running == 0U || elapsed_ms == 0U) {
+  (void)elapsed_ms;
+  now_ms = tester_wifi_print_now_ms();
+
+  if(settings_wifi_state == SETTINGS_WIFI_TEST_IP &&
+     settings_wifi_ip_retry_pending != 0U &&
+     (int32_t)(now_ms - settings_wifi_ip_retry_due_ms) >= 0) {
+    if(settings_wifi_overall_deadline_ms != 0U &&
+       (int32_t)(now_ms - settings_wifi_overall_deadline_ms) >= 0) {
+      settings_finish_wifi_test(0U, "NO STA IP");
+    } else {
+      settings_issue_wifi_command(SETTINGS_WIFI_TEST_IP);
+    }
     return;
   }
-  if(elapsed_ms >= (uint16_t)(settings_wifi_timeout_ms() - settings_wifi_elapsed_ms)) {
+
+  if(settings_wifi_overall_deadline_ms != 0U &&
+     (int32_t)(now_ms - settings_wifi_overall_deadline_ms) >= 0) {
+    settings_finish_wifi_test(0U,
+                              (settings_wifi_state == SETTINGS_WIFI_TEST_IP) ?
+                              "NO STA IP" : "TIMEOUT - PRESS K3");
+    return;
+  }
+
+  if(settings_wifi_command_deadline_ms != 0U &&
+     (int32_t)(now_ms - settings_wifi_command_deadline_ms) >= 0) {
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_JOIN &&
+       settings_wifi_got_ip != 0U) {
+      settings_issue_wifi_command(SETTINGS_WIFI_TEST_IP);
+      return;
+    }
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_MAC &&
+       settings_wifi_got_mac != 0U) {
+      if(settings_has_print_host() != 0U) {
+        settings_issue_wifi_command(SETTINGS_WIFI_TEST_TCP_START);
+      } else {
+        settings_finish_wifi_test(1U, settings_ip);
+      }
+      return;
+    }
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_IP) {
+      settings_wifi_ip_retry_pending = 1U;
+      settings_wifi_ip_retry_due_ms = now_ms;
+      return;
+    }
     settings_finish_wifi_test(0U, "TIMEOUT - PRESS K3");
-  } else {
-    settings_wifi_elapsed_ms = (uint16_t)(settings_wifi_elapsed_ms + elapsed_ms);
   }
 }
 

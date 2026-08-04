@@ -28,7 +28,7 @@
  * full ACK/DONE message while the foreground 4051 scan continues. */
 #define TESTER_WIFI_RX_EDGE_MAX          4096U
 #define TESTER_WIFI_RX_EDGE_MASK         (TESTER_WIFI_RX_EDGE_MAX - 1U)
-#define TESTER_WIFI_RX_LINE_MAX          256U
+#define TESTER_WIFI_RX_LINE_MAX          TESTER_WIFI_AT_LINE_MAX
 #define TESTER_WIFI_EVENT_QUEUE_MAX      8U
 #define TESTER_WIFI_AT_LINE_QUEUE_MAX    16U
 #define TESTER_WIFI_AT_COMMAND_MAX       192U
@@ -98,6 +98,11 @@ static char wifi_at_line_queue[TESTER_WIFI_AT_LINE_QUEUE_MAX][TESTER_WIFI_RX_LIN
 static uint8_t wifi_at_line_head;
 static uint8_t wifi_at_line_tail;
 static uint8_t wifi_at_capture_enabled;
+/* A raw AT owner (the LCDM settings page) may remain open for several
+ * seconds after a command sequence completes.  While this flag is set the
+ * background production reconnect state machine is paused; otherwise it can
+ * inject AT+CWMODE/AT+CWJAP between two operator retries. */
+static uint8_t wifi_raw_hold;
 /* Only WIFI_LINK_DIAG sets this token.  The normal print protocol never
  * treats a bare ESP-AT OK/ERROR text as a print event. */
 static uint32_t wifi_link_test_sequence;
@@ -1116,7 +1121,8 @@ static void wifi_decode_rx_edges(void)
 
 static void wifi_production_service(void)
 {
-  if(wifi_auto_start_enabled == 0U || wifi_at_capture_enabled != 0U) {
+  if(wifi_auto_start_enabled == 0U || wifi_at_capture_enabled != 0U ||
+     wifi_raw_hold != 0U) {
     return;
   }
 
@@ -1217,6 +1223,7 @@ void tester_wifi_print_init(void)
   wifi_event_queue_reset();
   wifi_at_line_queue_reset();
   wifi_at_capture_enabled = 0U;
+  wifi_raw_hold = 0U;
   wifi_link_test_sequence = 0U;
   wifi_auto_start_enabled = 0U;
   wifi_restart_after_raw = 0U;
@@ -1245,7 +1252,11 @@ void tester_wifi_print_init(void)
   exint_init_struct.line_polarity = EXINT_TRIGGER_BOTH_EDGE;
   exint_init(&exint_init_struct);
   exint_flag_clear(TESTER_WIFI_RX_EXINT_LINE);
-  nvic_irq_enable(EXINT9_5_IRQn, 1U, 0U);
+  /* At the validated first-generation 8 MHz scan clock one 115200-baud bit
+   * is only about 69 CPU cycles.  Give the edge capture interrupt higher
+   * pre-emption priority than the LCDM USART so an acknowledged draw cannot
+   * erase a start/data edge and turn a valid AP join into a false NO STA IP. */
+  nvic_irq_enable(EXINT9_5_IRQn, 0U, 0U);
 
   g_tester_wifi_print_ready = 1U;
 }
@@ -1457,11 +1468,13 @@ void tester_wifi_print_at_begin(void)
   wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
   wifi_state_deadline_ms = 0U;
   wifi_at_capture_enabled = 1U;
+  wifi_raw_hold = 1U;
 }
 
 void tester_wifi_print_at_end(void)
 {
   wifi_at_capture_enabled = 0U;
+  wifi_raw_hold = 0U;
   wifi_at_line_queue_reset();
   wifi_rx_line_len = 0U;
 
@@ -1469,6 +1482,48 @@ void tester_wifi_print_at_end(void)
     wifi_restart_after_raw = 0U;
     wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
     wifi_begin_production_session();
+  }
+}
+
+void tester_wifi_print_at_end_hold(void)
+{
+  if(g_tester_wifi_print_ready == 0U) {
+    return;
+  }
+
+  /* Keep raw capture enabled while the settings page remains visible.  The
+   * foreground page can start another command immediately, but production
+   * code is prevented from using the same software UART in parallel. */
+  wifi_at_capture_enabled = 1U;
+  wifi_raw_hold = 1U;
+  wifi_restart_after_raw = 1U;
+  wifi_at_line_queue_reset();
+  wifi_rx_line_len = 0U;
+  wifi_rx_edge_tail = wifi_rx_edge_head;
+  wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
+  wifi_state_deadline_ms = 0U;
+}
+
+void tester_wifi_print_at_resume(void)
+{
+  if(g_tester_wifi_print_ready == 0U) {
+    return;
+  }
+
+  wifi_at_capture_enabled = 0U;
+  wifi_raw_hold = 0U;
+  wifi_restart_after_raw = 0U;
+  wifi_at_line_queue_reset();
+  wifi_rx_line_len = 0U;
+  wifi_rx_edge_tail = wifi_rx_edge_head;
+
+  if(wifi_auto_start_enabled != 0U) {
+    wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
+    wifi_state_deadline_ms = 0U;
+    wifi_begin_production_session();
+  } else {
+    wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
+    wifi_state_deadline_ms = 0U;
   }
 }
 
@@ -1494,6 +1549,17 @@ uint8_t tester_wifi_print_at_send(const char *command)
   return 1U;
 }
 
+uint8_t tester_wifi_print_at_send_bytes(const uint8_t *data, uint16_t length)
+{
+  if(g_tester_wifi_print_ready == 0U || wifi_at_capture_enabled == 0U ||
+     data == 0 || length == 0U) {
+    return 0U;
+  }
+
+  wifi_write_bytes(data, length);
+  return 1U;
+}
+
 uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size)
 {
   if(line == 0 || line_size == 0U || wifi_at_line_tail == wifi_at_line_head) {
@@ -1506,6 +1572,15 @@ uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size)
                  wifi_at_line_queue[wifi_at_line_tail]);
   wifi_at_line_tail = (uint8_t)((wifi_at_line_tail + 1U) % TESTER_WIFI_AT_LINE_QUEUE_MAX);
   return 1U;
+}
+
+uint32_t tester_wifi_print_now_ms(void)
+{
+  /* Callers also use this timestamp immediately after a blocking LCDM draw
+   * followed by an AT transmit.  Advance it here so command deadlines start
+   * at the real send time, not at the previous foreground service pass. */
+  wifi_time_service();
+  return wifi_time_ms;
 }
 
 void tester_wifi_print_rx_edge_isr(void)
