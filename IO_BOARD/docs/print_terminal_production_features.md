@@ -80,6 +80,12 @@ DONE,<event_id>\n
 不会二次打印。服务器支持多个 ESP-AT link ID、发送队列、CIPSEND prompt、发送超时重试
 和 WiFi 断线重连。
 
+收到请求后，控制器先回 `ACK,<event_id>,QUEUED`，当任务从队列取出时回
+`PRINTING,<event_id>` 并在 LCDM 显示 `PRINTING`。当前尚未接实体打印机，固件保留该
+状态 5 秒，然后以 `PRINT COMPLETE` 显示并回 `DONE,<event_id>`，供测试机/打印侧联调。
+接入打印机后，这个固定 5 秒模拟必须替换为 RS232 发送后的真实完成或故障确认：真实完成
+才回 `DONE`，打印机拒绝、超时或故障才回 `ERROR`。
+
 打印端与测试机共用同一套 PC3/PB9、115200-8N1 和 `AT+CWJAP` 加入逻辑，但打印端的
 SSID/密码/监听端口保存在独立的打印控制器 Flash 区。加入阶段的 `WIFI DISCONNECT` 按
 测试机规则视为过渡提示；`AT+CIFSR` 遇到 DHCP 尚未完成时会在限定时间内重试，不再

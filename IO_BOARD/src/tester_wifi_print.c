@@ -829,13 +829,19 @@ static uint8_t wifi_handle_print_frame(const char *frame)
      strstr(payload, "ACK,") == payload) {
     event = TESTER_WIFI_PRINT_EVENT_ACK_QUEUED;
   } else if((strstr(payload, "\"type\":\"print_status\"") != 0 &&
+             strstr(payload, "\"state\":\"PRINTING\"") != 0) ||
+            strstr(payload, "PRINTING,") == payload) {
+    event = TESTER_WIFI_PRINT_EVENT_PRINTING;
+  } else if((strstr(payload, "\"type\":\"print_status\"") != 0 &&
              strstr(payload, "\"state\":\"DONE\"") != 0) ||
             strstr(payload, "DONE,") == payload) {
     event = TESTER_WIFI_PRINT_EVENT_DONE;
   } else if((strstr(payload, "\"type\":\"print_status\"") != 0 &&
              strstr(payload, "\"state\":\"ERROR\"") != 0) ||
             strstr(payload, "ERROR,") == payload) {
-    event = TESTER_WIFI_PRINT_EVENT_ERROR;
+    /* A valid response from the print controller is different from a
+     * transport timeout.  Preserve that distinction for the LCDM page. */
+    event = TESTER_WIFI_PRINT_EVENT_PRINT_ERROR;
   }
 
   if(event == TESTER_WIFI_PRINT_EVENT_NONE) {
@@ -846,12 +852,13 @@ static uint8_t wifi_handle_print_frame(const char *frame)
   wifi_queue_event(event, event_id);
 
   if(wifi_job_active != 0U && event_id == wifi_job_event_id) {
-    if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED) {
+    if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED ||
+       event == TESTER_WIFI_PRINT_EVENT_PRINTING) {
       wifi_job_acked = 1U;
       wifi_job_needs_send = 0U;
       wifi_job_wait_deadline_ms = wifi_time_ms + TESTER_WIFI_DONE_TIMEOUT_MS;
     } else if(event == TESTER_WIFI_PRINT_EVENT_DONE ||
-              event == TESTER_WIFI_PRINT_EVENT_ERROR) {
+              event == TESTER_WIFI_PRINT_EVENT_PRINT_ERROR) {
       wifi_job_clear();
     }
   }
@@ -988,8 +995,8 @@ static void wifi_handle_frame(const char *frame)
      * network payloads, because they would otherwise silently hide a broken
      * print-host protocol. */
     if(strncmp(frame, "+IPD,", 5U) == 0 || frame[0] == '{' ||
-       strstr(frame, "ACK,") == frame || strstr(frame, "DONE,") == frame ||
-       strstr(frame, "ERROR,") == frame) {
+       strstr(frame, "ACK,") == frame || strstr(frame, "PRINTING,") == frame ||
+       strstr(frame, "DONE,") == frame || strstr(frame, "ERROR,") == frame) {
       g_tester_wifi_print_rx_error_count++;
     }
   }

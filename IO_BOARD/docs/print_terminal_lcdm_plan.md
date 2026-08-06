@@ -96,7 +96,7 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 | `nQty` | 数字 | 数量 |
 | `nCopies` | 数字 | 份数 |
 | `tPreview` | 文本 | ASCII 标签预览 |
-| `tStatus` | 文本 | `READY` / `PRINT OK` / `PRINT ERROR` |
+| `tStatus` | 文本 | `READY` / `PRINTING` / `PRINT COMPLETE` / `PRINTER FAULT` / `NETWORK ERROR` |
 
 ## 接线与 IO 规格
 
@@ -111,7 +111,7 @@ AT32F455 链接脚本为约 510 KB Flash、144 KB RAM。当前这些字段和 LC
 | 显示共用口 TX | MCU -> LEDM/LCDM | `PA9` | GPIO 或 `USART1_TX` / AF7 | 按显示探测决定 | 无 LCDM 回应时作 LEDM CLK/TX；有 LCDM 回应时作 LCDM TX |
 | 显示共用口 RX | LEDM/LCDM -> MCU | `PA10` | GPIO 或 `USART1_RX` / AF7 | 按显示探测决定 | 无 LCDM 回应时作 LEDM DIO/RX；有 LCDM 回应时作 LCDM RX |
 | 打印机 TX | MCU -> 打印机/转换器 | `PB5` | GPIO 软件 UART TX | 默认 9600 8N1 | 发送 ZPL/TSPL/ESC/POS 标签内容 |
-| 打印机 RX | 打印机/转换器 -> MCU | `PB3` | GPIO 软件 UART RX | 默认 9600 8N1 | 接收打印机状态或转换器返回 |
+| 打印机 RX | 打印机/转换器 -> MCU | `PB3` | GPIO 软件 UART RX | 默认 9600 8N1 | 当前模拟阶段保留；接入实体打印机后接收完成/故障回报 |
 | 2 kHz 蜂鸣器 | 蜂鸣器驱动 | `PB4` | GPIO 输出 | 高电平有效 | PASS 1s 响 1s 停；NG 0.5s 响两下，中间 0.5s，末尾停 1s |
 | RS485 DE/RE | 方向控制 | 待核定 | GPIO | 可选 | `PA1` 已为 `DEBUG_TTL_RX`，不能作为方向脚；需要半双工时重新分配 |
 | WiFi/无线模块 TX | MCU 发给 ESP32 | `PC3` | GPIO 软件 UART TX | 第一版建议 115200 8N1 | 07-07-N 已确认为 `WIFI_TX`，接 ESP32-C3-WROOM-02U `RXD` / Pin 11 |

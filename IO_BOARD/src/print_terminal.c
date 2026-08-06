@@ -57,9 +57,15 @@ static char preview_text[PRINT_LABEL_TEXT_MAX];
 static char lcdm_status_text[32];
 static uint8_t refresh_requested;
 static uint8_t lcdm_frame_drawn;
+static uint8_t wifi_print_active;
+static uint32_t wifi_print_deadline_ms;
+static print_host_wifi_request_t wifi_print_request;
 
 static uint16_t host_status_color(void)
 {
+  if(print_host_wifi_is_error() != 0U) {
+    return PRINT_LCDM_RED;
+  }
   return print_host_wifi_is_online() != 0U ? PRINT_LCDM_GREEN : PRINT_LCDM_BLUE;
 }
 
@@ -324,6 +330,9 @@ static void lcdm_draw_dynamic_content(void)
   char template_text[48];
   const print_terminal_store_config_t *store;
   const char *status = lcdm_status_text;
+  uint16_t link_color;
+  uint16_t link_fg;
+  uint16_t link_bg;
   uint16_t status_fg = PRINT_LCDM_BLUE;
   uint16_t status_bg = PRINT_LCDM_ROW_BG;
 
@@ -332,10 +341,20 @@ static void lcdm_draw_dynamic_content(void)
     status = "PREVIEW";
     status_bg = PRINT_LCDM_PALE_BLUE;
     status_fg = PRINT_LCDM_NAVY;
+  } else if(g_print_terminal_state == PRINT_TERMINAL_STATE_PRINTING) {
+    status = "PRINTING";
+    status_bg = PRINT_LCDM_BLUE;
+    status_fg = PRINT_LCDM_WHITE;
   } else if(g_print_terminal_state == PRINT_TERMINAL_STATE_PRINTED) {
+    status = "PRINT COMPLETE";
     status_bg = PRINT_LCDM_GREEN;
     status_fg = PRINT_LCDM_WHITE;
   } else if(g_print_terminal_state == PRINT_TERMINAL_STATE_ERROR) {
+    status = "PRINTER FAULT";
+    status_bg = PRINT_LCDM_RED;
+    status_fg = PRINT_LCDM_WHITE;
+  } else if(g_print_terminal_state == PRINT_TERMINAL_STATE_NETWORK_ERROR) {
+    status = "NETWORK ERROR";
     status_bg = PRINT_LCDM_RED;
     status_fg = PRINT_LCDM_WHITE;
   }
@@ -354,6 +373,17 @@ static void lcdm_draw_dynamic_content(void)
                  "%s  %lu",
                  print_host_wifi_status_text(),
                  (unsigned long)rs485_cfg.baudrate);
+  link_color = host_status_color();
+  if(link_color == PRINT_LCDM_GREEN) {
+    link_fg = PRINT_LCDM_WHITE;
+    link_bg = PRINT_LCDM_GREEN;
+  } else if(link_color == PRINT_LCDM_RED) {
+    link_fg = PRINT_LCDM_RED;
+    link_bg = PRINT_LCDM_WHITE;
+  } else {
+    link_fg = PRINT_LCDM_NAVY;
+    link_bg = PRINT_LCDM_WHITE;
+  }
   (void)snprintf(result_text,
                  sizeof(result_text),
                  "CODE: %s",
@@ -385,9 +415,7 @@ static void lcdm_draw_dynamic_content(void)
   lcdm_raw_xstr(24U, 174U, 216U, 20U, PRINT_LCDM_FONT_SMALL,
                 PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 0U, station_text);
   lcdm_raw_xstr(240U, 174U, 216U, 20U, PRINT_LCDM_FONT_SMALL,
-                host_status_color() == PRINT_LCDM_GREEN ? PRINT_LCDM_WHITE : PRINT_LCDM_NAVY,
-                host_status_color() == PRINT_LCDM_GREEN ? PRINT_LCDM_GREEN : PRINT_LCDM_WHITE,
-                2U, link_text);
+                link_fg, link_bg, 2U, link_text);
 }
 
 static void send_job_to_lcdm(void)
@@ -628,6 +656,11 @@ static void handle_field_packet(const char *packet)
   }
 
   if(strcmp(packet, "setup") == 0 || strcmp(packet, "settings") == 0) {
+    if(wifi_print_active != 0U) {
+      set_status_text("PRINTING - SETUP LOCKED");
+      refresh_requested = 1U;
+      return;
+    }
     (void)print_terminal_settings_begin(PRINT_TERMINAL_SETTINGS_LABEL,
                                          &active_job);
     return;
@@ -648,11 +681,22 @@ static void handle_field_packet(const char *packet)
 
 static void handle_direct_button(uint8_t button)
 {
+  if(wifi_print_active != 0U) {
+    set_status_text("PRINTING - KEYS LOCKED");
+    refresh_requested = 1U;
+    return;
+  }
+
   if(button == 0U) {
     handle_field_packet("preview");
   } else if(button == 1U) {
     handle_field_packet("print");
   } else if(button == 2U) {
+    if(wifi_print_active != 0U) {
+      set_status_text("PRINTING - SETUP LOCKED");
+      refresh_requested = 1U;
+      return;
+    }
     (void)print_terminal_settings_begin_from_touch(
         PRINT_TERMINAL_SETTINGS_LABEL, &active_job);
   } else if(button == 3U) {
@@ -689,6 +733,11 @@ static void handle_touch_coordinate(const lcdm_tjc_event_t *event)
   /* The header is an always-visible entry point for the editable label and
    * communication pages.  It avoids depending on hidden TFT component IDs. */
   if(event->y >= 32U && event->y < 64U) {
+    if(wifi_print_active != 0U) {
+      set_status_text("PRINTING - SETUP LOCKED");
+      refresh_requested = 1U;
+      return;
+    }
     (void)print_terminal_settings_begin_from_touch(
         PRINT_TERMINAL_SETTINGS_LABEL, &active_job);
     return;
@@ -739,23 +788,83 @@ static void apply_wifi_request(const print_host_wifi_request_t *request)
   }
 }
 
+static void begin_wifi_print_request(const print_host_wifi_request_t *request)
+{
+  if(request == 0 || wifi_print_active != 0U) {
+    return;
+  }
+
+  wifi_print_request = *request;
+  apply_wifi_request(&wifi_print_request);
+  wifi_print_active = 1U;
+  g_print_terminal_state = PRINT_TERMINAL_STATE_PRINTING;
+  set_status_text("PRINTING");
+  /* ACK/QUEUED was sent when the +IPD request arrived.  This second response
+   * tells the tester that the terminal has actually taken the job and is no
+   * longer merely holding it in its request queue. */
+  (void)print_host_wifi_send_printing(&wifi_print_request);
+#if PRINT_TERMINAL_SIMULATE_PRINT
+  wifi_print_deadline_ms = tester_wifi_print_now_ms() +
+                           PRINT_TERMINAL_SIMULATED_PRINT_MS;
+#else
+  /* Replace this branch with the real RS232 print-driver start operation.
+   * The WiFi request/response state machine deliberately remains unchanged. */
+  wifi_print_deadline_ms = 0U;
+#endif
+  refresh_requested = 1U;
+}
+
+static void service_wifi_print_job(void)
+{
+  print_driver_status_t driver_status;
+
+  if(wifi_print_active == 0U) {
+    return;
+  }
+
+#if PRINT_TERMINAL_SIMULATE_PRINT
+  if((int32_t)(tester_wifi_print_now_ms() - wifi_print_deadline_ms) < 0) {
+    return;
+  }
+
+  /* The current print driver formats/queues the label only; this delayed call
+   * is the simulation boundary that will later be replaced by RS232 ACK/DONE
+   * and printer-fault polling. */
+  driver_status = print_driver_submit(&active_job);
+#else
+  /* A future RS232 backend can return BUSY until its printer response arrives;
+   * only a terminal status ends the WiFi transaction. */
+  driver_status = print_driver_submit(&active_job);
+  if(driver_status == PRINT_DRIVER_BUSY) {
+    return;
+  }
+#endif
+
+  wifi_print_active = 0U;
+  wifi_print_deadline_ms = 0U;
+  if(driver_status == PRINT_DRIVER_OK) {
+    g_print_terminal_print_count++;
+    g_print_terminal_state = PRINT_TERMINAL_STATE_PRINTED;
+    set_status_text("PRINT COMPLETE");
+    (void)print_host_wifi_send_done(&wifi_print_request);
+  } else {
+    g_print_terminal_state = PRINT_TERMINAL_STATE_ERROR;
+    set_status_text("PRINTER FAULT");
+    (void)print_host_wifi_send_error(&wifi_print_request);
+  }
+  refresh_requested = 1U;
+}
+
 static void service_wifi_print_requests(void)
 {
   print_host_wifi_request_t request;
 
-  while(print_host_wifi_poll_request(&request) != 0U) {
-    apply_wifi_request(&request);
-    if(print_driver_submit(&active_job) == PRINT_DRIVER_OK) {
-      g_print_terminal_print_count++;
-      g_print_terminal_state = PRINT_TERMINAL_STATE_PRINTED;
-      set_status_text("WIFI PRINT OK");
-      (void)print_host_wifi_send_done(&request);
-    } else {
-      g_print_terminal_state = PRINT_TERMINAL_STATE_ERROR;
-      set_status_text("WIFI PRINT ERROR");
-      (void)print_host_wifi_send_error(&request);
-    }
-    refresh_requested = 1U;
+  /* Keep one physical print transaction at a time.  Additional requests stay
+   * in the host queue and retain their ACK/duplicate identity until the
+   * current simulated or RS232 job finishes. */
+  if(wifi_print_active == 0U &&
+     print_host_wifi_poll_request(&request) != 0U) {
+    begin_wifi_print_request(&request);
   }
 }
 
@@ -764,6 +873,9 @@ void print_terminal_init(void)
   const print_terminal_store_config_t *store;
 
   g_print_terminal_state = PRINT_TERMINAL_STATE_EDIT;
+  wifi_print_active = 0U;
+  wifi_print_deadline_ms = 0U;
+  memset(&wifi_print_request, 0, sizeof(wifi_print_request));
   print_terminal_store_init();
   print_driver_init();
   print_terminal_store_apply_runtime();
@@ -804,10 +916,28 @@ void print_terminal_service(void)
   line_comm_print_request_t request;
 
   print_host_wifi_service();
-  print_terminal_settings_set_network_status(print_host_wifi_status_text(),
-                                             print_host_wifi_is_online() != 0U ?
-                                             PRINT_LCDM_GREEN : PRINT_LCDM_BLUE);
+  service_wifi_print_job();
   service_wifi_print_requests();
+
+  /* A lost AP/server session is a network fault, not a printer fault.  Do not
+   * overwrite PRINTING/PRINT COMPLETE while a queued job is still being
+   * resolved; the tester will use its transport timeout if DONE cannot return. */
+  if(wifi_print_active == 0U && print_host_wifi_is_error() != 0U &&
+     g_print_terminal_state != PRINT_TERMINAL_STATE_PRINTED &&
+     g_print_terminal_state != PRINT_TERMINAL_STATE_ERROR) {
+    if(g_print_terminal_state != PRINT_TERMINAL_STATE_NETWORK_ERROR) {
+      g_print_terminal_state = PRINT_TERMINAL_STATE_NETWORK_ERROR;
+      set_status_text("NETWORK ERROR");
+      refresh_requested = 1U;
+    }
+  } else if(print_host_wifi_is_online() != 0U &&
+            g_print_terminal_state == PRINT_TERMINAL_STATE_NETWORK_ERROR) {
+    g_print_terminal_state = PRINT_TERMINAL_STATE_EDIT;
+    set_status_text("READY");
+    refresh_requested = 1U;
+  }
+  print_terminal_settings_set_network_status(print_host_wifi_status_text(),
+                                             host_status_color());
 
   if(print_terminal_settings_is_active() != 0U) {
     print_terminal_settings_service();

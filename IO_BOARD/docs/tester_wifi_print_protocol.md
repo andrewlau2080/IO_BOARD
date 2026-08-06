@@ -66,7 +66,7 @@ SEND OK
 ```
 
 ESP-AT 接收的主机数据会带 `+IPD,<length>:` 前缀；固件去掉该前缀后再解析 JSON。
-打印主机发送的单条 ACK/DONE/ERROR 帧应不超过 200 字节，并必须在同一 LF 前完成。
+打印主机发送的单条 ACK/PRINTING/DONE/ERROR 帧应不超过 200 字节，并必须在同一 LF 前完成。
 
 ## 测试机发送
 
@@ -89,6 +89,12 @@ LCDM 显示红色 `NETWORK ERROR / K3 RESET / RETRY PRINT`，当前产品保持�
 {"type":"print_ack","event_id":27,"state":"QUEUED"}
 ```
 
+当任务已实际进入打印执行阶段，主机再回：
+
+```json
+{"type":"print_status","event_id":27,"state":"PRINTING"}
+```
+
 ```json
 {"type":"print_status","event_id":27,"state":"DONE"}
 ```
@@ -99,8 +105,12 @@ LCDM 显示红色 `NETWORK ERROR / K3 RESET / RETRY PRINT`，当前产品保持�
 {"type":"print_status","event_id":27,"state":"ERROR"}
 ```
 
-联调时也兼容紧凑文本帧：`ACK,27,QUEUED`、`DONE,27`、`ERROR,27`；它们同样必须以 LF
+联调时也兼容紧凑文本帧：`ACK,27,QUEUED`、`PRINTING,27`、`DONE,27`、`ERROR,27`；它们同样必须以 LF
 结束并通过 TCP 发送。
+
+当前打印控制板未接实体打印机时，`PRINTING` 保持 5 秒后进入 `DONE`，用于完整观察
+测试机和打印侧画面与重传逻辑。该延时仅是临时模拟；接入打印机后，必须改由 RS232
+驱动的真实完成/故障回报产生 `DONE`/`ERROR`，不能再按固定延时确认标签已输出。
 
 ## 完整测试机动作
 
@@ -110,14 +120,16 @@ PASS
   -> START PRINTING
   -> ESP-AT TCP CIPSEND(print_request)
   -> print_ack QUEUED
+  -> print_status PRINTING
   -> print_status DONE
   -> COMPLETE
   -> 连续完整扫描 94 × 94，确认所有 OUT/IN 都开路
   -> 等待新线束，自动开始下一件
 ```
 
-在 `START PRINTING`、`COMPLETE` 和拆线确认期间，测试机不把产品取下过程误判成 NG。只有
-`DONE` 后且全矩阵开路确认成功，才允许下一件自动开始。
+在 `START PRINTING`、`PRINTING`、`COMPLETE` 和拆线确认期间，测试机不把产品取下过程
+误判成 NG。`ERROR` 是打印机/模板的远端故障，`NETWORK ERROR` 是 WiFi/TCP 重试耗尽；
+两者都需 K3 恢复。只有 `DONE` 后且全矩阵开路确认成功，才允许下一件自动开始。
 
 ## LCDM 设置和验收
 

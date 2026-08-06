@@ -43,10 +43,13 @@ void print_host_wifi_start(void);
 void print_host_wifi_restart(void);
 void print_host_wifi_service(void);
 uint8_t print_host_wifi_is_online(void);
+uint8_t print_host_wifi_is_error(void);
 const char *print_host_wifi_status_text(void);
 const char *print_host_wifi_ip_text(void);
 const char *print_host_wifi_mac_text(void);
 uint8_t print_host_wifi_poll_request(print_host_wifi_request_t *out_request);
+/* Report that a queued request has entered the printer execution phase. */
+uint8_t print_host_wifi_send_printing(const print_host_wifi_request_t *request);
 uint8_t print_host_wifi_send_done(const print_host_wifi_request_t *request);
 uint8_t print_host_wifi_send_error(const print_host_wifi_request_t *request);
 

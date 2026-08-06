@@ -252,7 +252,9 @@ static uint8_t expected_harness_find_next_problem(uint16_t start_out,
                                                   uint16_t *problem_out,
                                                   uint16_t *problem_in);
 static void panel_arm_print_workflow(void);
-static void panel_hold_print_error(void);
+static void panel_hold_print_network_error(void);
+static void panel_hold_printer_error(void);
+static void panel_show_printing(void);
 static uint8_t panel_service_print_event(uint16_t elapsed_ms);
 static uint8_t panel_all_connections_open_for_out(uint16_t out_point);
 static uint8_t panel_printed_hold_service(void);
@@ -3439,7 +3441,7 @@ static void first_gen_print_link_init(void)
   tester_wifi_print_init();
 }
 
-static void panel_hold_print_error(void)
+static void panel_hold_print_network_error(void)
 {
   g_first_gen_print_error_counter++;
   g_first_gen_print_waiting_for_wifi = 0U;
@@ -3449,6 +3451,30 @@ static void panel_hold_print_error(void)
     first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_ERROR);
   } else {
     display_error_code(3U);
+  }
+}
+
+static void panel_hold_printer_error(void)
+{
+  g_first_gen_print_error_counter++;
+  g_first_gen_print_waiting_for_wifi = 0U;
+  g_first_gen_print_done = 0U;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_ERROR;
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_PRINTER_ERROR);
+  } else {
+    /* The LEDM fallback has no full-width text page; keep a distinct six
+     * character code while the LCDM production page shows PRINTER FAULT. */
+    first_gen_display_write_text6((const char[6]){'P', 'r', 'n', 'E', 'r', ' '});
+  }
+}
+
+static void panel_show_printing(void)
+{
+  if(first_gen_display_is_lcdm() != 0U) {
+    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_PRINTING);
+  } else {
+    display_printing();
   }
 }
 
@@ -3534,7 +3560,7 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
                                  print_test_count,
                                  g_first_gen_learn_out_count,
                                  (uint16_t)g_first_gen_learn_connected_pairs) == 0U) {
-      panel_hold_print_error();
+      panel_hold_print_network_error();
       print_hall_active_ms = 0U;
       return 1U;
     }
@@ -3547,13 +3573,19 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
 
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK) {
     event = tester_wifi_print_poll_event(print_event_id);
-    if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED) {
+    if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED ||
+       event == TESTER_WIFI_PRINT_EVENT_PRINTING) {
       g_first_gen_print_ack_counter++;
       g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE;
+      panel_show_printing();
       return 1U;
     }
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      panel_hold_print_error();
+      panel_hold_print_network_error();
+      return 1U;
+    }
+    if(event == TESTER_WIFI_PRINT_EVENT_PRINT_ERROR) {
+      panel_hold_printer_error();
       return 1U;
     }
     /* A DONE received before the queue acknowledgement still proves that
@@ -3564,7 +3596,15 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
   } else if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE) {
     event = tester_wifi_print_poll_event(print_event_id);
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      panel_hold_print_error();
+      panel_hold_print_network_error();
+      return 1U;
+    }
+    if(event == TESTER_WIFI_PRINT_EVENT_PRINT_ERROR) {
+      panel_hold_printer_error();
+      return 1U;
+    }
+    if(event == TESTER_WIFI_PRINT_EVENT_PRINTING) {
+      panel_show_printing();
       return 1U;
     }
     if(event != TESTER_WIFI_PRINT_EVENT_DONE) {

@@ -1152,12 +1152,20 @@ static void lcdm_draw_print_progress_body(uint8_t state)
 
   if(state == FIRST_GEN_PRINT_DISPLAY_COMPLETE) {
     text = "COMPLETE";
-    status = "WAITING FOR PRINTING";
+    status = "PRINT COMPLETE";
     background = LCDM_GREEN;
   } else if(state == FIRST_GEN_PRINT_DISPLAY_ERROR) {
     text = "NETWORK ERROR";
     status = "K3 RESET / RETRY PRINT";
     background = LCDM_RED;
+  } else if(state == FIRST_GEN_PRINT_DISPLAY_PRINTER_ERROR) {
+    text = "PRINTER FAULT";
+    status = "PRINT ERROR / CHECK PRINTER";
+    background = LCDM_RED;
+  } else if(state == FIRST_GEN_PRINT_DISPLAY_PRINTING) {
+    text = "PRINTING";
+    status = "PRINTING / PLEASE WAIT";
+    background = LCDM_BLUE;
   } else {
     text = "START PRINTING";
     status = "WAITING FOR PRINTING";
@@ -4297,7 +4305,9 @@ void first_gen_display_show_print_progress(uint8_t state)
   }
 
   if(state != FIRST_GEN_PRINT_DISPLAY_COMPLETE &&
-     state != FIRST_GEN_PRINT_DISPLAY_ERROR) {
+     state != FIRST_GEN_PRINT_DISPLAY_ERROR &&
+     state != FIRST_GEN_PRINT_DISPLAY_PRINTING &&
+     state != FIRST_GEN_PRINT_DISPLAY_PRINTER_ERROR) {
     state = FIRST_GEN_PRINT_DISPLAY_START;
   }
 

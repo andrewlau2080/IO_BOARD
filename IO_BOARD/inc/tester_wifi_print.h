@@ -43,7 +43,12 @@ typedef enum {
   TESTER_WIFI_PRINT_EVENT_NONE = 0,
   TESTER_WIFI_PRINT_EVENT_ACK_QUEUED,
   TESTER_WIFI_PRINT_EVENT_DONE,
+  /* Transport failure: no usable response was received after retries. */
   TESTER_WIFI_PRINT_EVENT_ERROR,
+  /* The print controller accepted the job and is executing it. */
+  TESTER_WIFI_PRINT_EVENT_PRINTING,
+  /* The print controller rejected the job or reported a printer fault. */
+  TESTER_WIFI_PRINT_EVENT_PRINT_ERROR,
   /* Used only by the standalone WIFI_LINK_DIAG firmware.  It never enters
    * the normal PASS-to-print state machine. */
   TESTER_WIFI_PRINT_EVENT_LINK_ACK,

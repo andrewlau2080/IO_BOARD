@@ -36,7 +36,7 @@ typedef enum {
 
 typedef struct {
   uint8_t valid;
-  /* 0=queued, 1=done, 2=terminal print error. */
+  /* 0=queued, 1=done, 2=terminal print error, 3=printing. */
   uint8_t result_state;
   uint8_t link_id;
   uint32_t event_id;
@@ -428,6 +428,10 @@ static void host_receive_request(const char *line)
       (void)snprintf(response, sizeof(response), "ERROR,%lu\n",
                      (unsigned long)request.event_id);
       (void)host_queue_tx(request.link_id, response);
+    } else if(duplicate_state == 3U) {
+      (void)snprintf(response, sizeof(response), "PRINTING,%lu\n",
+                     (unsigned long)request.event_id);
+      (void)host_queue_tx(request.link_id, response);
     }
     return;
   }
@@ -569,7 +573,10 @@ static void host_schedule_retry(void)
   tester_wifi_print_at_end();
   host_state = PRINT_HOST_WIFI_ERROR;
   g_print_host_wifi_state = (uint8_t)host_state;
-  (void)snprintf(host_status, sizeof(host_status), "WIFI RETRY");
+  /* Keep the operator-facing state explicit.  The backoff/reconnect counter
+   * remains internal; the LCDM should say NETWORK ERROR when the controller
+   * cannot maintain its AP/server session. */
+  (void)snprintf(host_status, sizeof(host_status), "NETWORK ERROR");
   host_backoff_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BACKOFF_MS;
   g_print_host_wifi_reconnect_count++;
 }
@@ -940,6 +947,11 @@ uint8_t print_host_wifi_is_online(void)
   return (host_state == PRINT_HOST_WIFI_ONLINE) ? 1U : 0U;
 }
 
+uint8_t print_host_wifi_is_error(void)
+{
+  return (host_state == PRINT_HOST_WIFI_ERROR) ? 1U : 0U;
+}
+
 const char *print_host_wifi_status_text(void)
 {
   return host_status;
@@ -970,25 +982,35 @@ static uint8_t host_send_result(const print_host_wifi_request_t *request,
 {
   char response[64];
   host_seen_t *seen;
+  uint8_t queued;
 
   if(request == 0 || prefix == 0) {
     return 0U;
   }
   (void)snprintf(response, sizeof(response), "%s,%lu\n", prefix,
                  (unsigned long)request->event_id);
-  if(host_queue_tx(request->link_id, response) == 0U) {
-    return 0U;
-  }
+  queued = host_queue_tx(request->link_id, response);
   seen = host_seen_get(request->event_id, request->device_uid);
   if(seen != 0) {
-    seen->result_state = (strcmp(prefix, "DONE") == 0) ? 1U : 2U;
+    if(strcmp(prefix, "DONE") == 0) {
+      seen->result_state = 1U;
+    } else if(strcmp(prefix, "PRINTING") == 0) {
+      seen->result_state = 3U;
+    } else {
+      seen->result_state = 2U;
+    }
   }
   if(strcmp(prefix, "DONE") == 0) {
     g_print_host_wifi_done_count++;
-  } else {
+  } else if(strcmp(prefix, "ERROR") == 0) {
     g_print_host_wifi_error_count++;
   }
-  return 1U;
+  return queued;
+}
+
+uint8_t print_host_wifi_send_printing(const print_host_wifi_request_t *request)
+{
+  return host_send_result(request, "PRINTING");
 }
 
 uint8_t print_host_wifi_send_done(const print_host_wifi_request_t *request)

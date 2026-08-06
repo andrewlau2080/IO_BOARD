@@ -162,7 +162,8 @@ ESP-AT 前会转义。超时、错误密码、AP 不可达、打印主机不可�
 3. 核对 UID 为只读，编辑机身号、线体号、工位号。
 4. 输入 SSID/密码以及本线打印主机地址/端口，K2 测试，确认屏幕显示 `NETWORK PASS`。
 5. K4 保存，K3 返回普通测试页；断电再上电，重新进入设置页核对字段仍在。
-6. 让线束 PASS 后触发 Hall，确认主机收到 TCP `print_request` 并回 ACK/DONE；再确认
-   LCDM `COMPLETE` 后必须拆线才允许下一件。
+6. 让线束 PASS 后触发 Hall，确认主机依次回 TCP `ACK/QUEUED`、`PRINTING`、`DONE`；
+   当前打印端模拟 `PRINTING` 5 秒后回 `DONE`，再确认 LCDM `COMPLETE` 后必须拆线才
+   允许下一件。
 7. 输入错误密码或错误打印主机测试失败，断电再上电，确认上一份已保存资料仍在。
 8. 确认学习线束后，分别复核学习资料和 WiFi 设置没有互相覆盖。
