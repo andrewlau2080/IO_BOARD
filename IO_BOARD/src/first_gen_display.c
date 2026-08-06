@@ -110,7 +110,9 @@
  * it as two compact cells so WIFI can communicate the production network
  * state without disturbing the title or the K1-K4 strip.  Font ID 4 is the
  * smallest Song resource in the loaded TFT and is shared by both labels. */
-#define LCDM_WIFI_X                394U
+/* WiFi flag sits in the header's top-left; HALL IN keeps the top-right
+ * corner (two stacked lines are hard to read when the flag shares it). */
+#define LCDM_WIFI_X                2U
 #define LCDM_WIFI_Y                  1U
 #define LCDM_WIFI_W                80U
 #define LCDM_WIFI_H                13U

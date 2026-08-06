@@ -43,6 +43,11 @@
  * one second of silence after the +++ escape sequence before accepting
  * commands again (the backoff wait provides the leading guard silence). */
 #define TESTER_WIFI_ESP_KICK_HOLD_MS     1200UL
+/* After power-up the ESP-AT module needs ~1.5-2 s to boot before it answers
+ * AT.  Holding the first session for this grace makes the very first kick+AT
+ * succeed, so the tester comes ONLINE within a few seconds of power instead of
+ * after one wasted kick/timeout/backoff cycle. */
+#define TESTER_WIFI_ESP_BOOT_GRACE_MS    2000UL
 /* After the hold, the kick sends CRLF to terminate the pending "+++" line
  * (ESP-AT buffers it as an incomplete command in command mode; without CRLF
  * it merges with the AT into "+++AT" and the module answers ERROR).  This
@@ -125,6 +130,8 @@ static uint8_t wifi_restart_after_raw;
 static uint8_t wifi_ap_ip_seen;
 static uint32_t wifi_state_deadline_ms;
 static uint8_t wifi_kick_term_pending;
+static uint8_t wifi_boot_grace_pending;
+static uint32_t wifi_boot_grace_deadline_ms;
 
 static uint8_t wifi_job_active;
 static uint8_t wifi_job_needs_send;
@@ -1190,6 +1197,17 @@ static void wifi_production_service(void)
     return;
   }
 
+  if(wifi_engine_state == WIFI_ENGINE_STOPPED) {
+    if(wifi_boot_grace_pending != 0U) {
+      if(wifi_time_reached(wifi_boot_grace_deadline_ms) == 0U) {
+        return;  /* ESP-AT still booting after power-up */
+      }
+      wifi_boot_grace_pending = 0U;
+    }
+    wifi_begin_production_session();
+    return;
+  }
+
   if(wifi_engine_state == WIFI_ENGINE_BACKOFF) {
     if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
       wifi_begin_production_session();
@@ -1310,6 +1328,11 @@ void tester_wifi_print_init(void)
   wifi_restart_after_raw = 0U;
   wifi_ap_ip_seen = 0U;
   wifi_state_deadline_ms = 0U;
+  wifi_kick_term_pending = 0U;
+  /* Hold the first production session until the ESP-AT has booted after
+   * power-up so the first kick+AT succeeds (fast power-on connect). */
+  wifi_boot_grace_pending = 1U;
+  wifi_boot_grace_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_BOOT_GRACE_MS;
   wifi_job_clear();
   wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
 
@@ -1357,6 +1380,11 @@ void tester_wifi_print_start(void)
 
   wifi_publish_engine_state(WIFI_ENGINE_STOPPED);
   wifi_state_deadline_ms = 0U;
+  if(wifi_boot_grace_pending != 0U) {
+    /* The ESP-AT module is still booting after power-up; wifi_production_service
+     * begins the session when the grace deadline passes. */
+    return;
+  }
   wifi_begin_production_session();
 }
 

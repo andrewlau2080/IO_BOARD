@@ -35,6 +35,7 @@
 #define PRINT_LCDM_BLACK                  0U
 #define PRINT_LCDM_BLUE                  31U
 #define PRINT_LCDM_GREEN               992U  /* PASS deep green; all success states use it */
+#define PRINT_LCDM_GRAY             33808U
 #define PRINT_LCDM_RED                63488U
 #define PRINT_LCDM_WHITE              65535U
 #define PRINT_LCDM_NAVY                  16U
@@ -384,6 +385,11 @@ static void lcdm_draw_dynamic_content(void)
     link_fg = PRINT_LCDM_NAVY;
     link_bg = PRINT_LCDM_WHITE;
   }
+  /* WiFi link flag in the header's top-left, same style as the tester:
+   * green when the host is ONLINE, gray otherwise. */
+  lcdm_raw_xstr(2U, 1U, 80U, 13U, PRINT_LCDM_FONT_SMALL,
+                print_host_wifi_is_online() ? PRINT_LCDM_GREEN : PRINT_LCDM_GRAY,
+                PRINT_LCDM_NAVY, 1U, "WIFI");
   (void)snprintf(result_text,
                  sizeof(result_text),
                  "CODE: %s",
@@ -888,7 +894,9 @@ void print_terminal_init(void)
   print_terminal_settings_init();
   tester_wifi_print_init();
   print_host_wifi_init();
-  print_host_wifi_start();
+  /* The first session is started by print_host_wifi_service after the
+   * ESP-AT boot grace (HOST_WIFI_ESP_BOOT_GRACE_MS) so the first kick+AT
+   * succeeds and the host comes ONLINE quickly after power-up. */
   lcdm_tjc_init();
   /* Match the proven tester startup path.  The panel may still be at a
    * factory/default baud after a power cycle, whereas the shared tester TFT

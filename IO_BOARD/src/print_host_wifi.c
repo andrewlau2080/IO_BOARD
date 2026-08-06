@@ -24,6 +24,10 @@
  * convention as the tester engine: leading silence from the backoff wait,
  * trailing silence from this hold window). */
 #define HOST_WIFI_ESP_KICK_HOLD_MS  1200UL
+/* After power-up the ESP-AT module needs ~1.5-2 s to boot before it answers
+ * AT.  Holding the first session for this grace makes the first kick+AT
+ * succeed, so the print host comes ONLINE within a few seconds of power. */
+#define HOST_WIFI_ESP_BOOT_GRACE_MS 2000UL
 /* After the hold, the kick sends CRLF to terminate the pending "+++" line
  * (ESP-AT buffers it as an incomplete command in command mode; without CRLF
  * it merges with the AT into "+++AT" and the module answers ERROR).  This
@@ -78,6 +82,8 @@ static uint32_t host_session_deadline_ms;
 static uint8_t host_kick_pending;
 static uint8_t host_kick_term_pending;
 static uint32_t host_kick_deadline_ms;
+static uint8_t host_first_start_pending;
+static uint32_t host_first_start_deadline_ms;
 static uint8_t host_ip_retry_pending;
 static uint8_t host_got_ip;
 static uint8_t host_tx_active;
@@ -872,6 +878,8 @@ void print_host_wifi_init(void)
   host_session_deadline_ms = 0U;
   host_kick_pending = 0U;
   host_kick_deadline_ms = 0U;
+  host_first_start_pending = 1U;
+  host_first_start_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_BOOT_GRACE_MS;
   host_ip_retry_pending = 0U;
   host_got_ip = 0U;
   host_reset_tx_queue();
@@ -939,7 +947,19 @@ void print_host_wifi_service(void)
   char line[HOST_WIFI_LINE_MAX];
   uint32_t now_ms;
 
+  /* Keep the shared decoder and time base running even while the first
+   * session is held by the boot grace. */
   tester_wifi_print_service();
+
+  if(host_first_start_pending != 0U) {
+    if(host_time_reached(host_first_start_deadline_ms) == 0U) {
+      return;  /* ESP-AT still booting after power-up */
+    }
+    host_first_start_pending = 0U;
+    print_host_wifi_start();
+    return;
+  }
+
   while(tester_wifi_print_at_poll_line(line, sizeof(line)) != 0U) {
     host_process_line(line);
   }
