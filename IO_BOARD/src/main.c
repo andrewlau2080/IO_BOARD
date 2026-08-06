@@ -206,14 +206,22 @@ int main(void)
   }
 #elif IO_APP_MODE == IO_APP_MODE_FIRST_GEN_4051_LOCAL
   /*
-   * Keep the validated first-generation tester clock path from commit
-   * a6b990e: the board starts on the internal HICK default clock and only
-   * updates the CMSIS frequency variable.  The 4051 settle/read timing and
-   * the LCDM acknowledgement pacing were verified with this path.  The WiFi
-   * software-UART clock experiment must not change the production scan clock;
-   * WiFi is serviced independently after the tester core is running.
+   * The tester now runs the same 192 MHz internal-HICK PLL clock as the
+   * print-host image.  Audit result (2026-08-06, before this change):
+   *  - io_scan settle uses delay_us()/SysTick (fac_us from system_core_clock)
+   *    and digital GPIO reads; the ADC block is #if 0 -- scan timing is
+   *    clock-independent.
+   *  - LCDM (lcdm_tjc) derives the USART baud from PCLK and is already
+   *    proven at 192 MHz by the print-host image on the same PCB.
+   *  - IR/line-comm carriers use g_cycles_per_us from system_core_clock.
+   *  - Buzzer is an ms-pattern GPIO drive; panel timebase uses DWT with
+   *    cycles-per-ms from system_core_clock; delay fac_us scales likewise.
+   *  - The ESP software UART gets 1666 cycles/bit (vs 69 at 8 MHz), which is
+   *    why the print host decodes RX cleanly while the 8 MHz tester could
+   *    not complete a session.  flash_psr WAIT_CYCLE_5 is set by
+   *    tester_wifi_clock_config() itself.
    */
-  system_core_clock_update();
+  tester_wifi_clock_config();
   delay_init();
   io_board_init();
   first_gen_4051_scan_init();

@@ -149,11 +149,6 @@ static uint8_t panel_auto_enabled;
 static uint8_t panel_last_test_mode;
 static uint8_t panel_operation_interrupted;
 static uint8_t panel_waiting_for_reconnect;
-/* ESP-AT startup is deliberately deferred while the validated tester core is
- * learning or scanning.  The WiFi RX edge ISR shares CPU time with the LCDM
- * USART; boot/join chatter during the large learning table draw can otherwise
- * make an otherwise-correct group matrix appear as a single colour. */
-static uint8_t wifi_start_deferred;
 static uint32_t panel_idle_ms;
 static uint8_t scan_cycle_has_problem;
 static uint8_t panel_display_state;
@@ -2716,7 +2711,7 @@ static uint8_t panel_handle_k3_press(void)
 
   if(panel_settings_allowed() == 0U) {
     panel_reset_to_zero();
-    wifi_start_deferred = (first_gen_display_is_lcdm() != 0U) ? 1U : 0U;
+    tester_wifi_print_start();
     return 1U;
   }
 
@@ -2739,7 +2734,7 @@ static uint8_t panel_handle_k3_press(void)
 
   /* A short K3 operation remains the established reset/retry action. */
   panel_reset_to_zero();
-  wifi_start_deferred = (first_gen_display_is_lcdm() != 0U) ? 1U : 0U;
+  tester_wifi_print_start();
   return 1U;
 }
 
@@ -3537,11 +3532,6 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
       }
     }
 
-    if(wifi_start_deferred != 0U && first_gen_display_is_lcdm() != 0U) {
-      wifi_start_deferred = 0U;
-      tester_wifi_print_start();
-    }
-
     /* PDF 第五部分第 4 项：Hall 有效后先完整显示 START PRINTING，
      * 然后只通过独立 WiFi 链路向打印控制器提交本次 PASS。 */
     print_event_sequence++;
@@ -3693,7 +3683,11 @@ void first_gen_4051_scan_init(void)
   device_config_init();
   first_gen_print_link_init();
   tester_settings_init();
-  wifi_start_deferred = (first_gen_display_is_lcdm() != 0U) ? 1U : 0U;
+  /* Auto-connect at power-up (same behaviour as the print host): the engine
+   * starts its ESP-AT session immediately and reconnects on its own whenever
+   * the link drops; no manual trigger is required.  At 192 MHz the ESP
+   * software UART decodes cleanly and the RX edge ISR cost is negligible. */
+  tester_wifi_print_start();
   io_scan_init(IO_SCAN_PROFILE_FIRST_GEN_1TH);
   io_scan_clear_result(&scan_result);
   matrix_clear(expected_matrix);
@@ -3877,9 +3871,10 @@ void first_gen_4051_scan_service(void)
       g_first_gen_panel_mode = FIRST_GEN_PANEL_MODE_IDLE;
       panel_reset_to_zero();
       /* K3 is the available recovery action on this PCB: there is no MCU
-       * wired to ESP EN.  Leave ESP-AT startup deferred until the next
-       * completed PASS so it cannot interfere with learning/AUTO drawing. */
-      wifi_start_deferred = (first_gen_display_is_lcdm() != 0U) ? 1U : 0U;
+       * wired to ESP EN.  Restart the ESP-AT session immediately so an
+       * offline print host gets an automatic retry (same auto-reconnect
+       * behaviour as the print host image). */
+      tester_wifi_print_start();
     }
     return;
   }
