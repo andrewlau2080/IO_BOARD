@@ -34,7 +34,7 @@
 #define PRINT_LCDM_FONT_TITLE             2U
 #define PRINT_LCDM_BLACK                  0U
 #define PRINT_LCDM_BLUE                  31U
-#define PRINT_LCDM_GREEN               2016U
+#define PRINT_LCDM_GREEN               992U  /* PASS deep green; all success states use it */
 #define PRINT_LCDM_RED                63488U
 #define PRINT_LCDM_WHITE              65535U
 #define PRINT_LCDM_NAVY                  16U

@@ -22,6 +22,7 @@
 #define LCDM_BLUE               31U
 #define LCDM_RED                63488U
 #define LCDM_GREEN              2016U
+#define LCDM_DARK_GREEN         992U  /* PASS deep green; success states use this */
 #define LCDM_WHITE              65535U
 #define LCDM_GRAY               33808U
 #define LCDM_DARK_GRAY          16904U
@@ -296,7 +297,7 @@ static lcdm_screen_text_t current_screen_text(void)
     out.ledm = "PASS";
     out.detail = "TOTAL 092 OK";
     out.sub = "PRINT READY  REMOVE HARNESS";
-    out.color = LCDM_GREEN;
+    out.color = LCDM_DARK_GREEN;
     break;
 
   case LCDM_STATE_NG:

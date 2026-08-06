@@ -808,7 +808,7 @@ static const char *lcdm_print_status_text(uint8_t status)
 
 static void lcdm_raw_draw_pass_cell(void)
 {
-  uint16_t bg = (lcdm_pass_blink_on != 0U) ? LCDM_GREEN : LCDM_BLACK;
+  uint16_t bg = (lcdm_pass_blink_on != 0U) ? LCDM_DARK_GREEN : LCDM_BLACK;
 
   lcdm_raw_fill(LCDM_RESULT_X, LCDM_DETAIL_Y, LCDM_PASS_W, LCDM_DETAIL_H, LCDM_WHITE);
   lcdm_raw_round_rect(LCDM_RESULT_X, LCDM_DETAIL_Y, LCDM_PASS_W, LCDM_DETAIL_H, 8U, bg);
@@ -1087,7 +1087,7 @@ static void lcdm_draw_wifi_indicator(uint8_t force)
 
   /* Keep the label visible like HALL IN; green means the production ESP-AT
    * session is ONLINE, while gray makes an offline/starting state explicit. */
-  foreground = (lcdm_wifi_connected != 0U) ? LCDM_GREEN : LCDM_GRAY;
+  foreground = (lcdm_wifi_connected != 0U) ? LCDM_DARK_GREEN : LCDM_GRAY;
   lcdm_raw_fill(LCDM_WIFI_X, LCDM_WIFI_Y, LCDM_WIFI_W, LCDM_WIFI_H, LCDM_NAVY);
   lcdm_raw_xstr_full(LCDM_WIFI_X,
                      LCDM_WIFI_Y,
@@ -1153,7 +1153,7 @@ static void lcdm_draw_print_progress_body(uint8_t state)
   if(state == FIRST_GEN_PRINT_DISPLAY_COMPLETE) {
     text = "COMPLETE";
     status = "PRINT COMPLETE";
-    background = LCDM_GREEN;
+    background = LCDM_DARK_GREEN;
   } else if(state == FIRST_GEN_PRINT_DISPLAY_ERROR) {
     text = "NETWORK ERROR";
     status = "K3 RESET / RETRY PRINT";
@@ -1169,7 +1169,7 @@ static void lcdm_draw_print_progress_body(uint8_t state)
   } else {
     text = "START PRINTING";
     status = "WAITING FOR PRINTING";
-    background = LCDM_GREEN;
+    background = LCDM_DARK_GREEN;
   }
 
   lcdm_raw_fill(0U,
@@ -1255,16 +1255,16 @@ static void lcdm_draw_result_pass_body(const char *detail_text)
     points_text[0] = '\0';
   }
 
-  lcdm_raw_fill(24U, 84U, 216U, 82U, LCDM_GREEN);
+  lcdm_raw_fill(24U, 84U, 216U, 82U, LCDM_DARK_GREEN);
   lcdm_raw_fill(240U, 84U, 216U, 82U, LCDM_WHITE);
   lcdm_raw_fill(239U, 84U, 2U, 82U, LCDM_BLACK);
   /* PASS and NG use the largest available Song resource (ID 0, 32 px).
    * The left result panel is 82 px high, so the font remains fully inside
    * its bounds while being clearly larger than the former 29 px PASS. */
-  lcdm_raw_xstr_full(18U, 84U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(19U, 84U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(18U, 85U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
-  lcdm_raw_xstr_full(19U, 85U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(18U, 84U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_DARK_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(19U, 84U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_DARK_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(18U, 85U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_DARK_GREEN, 1U, "PASS");
+  lcdm_raw_xstr_full(19U, 85U, 228U, 82U, LCDM_FONT_POINT, LCDM_BLACK, LCDM_DARK_GREEN, 1U, "PASS");
   lcdm_raw_xstr_full(244U, 84U, 208U, 26U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, total_text);
   lcdm_raw_xstr_full(244U, 111U, 208U, 26U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, pairs_text);
   lcdm_raw_xstr_full(244U, 138U, 208U, 28U, LCDM_FONT_STATUS, LCDM_NAVY, LCDM_WHITE, 1U, points_text);
@@ -2840,7 +2840,7 @@ static void lcdm_draw_table_pair(uint8_t page, uint16_t point, uint16_t active_p
   }
 
   if(point <= active_point) {
-    top_bg = LCDM_GREEN;
+    top_bg = LCDM_DARK_GREEN;
     bottom_bg = LCDM_DARK_GREEN;
     top_fg = LCDM_NAVY;
     bottom_fg = LCDM_WHITE;
@@ -3260,7 +3260,7 @@ void first_gen_display_show_page(const char *top_right,
                                  24U, LCDM_STATUS_Y, 432U, LCDM_STATUS_H,
                                  status_color, LCDM_ROW_BG, 1U, status_text);
     if(main_text[0] != '\0') {
-      lcdm_draw_body_text(84U, 82U, main_text, LCDM_WHITE, LCDM_GREEN);
+      lcdm_draw_body_text(84U, 82U, main_text, LCDM_WHITE, LCDM_DARK_GREEN);
     } else {
       lcdm_raw_fill(24U, 84U, 432U, 82U, LCDM_WHITE);
     }
@@ -3907,7 +3907,7 @@ static void lcdm_raw_update(const char *state, const char *value, uint16_t state
     result_text = "PASS";
     pass_print_status = 1U;
     sub_text = "PRINT READY  REMOVE HARNESS";
-    status_color = LCDM_GREEN;
+    status_color = LCDM_DARK_GREEN;
   } else if(strncmp(state, "NG", 2U) == 0) {
     state_text = "RESULT";
     main_text = "TEST COMPLETE";
@@ -3969,7 +3969,7 @@ static void lcdm_raw_update(const char *state, const char *value, uint16_t state
   if((strncmp(state, "NG", 2U) == 0) || (strncmp(state, "Er", 2U) == 0)) {
     status_color = LCDM_RED;
   } else if((strncmp(state, "PASS", 4U) == 0) || (strncmp(state, "PRINT", 5U) == 0)) {
-    status_color = LCDM_GREEN;
+    status_color = LCDM_DARK_GREEN;
   } else if((strncmp(state, "LEARN", 5U) == 0) || (strncmp(state, "SELF", 4U) == 0) || (strncmp(state, "AUTO", 4U) == 0) || (strncmp(state, "TEST", 4U) == 0)) {
     status_color = LCDM_BLUE;
   }
@@ -4367,7 +4367,7 @@ void first_gen_display_write_text6(const char text[FIRST_GEN_DISPLAY_DIGITS])
   text6_to_cstr(text, value);
 
   if(strncmp(value, "PASS", 4U) == 0) {
-    lcdm_raw_update("PASS", value, LCDM_GREEN);
+    lcdm_raw_update("PASS", value, LCDM_DARK_GREEN);
   } else if(strncmp(value, "NG", 2U) == 0 || strncmp(value, "Er", 2U) == 0) {
     lcdm_raw_update("NG", value, LCDM_RED);
   } else if(strncmp(value, "Prnt", 4U) == 0 || strncmp(value, "Printg", 6U) == 0 || strncmp(value, "Printd", 6U) == 0) {
