@@ -386,8 +386,9 @@ static void lcdm_draw_dynamic_content(void)
     link_bg = PRINT_LCDM_WHITE;
   }
   /* WiFi link flag in the header's top-left, same style as the tester:
-   * green when the host is ONLINE, gray otherwise. */
-  lcdm_raw_xstr(2U, 1U, 80U, 13U, PRINT_LCDM_FONT_SMALL,
+   * green when the host is ONLINE, gray otherwise.  Vertically centred in
+   * the 32 px navy header. */
+  lcdm_raw_xstr(2U, 7U, 80U, 18U, PRINT_LCDM_FONT_SMALL,
                 print_host_wifi_is_online() ? PRINT_LCDM_GREEN : PRINT_LCDM_GRAY,
                 PRINT_LCDM_NAVY, 1U, "WIFI");
   (void)snprintf(result_text,

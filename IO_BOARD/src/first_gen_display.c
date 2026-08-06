@@ -111,15 +111,17 @@
  * state without disturbing the title or the K1-K4 strip.  Font ID 4 is the
  * smallest Song resource in the loaded TFT and is shared by both labels. */
 /* WiFi flag sits in the header's top-left; HALL IN keeps the top-right
- * corner (two stacked lines are hard to read when the flag shares it). */
+ * corner (two stacked lines are hard to read when the flag shares it).
+ * Both labels are vertically centred in the 32 px navy header
+ * (y = (32-18)/2 = 7, h = 18 fits the 16 px Song font without clipping). */
 #define LCDM_WIFI_X                2U
-#define LCDM_WIFI_Y                  1U
+#define LCDM_WIFI_Y                  7U
 #define LCDM_WIFI_W                80U
-#define LCDM_WIFI_H                13U
+#define LCDM_WIFI_H                18U
 #define LCDM_HALL_X                394U
-#define LCDM_HALL_Y                 17U
+#define LCDM_HALL_Y                  7U
 #define LCDM_HALL_W                80U
-#define LCDM_HALL_H                13U
+#define LCDM_HALL_H                18U
 #define LCDM_PRINT_STATUS_Y        32U
 #define LCDM_PRINT_STATUS_H        26U
 #define LCDM_PRINT_BODY_Y          (LCDM_PRINT_STATUS_Y + LCDM_PRINT_STATUS_H)
