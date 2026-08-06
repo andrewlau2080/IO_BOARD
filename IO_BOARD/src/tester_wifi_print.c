@@ -39,6 +39,10 @@
 #define TESTER_WIFI_CONNECT_TIMEOUT_MS   7000UL
 #define TESTER_WIFI_SEND_TIMEOUT_MS      4000UL
 #define TESTER_WIFI_BACKOFF_MS           1000UL
+/* Post-+++ guard before the first AT of a session: ESP-AT requires roughly
+ * one second of silence after the +++ escape sequence before accepting
+ * commands again (the backoff wait provides the leading guard silence). */
+#define TESTER_WIFI_ESP_KICK_HOLD_MS     1200UL
 #define TESTER_WIFI_ACK_TIMEOUT_MS      10000UL
 #define TESTER_WIFI_DONE_TIMEOUT_MS     60000UL
 #define TESTER_WIFI_JOB_MAX_RETRIES         3U
@@ -52,6 +56,7 @@ typedef enum {
   WIFI_ENGINE_STOPPED = 0,
   WIFI_ENGINE_CONFIG_REQUIRED,
   WIFI_ENGINE_BACKOFF,
+  WIFI_ENGINE_ESP_KICK,
   WIFI_ENGINE_AT,
   WIFI_ENGINE_SET_STA_MODE,
   WIFI_ENGINE_JOIN_AP,
@@ -500,6 +505,10 @@ static void wifi_publish_engine_state(wifi_engine_state_t state)
     g_tester_wifi_print_network_state = TESTER_WIFI_PRINT_NETWORK_BACKOFF;
     g_tester_wifi_print_online = 0U;
     break;
+  case WIFI_ENGINE_ESP_KICK:
+    g_tester_wifi_print_network_state = TESTER_WIFI_PRINT_NETWORK_PROBING;
+    g_tester_wifi_print_online = 0U;
+    break;
   case WIFI_ENGINE_AT:
   case WIFI_ENGINE_SET_STA_MODE:
   case WIFI_ENGINE_CLOSE_OLD:
@@ -667,9 +676,16 @@ static void wifi_begin_production_session(void)
     return;
   }
 
-  if(wifi_issue_engine_state(WIFI_ENGINE_AT) == 0U) {
-    wifi_schedule_reconnect(1U);
-  }
+  /* Kick a possibly stuck ESP before every session attempt.  A module left
+   * in transparent mode or at a dangling CIPSEND prompt silently swallows AT
+   * commands; +++ is the ESP-AT escape (the backoff wait provides the leading
+   * guard silence, the ESP_KICK window the trailing guard).  In command mode
+   * +++ merely produces an ERROR that the kick window ignores.  Every backoff
+   * re-enters this function, so a lost link or a wedged module recovers
+   * automatically without operator or power-cycle intervention. */
+  wifi_publish_engine_state(WIFI_ENGINE_ESP_KICK);
+  wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_KICK_HOLD_MS;
+  wifi_write_text("+++");
 }
 
 static void wifi_set_ap_online(void)
@@ -869,6 +885,13 @@ static uint8_t wifi_handle_production_line(const char *line)
 {
   if(line == 0 || line[0] == '\0' || strncmp(line, "+IPD,", 5U) == 0) {
     return 0U;
+  }
+
+  if(wifi_engine_state == WIFI_ENGINE_ESP_KICK) {
+    /* The +++ escape echo/ERROR belongs to the kick window, not to the
+     * session sequence that follows.  Consume it so a command-mode ERROR
+     * cannot be mistaken for a CWJAP/AT failure. */
+    return 1U;
   }
 
   /* ESP-AT command echo is informational.  AP progress, however, updates a
@@ -1143,6 +1166,13 @@ static void wifi_production_service(void)
   if(wifi_engine_state == WIFI_ENGINE_BACKOFF) {
     if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
       wifi_begin_production_session();
+    }
+    return;
+  }
+
+  if(wifi_engine_state == WIFI_ENGINE_ESP_KICK) {
+    if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
+      (void)wifi_issue_engine_state(WIFI_ENGINE_AT);
     }
     return;
   }

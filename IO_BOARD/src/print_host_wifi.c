@@ -20,6 +20,10 @@
 #define HOST_WIFI_IP_RETRY_MS         300UL
 #define HOST_WIFI_SESSION_TIMEOUT   60000UL
 #define HOST_WIFI_BACKOFF_MS        1500UL
+/* Post-+++ guard before the first AT of a session (same ESP-AT escape
+ * convention as the tester engine: leading silence from the backoff wait,
+ * trailing silence from this hold window). */
+#define HOST_WIFI_ESP_KICK_HOLD_MS  1200UL
 #define HOST_WIFI_TX_TIMEOUT        4500UL
 
 typedef enum {
@@ -65,6 +69,8 @@ static uint32_t host_deadline_ms;
 static uint32_t host_backoff_deadline_ms;
 static uint32_t host_ip_retry_due_ms;
 static uint32_t host_session_deadline_ms;
+static uint8_t host_kick_pending;
+static uint32_t host_kick_deadline_ms;
 static uint8_t host_ip_retry_pending;
 static uint8_t host_got_ip;
 static uint8_t host_tx_active;
@@ -570,6 +576,7 @@ static void host_schedule_retry(void)
   host_waiting_command = HOST_CMD_NONE;
   host_ip_retry_pending = 0U;
   host_session_deadline_ms = 0U;
+  host_kick_pending = 0U;
   tester_wifi_print_at_end();
   host_state = PRINT_HOST_WIFI_ERROR;
   g_print_host_wifi_state = (uint8_t)host_state;
@@ -856,6 +863,8 @@ void print_host_wifi_init(void)
   host_backoff_deadline_ms = 0U;
   host_ip_retry_due_ms = 0U;
   host_session_deadline_ms = 0U;
+  host_kick_pending = 0U;
+  host_kick_deadline_ms = 0U;
   host_ip_retry_pending = 0U;
   host_got_ip = 0U;
   host_reset_tx_queue();
@@ -897,7 +906,17 @@ void print_host_wifi_start(void)
   host_session_deadline_ms = 0U;
   host_ip_retry_pending = 0U;
   host_set_state(PRINT_HOST_WIFI_STARTING, "WIFI STARTING");
-  if(host_issue_command(HOST_CMD_AT) == 0U) {
+  /* Kick a possibly stuck ESP before the first AT (same +++ escape as the
+   * tester engine).  The backoff wait supplies the leading guard silence,
+   * HOST_WIFI_ESP_KICK_HOLD_MS the trailing guard.  host_waiting_command is
+   * NONE during the window, so the +++ ERROR cannot disturb the sequence;
+   * this is the automatic reconnect path for a wedged or disconnected
+   * module, requiring no operator or power-cycle intervention. */
+  host_waiting_command = HOST_CMD_NONE;
+  host_kick_pending = 1U;
+  host_kick_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_KICK_HOLD_MS;
+  if(tester_wifi_print_at_send_bytes((const uint8_t *)"+++", 3U) == 0U) {
+    host_kick_pending = 0U;
     host_schedule_retry();
   }
 }
@@ -915,6 +934,13 @@ void print_host_wifi_service(void)
   tester_wifi_print_service();
   while(tester_wifi_print_at_poll_line(line, sizeof(line)) != 0U) {
     host_process_line(line);
+  }
+  if(host_kick_pending != 0U && host_time_reached(host_kick_deadline_ms) != 0U) {
+    host_kick_pending = 0U;
+    if(host_issue_command(HOST_CMD_AT) == 0U) {
+      host_schedule_retry();
+    }
+    return;
   }
   if(host_state == PRINT_HOST_WIFI_ERROR && host_time_reached(host_backoff_deadline_ms) != 0U) {
     print_host_wifi_start();
