@@ -24,6 +24,12 @@
  * convention as the tester engine: leading silence from the backoff wait,
  * trailing silence from this hold window). */
 #define HOST_WIFI_ESP_KICK_HOLD_MS  1200UL
+/* After the hold, the kick sends CRLF to terminate the pending "+++" line
+ * (ESP-AT buffers it as an incomplete command in command mode; without CRLF
+ * it merges with the AT into "+++AT" and the module answers ERROR).  This
+ * second window lets the terminator's ERROR be consumed while the kick
+ * window is still active. */
+#define HOST_WIFI_ESP_KICK_TERM_MS  200UL
 #define HOST_WIFI_TX_TIMEOUT        4500UL
 
 typedef enum {
@@ -70,6 +76,7 @@ static uint32_t host_backoff_deadline_ms;
 static uint32_t host_ip_retry_due_ms;
 static uint32_t host_session_deadline_ms;
 static uint8_t host_kick_pending;
+static uint8_t host_kick_term_pending;
 static uint32_t host_kick_deadline_ms;
 static uint8_t host_ip_retry_pending;
 static uint8_t host_got_ip;
@@ -914,6 +921,7 @@ void print_host_wifi_start(void)
    * module, requiring no operator or power-cycle intervention. */
   host_waiting_command = HOST_CMD_NONE;
   host_kick_pending = 1U;
+  host_kick_term_pending = 0U;
   host_kick_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_KICK_HOLD_MS;
   if(tester_wifi_print_at_send_bytes((const uint8_t *)"+++", 3U) == 0U) {
     host_kick_pending = 0U;
@@ -936,9 +944,19 @@ void print_host_wifi_service(void)
     host_process_line(line);
   }
   if(host_kick_pending != 0U && host_time_reached(host_kick_deadline_ms) != 0U) {
-    host_kick_pending = 0U;
-    if(host_issue_command(HOST_CMD_AT) == 0U) {
-      host_schedule_retry();
+    if(host_kick_term_pending == 0U) {
+      /* Phase 1: terminate the pending "+++" line (see the define above).
+       * The terminator's ERROR is consumed below while the kick window is
+       * still open, so it cannot be mistaken for an AT failure. */
+      host_kick_term_pending = 1U;
+      (void)tester_wifi_print_at_send_bytes((const uint8_t *)"\r\n", 2U);
+      host_kick_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_KICK_TERM_MS;
+    } else {
+      host_kick_pending = 0U;
+      host_kick_term_pending = 0U;
+      if(host_issue_command(HOST_CMD_AT) == 0U) {
+        host_schedule_retry();
+      }
     }
     return;
   }

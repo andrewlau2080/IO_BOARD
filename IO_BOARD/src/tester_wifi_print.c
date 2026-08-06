@@ -43,6 +43,12 @@
  * one second of silence after the +++ escape sequence before accepting
  * commands again (the backoff wait provides the leading guard silence). */
 #define TESTER_WIFI_ESP_KICK_HOLD_MS     1200UL
+/* After the hold, the kick sends CRLF to terminate the pending "+++" line
+ * (ESP-AT buffers it as an incomplete command in command mode; without CRLF
+ * it merges with the AT into "+++AT" and the module answers ERROR).  This
+ * second window lets the terminator's ERROR be consumed while the kick
+ * guard is still active. */
+#define TESTER_WIFI_ESP_KICK_TERM_MS    200UL
 #define TESTER_WIFI_ACK_TIMEOUT_MS      10000UL
 #define TESTER_WIFI_DONE_TIMEOUT_MS     60000UL
 #define TESTER_WIFI_JOB_MAX_RETRIES         3U
@@ -118,6 +124,7 @@ static uint8_t wifi_auto_start_enabled;
 static uint8_t wifi_restart_after_raw;
 static uint8_t wifi_ap_ip_seen;
 static uint32_t wifi_state_deadline_ms;
+static uint8_t wifi_kick_term_pending;
 
 static uint8_t wifi_job_active;
 static uint8_t wifi_job_needs_send;
@@ -695,6 +702,7 @@ static void wifi_begin_production_session(void)
    * automatically without operator or power-cycle intervention. */
   wifi_rx_edge_tail = wifi_rx_edge_head;
   wifi_rx_line_len = 0U;
+  wifi_kick_term_pending = 0U;
   wifi_publish_engine_state(WIFI_ENGINE_ESP_KICK);
   wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_KICK_HOLD_MS;
   wifi_write_text("+++");
@@ -1191,13 +1199,24 @@ static void wifi_production_service(void)
 
   if(wifi_engine_state == WIFI_ENGINE_ESP_KICK) {
     if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
-      /* The +++ echo/ERROR decode can leave a partial RX line that would
-       * otherwise swallow the first AT response (the same corruption that
-       * made the K2 network test need repeated presses).  Flush so AT owns a
-       * clean line and the session advances on the first attempt. */
-      wifi_rx_line_len = 0U;
-      wifi_rx_edge_tail = wifi_rx_edge_head;
-      (void)wifi_issue_engine_state(WIFI_ENGINE_AT);
+      if(wifi_kick_term_pending == 0U) {
+        /* Phase 1: terminate the pending "+++" line.  In command mode the
+         * module buffers +++ (no CRLF) as an incomplete command that would
+         * otherwise merge with the AT into "+++AT" and answer ERROR.  In
+         * transparent mode the +++ escape already completed during the hold,
+         * so this empty line is harmless. */
+        wifi_kick_term_pending = 1U;
+        wifi_write_text("\r\n");
+        wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_KICK_TERM_MS;
+      } else {
+        /* Phase 2: the terminator's ERROR was consumed while the kick guard
+         * was still active.  Flush any partial RX line so AT owns a clean
+         * line and the session advances on the first attempt. */
+        wifi_kick_term_pending = 0U;
+        wifi_rx_line_len = 0U;
+        wifi_rx_edge_tail = wifi_rx_edge_head;
+        (void)wifi_issue_engine_state(WIFI_ENGINE_AT);
+      }
     }
     return;
   }
