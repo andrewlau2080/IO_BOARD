@@ -95,6 +95,17 @@ reconnect=0、rx_error=0（192MHz 解码干净）。**双 DAP 严禁混淆**（�
    - 处理顺序：① 彻底断电 10s 再上电（排除偶发挂死）；② 仍无声 → LIU 法重烧 ESP-AT
      （`LIU_ESP_WIFI_AT_FLASH_METHOD/README.md`，需 CH340 + 临时 AT32 辅助程序）；③ 重烧后仍无声
      → 硬件排查（3V3_WIFI 电源、EN 上拉、模块本体、TXD 走线）。
+   - **ESP-AT 重烧准备已全部就绪（2026-08-06 21:10）**：
+     - 官方镜像 v4.1.1.0 已重新下载：`/tmp/esp-at-esp32c3/ESP32-C3-MINI-1-AT-V4.1.1.0/`
+     - 定制 UART0 NVS 已生成并逐键验证：`/tmp/mfg_raw/mfg_nvs-uart0.bin`（126976B，
+       uart_port=0/baud=115200/tx=21/rx=20/cts=-1/rts=-1，含全部证书与 BLE 配置，
+       esp-idf 内部类型码 I8=0x11/I32=0x14 与官方一致）
+     - esptool：`/tmp/esp-flash-mac-venv/bin/esptool.py`；辅助固件：`build-esp-at-flash-assist`
+       （入口 0x08000b91）
+     - 一键脚本：`/tmp/mfg_raw/esp-at-reflash-print.sh`（烧辅助固件→chip-id 握手→erase→
+       write 6 分区+定制 NVS）
+     - **唯一缺口：CH340 物理接线**（TXD→Pin11 RXD/RXD←Pin12 TXD/GND→GND + PC3→Pin2 EN/
+       PB9→Pin8 IO9 + Pin7 IO8 上拉），由用户接线后即可执行。
    - 历史参考：2026-08-06 20:24/20:43 两次 SWD 烧录重启（ESP 未断电）实测 5.7-6.3s ONLINE ——
      同一固件在 ESP 正常时连接无问题。
 2. **打印侧设置页 COMM 页 "WIFI LINK" 行**（`print_terminal_settings.c:515`）：用户曾报告标签消失，
