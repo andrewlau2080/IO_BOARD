@@ -83,8 +83,20 @@ reconnect=0、rx_error=0（192MHz 解码干净）。**双 DAP 严禁混淆**（�
 
 ## 四、已知问题与待办
 
-1. **打印侧真实断电上电的连接速度待用户确认**：SWD 烧录重启（ESP 未断电）实测 6.3s；
-   真实断电（ESP 同时重启）需用户断电验证 2s 宽限是否足够。
+1. **打印侧 ESP 掉电后沉默（2026-08-06 晚，当前主阻塞）**：
+   - 现象：用户断电上电后打印侧无法连接，LCDM 显示 NETWORK ERROR；reconnect=19 反复重试。
+   - 证据：`wifi_rx_edge_head/tail` 恒 0（**ESP 的 TXD 一个字节都没发过，连启动日志/ready 都没有**）、
+     rx_frame=0、rx_error=0；host 会话在正常监听（capture=1）、TX 侧正常。
+   - 对照：测试机 ESP 应答正常（engine=ONLINE、reconnect=0）—— 连线（PC3→RXD/PB9←TXD/EN 10k
+     上拉，见 `wifi_module_pcb_connection_plan.md`）与软件（同一引擎、192MHz、2s 宽限、两阶段踢活）
+     两侧完全相同。
+   - 结论：**非接线/软件差异，是打印侧 ESP 模块断电后没起来**（挂死或固件损坏）。无 EN 复位线，
+     kick 对挂死的 ESP 无效，软件无法救。
+   - 处理顺序：① 彻底断电 10s 再上电（排除偶发挂死）；② 仍无声 → LIU 法重烧 ESP-AT
+     （`LIU_ESP_WIFI_AT_FLASH_METHOD/README.md`，需 CH340 + 临时 AT32 辅助程序）；③ 重烧后仍无声
+     → 硬件排查（3V3_WIFI 电源、EN 上拉、模块本体、TXD 走线）。
+   - 历史参考：2026-08-06 20:24/20:43 两次 SWD 烧录重启（ESP 未断电）实测 5.7-6.3s ONLINE ——
+     同一固件在 ESP 正常时连接无问题。
 2. **打印侧设置页 COMM 页 "WIFI LINK" 行**（`print_terminal_settings.c:515`）：用户曾报告标签消失，
    经查该行代码与绘制均正常（设置页每 tick 刷新、缓存机制正确）。用户已决定不再处理
    （"如果没有就不要理会"）。若后续要恢复"打开设置页即显示生产连接状态"：目前
