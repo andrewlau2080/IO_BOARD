@@ -87,6 +87,7 @@ volatile uint32_t g_tester_wifi_print_tx_request_count;
 volatile uint32_t g_tester_wifi_print_rx_frame_count;
 volatile uint32_t g_tester_wifi_print_rx_error_count;
 volatile uint32_t g_tester_wifi_print_rx_overflow_count;
+volatile uint32_t g_tester_wifi_print_esp_first_edge_ms;  /* ESP 上电到首字节延迟 */
 volatile uint8_t g_tester_wifi_print_ready;
 volatile uint8_t g_tester_wifi_print_network_state;
 volatile uint8_t g_tester_wifi_print_online;
@@ -1343,6 +1344,7 @@ void tester_wifi_print_init(void)
   g_tester_wifi_print_connect_count = 0U;
   g_tester_wifi_print_reconnect_count = 0U;
   g_tester_wifi_print_tx_payload_count = 0U;
+  g_tester_wifi_print_esp_first_edge_ms = 0U;
   g_tester_wifi_print_tx_retry_count = 0U;
   g_tester_wifi_print_network_error_count = 0U;
   g_tester_wifi_print_ap_connected = 0U;
@@ -1698,6 +1700,16 @@ void tester_wifi_print_rx_edge_isr(void)
 
   if(g_tester_wifi_print_ready == 0U) {
     return;
+  }
+
+  /* First RX edge since the AT32 boot: the ESP-AT module's first byte on
+   * TXD (ROM boot log / ready banner) arrives within ~100-500 ms of a
+   * healthy power-up.  Reading wifi_time_ms here is within one service
+   * tick (~1 ms) of the true edge time and stays valid across the 32-bit
+   * DWT wrap.  A stuck value (0xFFFFFFFF) or a very large value pinpoints
+   * an ESP that never boots / boots very slowly after power-up. */
+  if(g_tester_wifi_print_esp_first_edge_ms == 0U) {
+    g_tester_wifi_print_esp_first_edge_ms = wifi_time_ms;
   }
 
   head = wifi_rx_edge_head;
