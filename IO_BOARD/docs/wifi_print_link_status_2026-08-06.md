@@ -66,11 +66,11 @@ reconnect=0、rx_error=0（192MHz 解码干净）。**双 DAP 严禁混淆**（�
 - 打印侧：`PRINT_LCDM_GREEN` 常量 2016→992（该侧所有绿色均为成功态）；`lcdm_motor_ui.c`
   PASS 态用 `LCDM_DARK_GREEN`。设置页 K2 本就用 992（`SETTINGS_WIFI_PASS_GREEN`）。
 
-### 7. WIFI 标志移到左上角（commit `9aa5daa`）
+### 7. WIFI 标志移到左上角并垂直居中（commit `9aa5daa` / `626b17d`）
 - 测试机：`LCDM_WIFI_X` 394→2（右上角留给 HALL IN 独占）。
 - 打印侧：头部左上角新增 WIFI 标志（在线深绿/离线灰 `PRINT_LCDM_GRAY=33808`）。
-- **待办（用户 2026-08-06 晚反馈）**：WIFI 与测试机 HALL IN 需在顶行（32px 头栏）垂直居中，
-  当前 y=1/h=13 显示不完整 —— 需改 y≈7/h≈18。
+- 垂直居中：WIFI（两侧）与测试机 HALL IN 盒子改 y=7/h=18（32px 头栏内
+  (32-18)/2=7，16px Song 字体完整显示不裁切）。
 
 ## 三、烧录与验证方法（本机 macOS）
 
@@ -85,12 +85,14 @@ reconnect=0、rx_error=0（192MHz 解码干净）。**双 DAP 严禁混淆**（�
 
 1. **打印侧真实断电上电的连接速度待用户确认**：SWD 烧录重启（ESP 未断电）实测 6.3s；
    真实断电（ESP 同时重启）需用户断电验证 2s 宽限是否足够。
-2. **打印侧设置页 COMM 页 "WIFI LINK" 行显示问题**（`print_terminal_settings.c:515`）：
-   用户报告该行标签消失，未复现（读取时设置页未开、主机 ONLINE）。若复现，检查
-   `draw_network_cells` 的 `page != COMM || input_active` 门控与 `draw_readonly_cell` 缓存。
+2. **打印侧设置页 COMM 页 "WIFI LINK" 行**（`print_terminal_settings.c:515`）：用户曾报告标签消失，
+   经查该行代码与绘制均正常（设置页每 tick 刷新、缓存机制正确）。用户已决定不再处理
+   （"如果没有就不要理会"）。若后续要恢复"打开设置页即显示生产连接状态"：目前
+   `settings_wifi_link_ok` 仅由 K2 测试置位（`tester_settings.c:1563`），生产引擎 ONLINE
+   不更新该值（设置页打开未跑 K2 时显示 WAITING）；可让 `settings_main_link_text()` 回退到
+   `tester_wifi_print_is_online()` 实时状态。
 3. **打印侧真实 RS232 打印回报未实现**：`print_driver_is_busy()` 空桩、PB3 RX 无状态行解析、
    service 非模拟分支为占位 —— 等用户确认打印机型号（方向 Zebra/ZPL，`build-print-zebra` 已通）。
-4. 测试机 WIFI/HALL 顶行垂直居中（见二.7）。
 
 ## 五、验收闭环（用户验收标准）
 
