@@ -245,6 +245,15 @@ AT-Link/ICE enumerates as:
 - Serial: `913575030040A0401D149407`
 - Ubuntu device examples: `/dev/hidraw4`, `/dev/ttyACM0`
 
+两块 IO 板各接一个 DAP（同一工程，两个角色固件），下载时必须按角色对应，不可混用：
+
+| DAP 唯一 ID | 尾号 | 角色 |
+|---|---|---|
+| `08703D0500C0643C1014A807` | 807 | 2# 打印侧（PRINT_TERMINAL） |
+| `913575030040A0401D149407` | 407 | 1# 测试机侧（FIRST_GEN_4051_LOCAL） |
+
+烧录时用 `pyocd flash --uid <唯一ID>` 锁定目标探头，再执行向量表验证。
+
 Mac Homebrew OpenOCD does not include the `artery` flash driver. The upstream
 xPack OpenOCD can connect to AT32F455 over SWD, but its `artery` flash driver
 does not identify this AT32F455 device for programming. Use pyOCD with the
