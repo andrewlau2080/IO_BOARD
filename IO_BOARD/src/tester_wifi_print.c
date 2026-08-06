@@ -58,6 +58,7 @@ typedef enum {
   WIFI_ENGINE_BACKOFF,
   WIFI_ENGINE_ESP_KICK,
   WIFI_ENGINE_AT,
+  WIFI_ENGINE_SET_ECHO,
   WIFI_ENGINE_SET_STA_MODE,
   WIFI_ENGINE_JOIN_AP,
   WIFI_ENGINE_READ_IP,
@@ -510,6 +511,7 @@ static void wifi_publish_engine_state(wifi_engine_state_t state)
     g_tester_wifi_print_online = 0U;
     break;
   case WIFI_ENGINE_AT:
+  case WIFI_ENGINE_SET_ECHO:
   case WIFI_ENGINE_SET_STA_MODE:
   case WIFI_ENGINE_CLOSE_OLD:
     g_tester_wifi_print_network_state = TESTER_WIFI_PRINT_NETWORK_PROBING;
@@ -621,6 +623,14 @@ static uint8_t wifi_issue_engine_state(wifi_engine_state_t state)
   case WIFI_ENGINE_AT:
     (void)snprintf(command, sizeof(command), "AT");
     break;
+  case WIFI_ENGINE_SET_ECHO:
+    /* ATE0: the ESP echoes every received byte.  At the tester's 8 MHz HICK
+     * clock the echo overlaps our own transmission window (interrupts are
+     * disabled per TX byte) and the lost edges cascade into the following
+     * response lines.  Disabling the echo once makes every later exchange
+     * clean on both the production session and the K2 network test. */
+    (void)snprintf(command, sizeof(command), "ATE0");
+    break;
   case WIFI_ENGINE_SET_STA_MODE:
     (void)snprintf(command, sizeof(command), "AT+CWMODE=1");
     break;
@@ -683,6 +693,8 @@ static void wifi_begin_production_session(void)
    * +++ merely produces an ERROR that the kick window ignores.  Every backoff
    * re-enters this function, so a lost link or a wedged module recovers
    * automatically without operator or power-cycle intervention. */
+  wifi_rx_edge_tail = wifi_rx_edge_head;
+  wifi_rx_line_len = 0U;
   wifi_publish_engine_state(WIFI_ENGINE_ESP_KICK);
   wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_KICK_HOLD_MS;
   wifi_write_text("+++");
@@ -748,6 +760,13 @@ static void wifi_production_command_ok(void)
 {
   switch(wifi_engine_state) {
   case WIFI_ENGINE_AT:
+    /* First prove the module answers, then disable the echo before any
+     * further traffic so the software-UART RX never sees overlap garbage. */
+    if(wifi_issue_engine_state(WIFI_ENGINE_SET_ECHO) == 0U) {
+      wifi_schedule_reconnect(1U);
+    }
+    break;
+  case WIFI_ENGINE_SET_ECHO:
     /* Close a former production socket before changing WiFi/TCP mode.  This
      * makes a K3 retry reliable even when the host disappeared mid-job. */
     if(wifi_issue_engine_state(WIFI_ENGINE_CLOSE_OLD) == 0U) {
@@ -1172,6 +1191,12 @@ static void wifi_production_service(void)
 
   if(wifi_engine_state == WIFI_ENGINE_ESP_KICK) {
     if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
+      /* The +++ echo/ERROR decode can leave a partial RX line that would
+       * otherwise swallow the first AT response (the same corruption that
+       * made the K2 network test need repeated presses).  Flush so AT owns a
+       * clean line and the session advances on the first attempt. */
+      wifi_rx_line_len = 0U;
+      wifi_rx_edge_tail = wifi_rx_edge_head;
       (void)wifi_issue_engine_state(WIFI_ENGINE_AT);
     }
     return;

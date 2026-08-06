@@ -99,6 +99,7 @@ typedef enum {
 
 typedef enum {
   SETTINGS_WIFI_TEST_IDLE = 0,
+  SETTINGS_WIFI_TEST_ECHO_OFF,
   SETTINGS_WIFI_TEST_CLOSE_OLD,
   SETTINGS_WIFI_TEST_AT,
   SETTINGS_WIFI_TEST_STA_MODE,
@@ -1596,6 +1597,13 @@ static void settings_issue_wifi_command(settings_wifi_test_state_t state)
   uint32_t timeout_ms;
 
   switch(state) {
+  case SETTINGS_WIFI_TEST_ECHO_OFF:
+    /* ATE0 first: with the ESP echo disabled, no received byte can overlap
+     * the software-UART TX window, so every later response decodes cleanly
+     * and the test no longer needs repeated presses to pass. */
+    command = "ATE0";
+    settings_set_status("NETWORK TEST: DISABLE ECHO", SETTINGS_BLUE);
+    break;
   case SETTINGS_WIFI_TEST_CLOSE_OLD:
     command = "AT+CIPCLOSE";
     settings_set_status("NETWORK TEST: CLOSE OLD SESSION", SETTINGS_BLUE);
@@ -1683,7 +1691,7 @@ static void settings_start_wifi_test(void)
   settings_wifi_command_deadline_ms = 0U;
   settings_wifi_overall_deadline_ms = tester_wifi_print_now_ms() +
                                       SETTINGS_WIFI_TEST_OVERALL_TIMEOUT_MS;
-  settings_issue_wifi_command(SETTINGS_WIFI_TEST_CLOSE_OLD);
+  settings_issue_wifi_command(SETTINGS_WIFI_TEST_ECHO_OFF);
 }
 
 static void settings_copy_quoted(const char *line, char *out, uint8_t out_size)
@@ -1714,6 +1722,9 @@ static void settings_copy_quoted(const char *line, char *out, uint8_t out_size)
 static void settings_process_wifi_ok(void)
 {
   switch(settings_wifi_state) {
+  case SETTINGS_WIFI_TEST_ECHO_OFF:
+    settings_issue_wifi_command(SETTINGS_WIFI_TEST_CLOSE_OLD);
+    break;
   case SETTINGS_WIFI_TEST_CLOSE_OLD:
     settings_issue_wifi_command(SETTINGS_WIFI_TEST_AT);
     break;
@@ -1822,7 +1833,8 @@ static void settings_process_wifi_line(const char *line)
     return;
   }
   if(strcmp(line, "ERROR") == 0 || strstr(line, "FAIL") != 0) {
-    if(settings_wifi_state == SETTINGS_WIFI_TEST_CLOSE_OLD) {
+    if(settings_wifi_state == SETTINGS_WIFI_TEST_CLOSE_OLD ||
+       settings_wifi_state == SETTINGS_WIFI_TEST_ECHO_OFF) {
       settings_process_wifi_ok();
       return;
     }
