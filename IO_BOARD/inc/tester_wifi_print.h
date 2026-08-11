@@ -124,6 +124,15 @@ uint8_t tester_wifi_print_discovered_entry(uint8_t index, char *line_id,
                                            uint8_t line_size, char *ip,
                                            uint8_t ip_size, uint16_t *port);
 
+/* ESP EN 硬复位（PA8，两侧共用）：WIFI 无响应时自动拉低 EN 等效断电重启。
+ * session_note_start/end 由会话开始/失败处调用，零响应累计超阈值自动复位。 */
+void wifi_esp_en_init(void);
+void wifi_esp_en_reset(void);
+void wifi_esp_session_note_start(void);
+void wifi_esp_session_note_end(void);
+void wifi_esp_session_mark_ok(void);
+void wifi_esp_watchdog_poll(void);
+
 /* Called by EXINT9_5_IRQHandler for the PB9 WiFi RX edge stream. */
 void tester_wifi_print_rx_edge_isr(void);
 

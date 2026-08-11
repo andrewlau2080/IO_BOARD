@@ -1597,12 +1597,10 @@ static void settings_finish_wifi_test(uint8_t passed, const char *detail)
    * entry can show it even if the operator does not press K4. */
   mac_save_ok = settings_persist_read_mac();
 
-  /* Do not hand the UART back to the production reconnect state machine while
-   * this page is still visible.  That state machine used to immediately send
-   * AT+CWMODE/AT+CWJAP after the final MAC line, racing the next K2 press and
-   * making the green result appear only after leaving/re-entering the page. */
+  /* K2 测试结束：完整交回 ESP，生产引擎立即恢复（发现与连接照常进行，
+   * 设置页字段实时反映结果）。 */
   if(settings_wifi_raw_owned != 0U) {
-    tester_wifi_print_at_end_hold();
+    tester_wifi_print_at_end();
   }
   settings_wifi_ip_retry_pending = 0U;
   settings_wifi_command_deadline_ms = 0U;
@@ -2246,12 +2244,10 @@ uint8_t tester_settings_begin(void)
     return 0U;
   }
 
-  /* Take exclusive raw ownership as soon as the setup page opens.  A
-   * production reconnect may otherwise emit a command while the operator is
-   * editing or pressing K2, which is indistinguishable from an AP failure on
-   * the shared PC3/PB9 software UART. */
-  tester_wifi_print_at_begin();
-  settings_wifi_raw_owned = 1U;
+  /* 设置页不再独占 ESP：生产引擎继续运行，UDP 信标发现照常进行，
+   * PRINT HOST/PORT 字段随发现结果实时自动填充。K2 测试按下时才接管
+   * raw（settings_start_wifi_test 内 at_begin），结束后 at_end 交回引擎。 */
+  settings_wifi_raw_owned = 0U;
   g_tester_settings_wifi_test_running = 0U;
 
   device_config_copy(&settings_draft);

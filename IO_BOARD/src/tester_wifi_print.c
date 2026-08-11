@@ -152,6 +152,14 @@ static uint8_t wifi_discovered_count;
 static uint8_t wifi_discovered_selected;
 static char wifi_discovered_host[TESTER_WIFI_DISCOVER_HOST_MAX];
 static uint16_t wifi_discovered_port;
+/* ---- ESP EN 硬复位（PA8）：WIFI 无响应时等效断电重启 ---- */
+#define TESTER_WIFI_ESP_NO_RESPONSE_MAX  3U
+#define TESTER_WIFI_ESP_EN_RESET_MS      100UL
+#define TESTER_WIFI_ESP_WATCHDOG_MS      (2U * 60U * 1000U)
+static uint8_t wifi_esp_no_response_count;
+static uint8_t wifi_esp_session_ok;
+static uint32_t wifi_session_frame_mark;
+static uint32_t wifi_esp_last_online_ms;
 static uint8_t wifi_kick_term_pending;
 static uint8_t wifi_boot_grace_pending;
 static uint32_t wifi_boot_grace_deadline_ms;
@@ -589,6 +597,7 @@ static void wifi_publish_engine_state(wifi_engine_state_t state)
   case WIFI_ENGINE_ONLINE:
     g_tester_wifi_print_network_state = TESTER_WIFI_PRINT_NETWORK_ONLINE;
     g_tester_wifi_print_online = 1U;
+    wifi_esp_session_mark_ok();  /* 仅真正 ONLINE（TCP 建连成功）才标记 */
     break;
   case WIFI_ENGINE_SEND_PROMPT:
   case WIFI_ENGINE_SEND_RESULT:
@@ -642,6 +651,8 @@ static void wifi_job_note_transport_failure(void)
 
 static void wifi_schedule_reconnect(uint8_t job_transport_failure)
 {
+  wifi_esp_session_note_end();  /* 会话结束：ESP 零响应则累计，超阈值 EN 复位 */
+
   g_tester_wifi_print_ap_connected = 0U;
   wifi_ap_ip_seen = 0U;
   g_tester_wifi_print_online = 0U;
@@ -757,6 +768,7 @@ static void wifi_begin_production_session(void)
   wifi_discovered_port = 0U;
   wifi_discovered_count = 0U;
   wifi_discovered_selected = 0xFFU;
+  wifi_esp_session_note_start();
   wifi_rx_edge_tail = wifi_rx_edge_head;
   wifi_rx_line_len = 0U;
   wifi_kick_term_pending = 0U;
@@ -1365,6 +1377,8 @@ static void wifi_production_service(void)
     return;
   }
 
+  wifi_esp_watchdog_poll();  /* 2 分钟未 ONLINE → EN 复位兜底 */
+
   if(wifi_engine_state == WIFI_ENGINE_CONFIG_REQUIRED) {
     if(wifi_ap_config_is_complete() != 0U) {
       wifi_begin_production_session();
@@ -1435,6 +1449,17 @@ static void wifi_production_service(void)
     /* Keep the AP association alive.  A print-host/station tuple can be
      * supplied later through LCDM; tester_wifi_print_restart() then runs the
      * full TCP sequence without disturbing the learned recipe. */
+    return;
+  }
+
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_WAIT) {
+    /* 信标未到：保持 UDP 监听常开，只延长等待，绝不重开会话。
+     * 反复 CIPSTART/CIPCLOSE 建拆 UDP 会把 ESP WiFi 打掉（与打印侧
+     * 信标反复建拆同根因，实测 100% 复现）；且打印侧信标当前未广播，
+     * 等不到是常态，重试只会打掉刚连上的 WiFi。信标随时可到。 */
+    if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
+      wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_DISCOVER_TIMEOUT_MS;
+    }
     return;
   }
 
@@ -1538,6 +1563,7 @@ void tester_wifi_print_init(void)
    * erase a start/data edge and turn a valid AP join into a false NO STA IP. */
   nvic_irq_enable(EXINT9_5_IRQn, 0U, 0U);
 
+  wifi_esp_en_init();
   g_tester_wifi_print_ready = 1U;
 }
 
@@ -1914,6 +1940,70 @@ uint8_t tester_wifi_print_discovered_entry(uint8_t index, char *line_id,
   (void)snprintf(ip, ip_size, "%s", wifi_discovered_list[index].ip);
   *port = wifi_discovered_list[index].port;
   return 1U;
+}
+
+/* ---- ESP EN 硬复位（PA8）：两侧共用 ---- */
+void wifi_esp_en_init(void)
+{
+  crm_periph_clock_enable(CRM_GPIOA_PERIPH_CLOCK, TRUE);
+  /* 直接寄存器操作：cfgr 位[17:16] = 0b01 推挽输出；
+   * SCR 置位 GPIO_PINS_8（0x0100，位掩码——注意不是 GPIO_PINS_SOURCE8=0x08 序号）
+   * → PA8 默认高 = ESP 运行态 */
+  GPIOA->cfgr = (GPIOA->cfgr & ~(0x03U << 16U)) | (0x01U << 16U);
+  GPIOA->scr = GPIO_PINS_8;
+  wifi_esp_last_online_ms = 1U;  /* 非 0：看门狗从开机起计时（从未上线也触发） */
+}
+
+void wifi_esp_en_reset(void)
+{
+  uint32_t start_ms;
+
+  GPIOA->clr = GPIO_PINS_8;  /* EN 拉低 → ESP 复位断电 */
+  start_ms = wifi_time_ms;
+  while((int32_t)(wifi_time_ms - start_ms) < (int32_t)TESTER_WIFI_ESP_EN_RESET_MS) {
+    wifi_time_service();  /* DWT 周期计数推进时钟，不依赖 ESP 边沿 */
+  }
+  GPIOA->scr = GPIO_PINS_8;  /* 释放 → ESP 重新上电启动 */
+}
+
+void wifi_esp_session_note_start(void)
+{
+  if(wifi_esp_session_ok != 0U) {
+    /* 上一会话成功（已连上）→ 清零失败计数 */
+    wifi_esp_no_response_count = 0U;
+    wifi_esp_session_ok = 0U;
+  }
+  wifi_session_frame_mark = g_tester_wifi_print_rx_frame_count;
+}
+
+void wifi_esp_session_note_end(void)
+{
+  /* 连续失败会话计数（乱码帧也会算失败——帧计数法会被垃圾流量骗过）：
+   * 连续 N 次会话失败 → EN 复位等效断电重启 ESP */
+  if(wifi_esp_no_response_count < 0xFFU) {
+    wifi_esp_no_response_count++;
+  }
+  if(wifi_esp_no_response_count >= TESTER_WIFI_ESP_NO_RESPONSE_MAX) {
+    wifi_esp_no_response_count = 0U;
+    wifi_esp_en_reset();
+  }
+}
+
+void wifi_esp_session_mark_ok(void)
+{
+  wifi_esp_session_ok = 1U;
+  wifi_esp_last_online_ms = wifi_time_ms;
+}
+
+/* 看门狗兜底：连续 2 分钟未成功 ONLINE → 强制 EN 复位（等效断电重启）。
+ * 不依赖会话失败计数（乱码/半死 ESP 的计数会被部分响应清零，EN 永不触发）。 */
+void wifi_esp_watchdog_poll(void)
+{
+  if(wifi_esp_last_online_ms != 0U &&
+     (int32_t)(wifi_time_ms - wifi_esp_last_online_ms) > (int32_t)TESTER_WIFI_ESP_WATCHDOG_MS) {
+    wifi_esp_last_online_ms = wifi_time_ms;  /* 复位后再给 2 分钟窗口 */
+    wifi_esp_en_reset();
+  }
 }
 
 uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size)

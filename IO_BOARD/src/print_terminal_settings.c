@@ -240,11 +240,11 @@ static const char *field_label(set_field_t field)
   case SET_FIELD_COPIES: return "COPIES";
   case SET_FIELD_STATION: return "STATION";
   case SET_FIELD_RESULT: return "RESULT";
-  case SET_FIELD_CONTROLLER: return "HOST NAME";
+  case SET_FIELD_CONTROLLER: return "PRINT HOST";
   case SET_FIELD_LINE: return "PD LINE";
   case SET_FIELD_SSID: return "WIFI SSID";
   case SET_FIELD_PASSWORD: return "WIFI PWD";
-  case SET_FIELD_PORT: return "LISTEN PORT";
+  case SET_FIELD_PORT: return "PRINT PORT";
   case SET_FIELD_BAUD: return "PRN BAUD";
   case SET_FIELD_IR: return "IR FALLBACK";
   default: return "";
@@ -295,7 +295,11 @@ static const char *field_value(set_field_t field, char *scratch, uint16_t scratc
   case SET_FIELD_COPIES: number_text(scratch, scratch_size, job->copies); return scratch;
   case SET_FIELD_STATION: number_text(scratch, scratch_size, job->station_id); return scratch;
   case SET_FIELD_RESULT: return job->pass ? "PASS" : "NG";
-  case SET_FIELD_CONTROLLER: return draft.controller_name;
+  case SET_FIELD_CONTROLLER: {
+    /* 本机 PRINT HOST = 自身 WiFi IP，连接成功后自动填入（只读，不自设） */
+    const char *ip = print_host_wifi_ip_text();
+    return (ip != 0 && ip[0] != '\0') ? ip : "--";
+  }
   case SET_FIELD_LINE: return draft.line_id;
   case SET_FIELD_SSID: return draft.wifi_ssid;
   case SET_FIELD_PASSWORD: return draft.wifi_password;
@@ -823,6 +827,9 @@ static void begin_edit(set_field_t field)
   const char *value;
   if(field == SET_FIELD_NONE) {
     return;
+  }
+  if(field == SET_FIELD_CONTROLLER) {
+    return;  /* PRINT HOST 为自动显示（自身 IP），不手动编辑 */
   }
   selected_field = field;
   value = field_value(field, scratch, sizeof(scratch));

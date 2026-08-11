@@ -61,6 +61,9 @@ static uint8_t lcdm_frame_drawn;
 static uint8_t wifi_print_active;
 static uint32_t wifi_print_deadline_ms;
 static print_host_wifi_request_t wifi_print_request;
+/* 主屏头部 WIFI 状态更新闭环缓存：状态文本/在线状态变化时刷新头部 */
+static char header_wifi_cache[32];
+static uint8_t header_online_cache = 0xFFU;
 
 static uint16_t host_status_color(void)
 {
@@ -925,6 +928,18 @@ void print_terminal_service(void)
   line_comm_print_request_t request;
 
   print_host_wifi_service();
+  /* 主屏头部 WIFI 状态更新闭环：状态文本或在线标志变化即刷新头部，
+   * 不再依赖退出设置页的整屏重绘。 */
+  {
+    const char *wifi_status = print_host_wifi_status_text();
+    uint8_t online = print_host_wifi_is_online() != 0U ? 1U : 0U;
+    if(header_online_cache != online ||
+       strncmp(header_wifi_cache, wifi_status, sizeof(header_wifi_cache) - 1U) != 0) {
+      (void)snprintf(header_wifi_cache, sizeof(header_wifi_cache), "%s", wifi_status);
+      header_online_cache = online;
+      refresh_requested = 1U;
+    }
+  }
   service_wifi_print_job();
   service_wifi_print_requests();
 

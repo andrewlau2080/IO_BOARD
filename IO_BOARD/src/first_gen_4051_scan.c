@@ -3434,6 +3434,12 @@ static void first_gen_print_link_init(void)
    * The legacy PB6/PB7 IR machinery remains in the separate IR_PRINT_BRIDGE
    * application and is intentionally not initialized by this local tester. */
   tester_wifi_print_init();
+  /* 上电先拉低 EN 复位 ESP（与打印侧完全同方案）：ESP 强制重启 →
+   * 干净启动 → 启动日志/会话正常。此前关掉复位后 ESP 自然上电无输出。 */
+  wifi_esp_en_reset();
+  /* 配置已保存时开机自动连接 WiFi（引擎按 2s 上电宽限后自动建会话），
+   * 无需每次开机进入设置页。 */
+  tester_wifi_print_start();
 }
 
 static void panel_hold_print_network_error(void)

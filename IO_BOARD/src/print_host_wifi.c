@@ -536,7 +536,10 @@ static uint8_t host_build_join(char *command, uint16_t capacity)
          host_command_append(command, capacity, &length, '"') != 0U;
 }
 
-static void host_schedule_retry(void);
+static uint16_t host_last_retry_line;   /* 调试：最近一次重试的调用点行号 */
+static uint8_t host_ever_online;        /* 首次 ONLINE 前不报 NETWORK ERROR */
+static void host_schedule_retry_at(uint16_t line);
+#define host_schedule_retry() host_schedule_retry_at((uint16_t)__LINE__)
 static void host_schedule_ip_retry(void);
 
 static uint8_t host_issue_command(host_command_t command)
@@ -569,9 +572,10 @@ static uint8_t host_issue_command(host_command_t command)
                    (unsigned int)config->wifi_listen_port);
     break;
   case HOST_CMD_BEACON_START:
-    /* 向子网广播 255.255.255.255:5002 发 UDP 信标（发送方向，mode 0）。 */
+    /* 向子网广播 255.255.255.255:5002 发 UDP 信标。
+     * mode 2 = ESP-AT 的 UDP 广播模式（0 固定目标会反复把 WiFi 打掉线）。 */
     (void)snprintf(text, sizeof(text),
-                   "AT+CIPSTART=%u,\"UDP\",\"255.255.255.255\",%u,%u,0",
+                   "AT+CIPSTART=%u,\"UDP\",\"255.255.255.255\",%u,%u,2",
                    (unsigned int)HOST_WIFI_BEACON_LINK,
                    (unsigned int)HOST_WIFI_BEACON_PORT,
                    (unsigned int)HOST_WIFI_BEACON_PORT);
@@ -606,8 +610,10 @@ static uint8_t host_issue_command(host_command_t command)
   return 1U;
 }
 
-static void host_schedule_retry(void)
+static void host_schedule_retry_at(uint16_t line)
 {
+  host_last_retry_line = line;
+  wifi_esp_session_note_end();  /* 会话失败：ESP 零响应则累计，超阈值 EN 复位 */
   host_waiting_command = HOST_CMD_NONE;
   host_ip_retry_pending = 0U;
   host_session_deadline_ms = 0U;
@@ -711,8 +717,12 @@ static void host_process_ok(void)
     break;
   case HOST_CMD_SERVER:
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
-    /* ONLINE 后 3s 开始广播发现信标（测试机按 PD LINE 自动连接本控制器）。 */
-    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+    wifi_esp_session_mark_ok();
+    host_ever_online = 1U;  /* 自连完成：此后断连才允许报 NETWORK ERROR */
+    /* 信标广播暂缓：实测 ESP-AT 的 UDP CIPSTART/CIPSEND 周期命令会反复
+     * 打掉 WiFi（开信标每 ~5s 断连、关信标稳定）。先保证 ONLINE 深绿稳定，
+     * 信标改方案后再恢复（不再用反复建链方式）。 */
+    host_beacon_deadline_ms = 0U;
     break;
   case HOST_CMD_BEACON_START: {
     /* 复用打印结果发送通道（CIPSEND=<link>,<len> → ">" → 载荷 → SEND OK），
@@ -737,6 +747,18 @@ static void host_process_ok(void)
 }
 
 static uint8_t host_tx_start_current(void);
+
+static void host_tx_start_failed(void)
+{
+  /* 信标 TX 失败只重置信标周期，绝不打断 ONLINE 会话；业务 TX 失败才重连 */
+  if(host_tx_current.link_id == HOST_WIFI_BEACON_LINK) {
+    host_beacon_pending = 0U;
+    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+  } else {
+    g_print_host_wifi_error_count++;
+    host_schedule_retry();
+  }
+}
 
 static void host_process_line(const char *line)
 {
@@ -795,7 +817,7 @@ static void host_process_line(const char *line)
       host_tx_current.retries++;
       host_tx_active = 0U;
       if(host_tx_start_current() == 0U) {
-        host_schedule_retry();
+        host_tx_start_failed();
       }
     } else {
       host_tx_active = 0U;
@@ -862,6 +884,13 @@ static void host_process_line(const char *line)
        host_state == PRINT_HOST_WIFI_JOINING) {
       return;
     }
+    if(host_state == PRINT_HOST_WIFI_ONLINE) {
+      /* ONLINE 期间的断连上报：只做 JOIN 级重连，不重启整个会话状态机，
+       * 深绿不掉（避免每次信标周期后的断连上报把会话打回 STARTING）。 */
+      host_set_state(PRINT_HOST_WIFI_JOINING, "WIFI REJOIN");
+      (void)host_issue_or_retry(HOST_CMD_JOIN);
+      return;
+    }
     host_schedule_retry();
     return;
   }
@@ -900,7 +929,7 @@ static void host_tx_service(void)
         host_tx_waiting_prompt = 0U;
         host_tx_waiting_result = 0U;
         if(host_tx_start_current() == 0U) {
-          host_schedule_retry();
+          host_tx_start_failed();
         }
         return;
       } else {
@@ -919,13 +948,15 @@ static void host_tx_service(void)
   host_tx_current = host_tx_queue[host_tx_tail];
   host_tx_tail = (uint8_t)((host_tx_tail + 1U) % HOST_WIFI_TX_QUEUE_DEPTH);
   if(host_tx_start_current() == 0U) {
-    g_print_host_wifi_error_count++;
-    host_schedule_retry();
+    host_tx_start_failed();
   }
 }
 
 void print_host_wifi_init(void)
 {
+  wifi_esp_en_init();  /* PA8 = ESP EN：默认运行态 */
+  wifi_esp_en_reset(); /* 上电先拉低 EN 复位 ESP：干净启动 → 快速连接
+                        * （约 6 秒出绿，不再等 18 秒看门狗才复位） */
   host_state = PRINT_HOST_WIFI_STOPPED;
   host_waiting_command = HOST_CMD_NONE;
   host_deadline_ms = 0U;
@@ -961,6 +992,7 @@ void print_host_wifi_start(void)
 {
   const print_terminal_store_config_t *config = print_terminal_store_get();
 
+  wifi_esp_session_note_start();  /* 会话起点：记录帧计数用于无响应判定 */
   if(config == 0 || config->wifi_ssid[0] == '\0' ||
      config->wifi_listen_port == 0U) {
     tester_wifi_print_at_end();
@@ -1009,6 +1041,7 @@ void print_host_wifi_service(void)
   /* Keep the shared decoder and time base running even while the first
    * session is held by the boot grace. */
   tester_wifi_print_service();
+  wifi_esp_watchdog_poll();  /* 2 分钟未 ONLINE → EN 复位兜底 */
 
   if(host_first_start_pending != 0U) {
     if(host_time_reached(host_first_start_deadline_ms) == 0U) {
@@ -1077,6 +1110,11 @@ void print_host_wifi_service(void)
           host_beacon_pending = 0U;
           host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
         }
+      } else if(host_waiting_command == HOST_CMD_NONE && host_tx_active == 0U) {
+        /* 死锁恢复：BEACON_START 的 CIPSTART 已完成但 CIPSEND 从未启动
+         * （命令完成信号丢失）。重置周期，3s 后重新发起广播。 */
+        host_beacon_pending = 0U;
+        host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
       }
     } else if(host_beacon_deadline_ms != 0U &&
               host_time_reached(host_beacon_deadline_ms) != 0U) {
@@ -1098,7 +1136,9 @@ uint8_t print_host_wifi_is_online(void)
 
 uint8_t print_host_wifi_is_error(void)
 {
-  return (host_state == PRINT_HOST_WIFI_ERROR) ? 1U : 0U;
+  /* 首次 ONLINE 之前不报错：上电自连过程中（可能重试数次）不显示
+   * NETWORK ERROR，等自连完成或确认失败后再报。 */
+  return (host_state == PRINT_HOST_WIFI_ERROR && host_ever_online != 0U) ? 1U : 0U;
 }
 
 const char *print_host_wifi_status_text(void)
