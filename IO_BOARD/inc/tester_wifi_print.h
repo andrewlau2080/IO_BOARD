@@ -110,11 +110,19 @@ uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size);
 /* Monotonic millisecond clock maintained by tester_wifi_print_service(). */
 uint32_t tester_wifi_print_now_ms(void);
 
-/* UDP 信标自动发现结果（设置页 PRINT HOST/PORT 自动填充用）。
- * valid=1 时 host/port 为已发现的打印控制器目标。 */
+/* UDP 信标自动发现结果（设置页 PRINT HOST/PORT 自动填充、多控制器选择用）。
+ * valid=1 时 host/port 为当前连接目标；count=发现的控制器总数；
+ * line_matched=1 表示配置的 PD LINE 有匹配控制器；selected=当前选中索引(0xFF=无)。 */
 uint8_t tester_wifi_print_discovered_valid(void);
 const char *tester_wifi_print_discovered_host(void);
 uint16_t tester_wifi_print_discovered_port(void);
+uint8_t tester_wifi_print_discovered_count(void);
+uint8_t tester_wifi_print_discovered_line_matched(void);
+uint8_t tester_wifi_print_discovered_selected(void);
+void tester_wifi_print_discovered_select(uint8_t index);
+uint8_t tester_wifi_print_discovered_entry(uint8_t index, char *line_id,
+                                           uint8_t line_size, char *ip,
+                                           uint8_t ip_size, uint16_t *port);
 
 /* Called by EXINT9_5_IRQHandler for the PB9 WiFi RX edge stream. */
 void tester_wifi_print_rx_edge_isr(void);

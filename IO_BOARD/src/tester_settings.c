@@ -345,6 +345,35 @@ static void settings_set_status(const char *text, uint16_t color)
   settings_status_color = color;
 }
 
+/* 发现状态提示：选中 x/y + PD LINE 匹配与否 + 控制器地址 */
+static void settings_set_status_text(uint8_t selected, uint8_t count,
+                                     uint8_t line_matched)
+{
+  char line[8];
+  char ip[16];
+  uint16_t port;
+
+  if(tester_wifi_print_discovered_entry((uint8_t)(selected - 1U),
+                                        line, sizeof(line),
+                                        ip, sizeof(ip), &port) == 0U) {
+    settings_set_status("SELECT PRINT CONTROLLER", SETTINGS_BLUE);
+    return;
+  }
+  if(line_matched != 0U) {
+    (void)snprintf(settings_status, sizeof(settings_status),
+                   "已选 %u/%u %s %s:%u PD LINE OK",
+                   (unsigned int)selected, (unsigned int)count,
+                   line, ip, (unsigned int)port);
+    settings_status_color = SETTINGS_WIFI_PASS_GREEN;
+  } else {
+    (void)snprintf(settings_status, sizeof(settings_status),
+                   "已选 %u/%u %s %s:%u PD LINE 无匹配",
+                   (unsigned int)selected, (unsigned int)count,
+                   line, ip, (unsigned int)port);
+    settings_status_color = SETTINGS_RED;
+  }
+}
+
 /* Defined below the drawing helpers; the forward declaration keeps the
  * incremental renderer independent of the field-storage implementation. */
 static const char *settings_field_value(settings_field_t field);
@@ -1518,10 +1547,21 @@ static uint8_t settings_build_tcp_start_command(char command[SETTINGS_WIFI_COMMA
   uint16_t length = 0U;
   static const char prefix[] = "AT+CIPSTART=\"TCP\",\"";
   static const char separator[] = "\",";
+  const char *host;
+  uint16_t port;
   uint8_t index;
 
   if(settings_has_print_host() == 0U) {
     return 0U;
+  }
+
+  /* 手动值优先，未手动填时用 UDP 信标自动发现的目标 */
+  if(settings_draft.service_host[0] != '\0') {
+    host = settings_draft.service_host;
+    port = settings_draft.service_port;
+  } else {
+    host = tester_wifi_print_discovered_host();
+    port = tester_wifi_print_discovered_port();
   }
 
   command[0] = '\0';
@@ -1533,7 +1573,7 @@ static uint8_t settings_build_tcp_start_command(char command[SETTINGS_WIFI_COMMA
   if(settings_append_escaped(command,
                              SETTINGS_WIFI_COMMAND_MAX,
                              &length,
-                             settings_draft.service_host) == 0U) {
+                             host) == 0U) {
     return 0U;
   }
   for(index = 0U; index < (uint8_t)(sizeof(separator) - 1U); index++) {
@@ -1544,7 +1584,7 @@ static uint8_t settings_build_tcp_start_command(char command[SETTINGS_WIFI_COMMA
   return settings_append_uint32(command,
                                 SETTINGS_WIFI_COMMAND_MAX,
                                 &length,
-                                settings_draft.service_port);
+                                (uint32_t)port);
 }
 
 static void settings_finish_wifi_test(uint8_t passed, const char *detail)
@@ -1877,7 +1917,44 @@ static void settings_process_wifi_line(const char *line)
 
 static void settings_save(void)
 {
+  uint8_t count;
+  uint8_t matched;
+
   if(g_tester_settings_wifi_test_running != 0U) {
+    return;
+  }
+  /* 保存前校验：资料不完善时阻止保存并明确提示缺什么。 */
+  if(settings_draft.wifi_ssid[0] == '\0') {
+    settings_set_status("需填写 WIFI SSID", SETTINGS_RED);
+    settings_draw();
+    return;
+  }
+  if(settings_draft.wifi_password[0] == '\0') {
+    settings_set_status("需填写 WIFI PASSWORD", SETTINGS_RED);
+    settings_draw();
+    return;
+  }
+  if(settings_draft.line_id[0] == '\0') {
+    settings_set_status("需填写 PD LINE", SETTINGS_RED);
+    settings_draw();
+    return;
+  }
+  count = tester_wifi_print_discovered_count();
+  matched = tester_wifi_print_discovered_line_matched();
+  if(count == 0U) {
+    settings_set_status("未发现打印控制器 - 请确认打印侧已上电", SETTINGS_RED);
+    settings_draw();
+    return;
+  }
+  if(matched == 0U) {
+    settings_set_status("PD LINE 无匹配 - 请核对 PD LINE", SETTINGS_RED);
+    settings_draw();
+    return;
+  }
+  if(count > 1U &&
+     tester_wifi_print_discovered_selected() >= count) {
+    settings_set_status("多台控制器 - 请用 K1 选择打印侧", SETTINGS_RED);
+    settings_draw();
     return;
   }
   if(device_config_save(&settings_draft) == 0U) {
@@ -1971,10 +2048,27 @@ static void settings_handle_coordinate(uint16_t x, uint16_t y, uint8_t event)
   } else if(y >= SETTINGS_MAIN_KEY_Y &&
             y < (uint16_t)(SETTINGS_MAIN_KEY_Y + SETTINGS_MAIN_KEY_H)) {
     if(x < 120U) {
-      /* K1 keeps the familiar SELF/LEARN appearance, but it is deliberately
-       * an edit shortcut here.  Learning can only be started from the normal
-       * tester page, so a settings touch can never erase the recipe. */
-      settings_begin_edit(settings_field);
+      /* K1: 发现到打印控制器时循环选择（多台选择/单台确认）；
+       * 无发现时保持编辑快捷键。 */
+      if(tester_wifi_print_discovered_count() > 0U) {
+        uint8_t sel = tester_wifi_print_discovered_selected();
+        uint8_t count = tester_wifi_print_discovered_count();
+        char line[8];
+        char ip[16];
+        uint16_t port;
+        sel = (uint8_t)((sel + 1U) % count);
+        tester_wifi_print_discovered_select(sel);
+        if(tester_wifi_print_discovered_entry(sel, line, sizeof(line),
+                                              ip, sizeof(ip), &port) != 0U) {
+          settings_set_status_text((uint8_t)(sel + 1U), count,
+                                   tester_wifi_print_discovered_line_matched());
+        } else {
+          settings_set_status("SELECT PRINT CONTROLLER", SETTINGS_BLUE);
+        }
+        settings_draw();
+      } else {
+        settings_begin_edit(settings_field);
+      }
     } else if(x < 240U) {
       settings_start_wifi_test();
     } else if(x < 360U) {
@@ -2303,15 +2397,38 @@ void tester_settings_network_service(uint16_t elapsed_ms)
   }
 }
 
+static uint8_t settings_discovery_status_cached;  /* 上次显示的发现状态摘要 */
+
 void tester_settings_service(void)
 {
   lcdm_tjc_event_t event;
+  uint8_t count;
+  uint8_t matched;
+  uint8_t summary;
 
   if(g_tester_settings_active == 0U) {
     return;
   }
 
   tester_settings_network_service(1U);
+
+  /* 发现状态自动刷新：控制器数量或 PD LINE 匹配变化时更新状态行 */
+  if(g_tester_settings_wifi_test_running == 0U && settings_input_active == 0U) {
+    count = tester_wifi_print_discovered_count();
+    matched = tester_wifi_print_discovered_line_matched();
+    summary = (uint8_t)((count << 1U) | matched);
+    if(summary != settings_discovery_status_cached) {
+      settings_discovery_status_cached = summary;
+      if(count > 0U) {
+        uint8_t sel = tester_wifi_print_discovered_selected();
+        if(sel >= count) {
+          sel = 0U;
+        }
+        settings_set_status_text((uint8_t)(sel + 1U), count, matched);
+        settings_draw();
+      }
+    }
+  }
 
   while(g_tester_settings_active != 0U && lcdm_tjc_poll_event(&event) != 0U) {
     if(event.type == LCDM_TJC_EVENT_TOUCH_COORD) {

@@ -139,7 +139,17 @@ static uint8_t wifi_auto_start_enabled;
 static uint8_t wifi_restart_after_raw;
 static uint8_t wifi_ap_ip_seen;
 static uint32_t wifi_state_deadline_ms;
-/* UDP 信标发现得到的打印主机目标（运行时，不落 Flash；每次会话重新发现） */
+/* UDP 信标发现的打印控制器列表（运行时，每次会话重新发现）。
+ * selected=0xFF 表示未选择；连接目标=选中项优先，否则第一个 PD LINE 匹配项。 */
+#define TESTER_WIFI_DISCOVER_MAX  4U
+typedef struct {
+  char line_id[8];
+  char ip[TESTER_WIFI_DISCOVER_HOST_MAX];
+  uint16_t port;
+} wifi_discovered_entry_t;
+static wifi_discovered_entry_t wifi_discovered_list[TESTER_WIFI_DISCOVER_MAX];
+static uint8_t wifi_discovered_count;
+static uint8_t wifi_discovered_selected;
 static char wifi_discovered_host[TESTER_WIFI_DISCOVER_HOST_MAX];
 static uint16_t wifi_discovered_port;
 static uint8_t wifi_kick_term_pending;
@@ -745,6 +755,8 @@ static void wifi_begin_production_session(void)
    * automatically without operator or power-cycle intervention. */
   wifi_discovered_host[0] = '\0';
   wifi_discovered_port = 0U;
+  wifi_discovered_count = 0U;
+  wifi_discovered_selected = 0xFFU;
   wifi_rx_edge_tail = wifi_rx_edge_head;
   wifi_rx_line_len = 0U;
   wifi_kick_term_pending = 0U;
@@ -923,9 +935,10 @@ static const char *wifi_ipd_payload(const char *frame)
   return (separator == 0) ? 0 : separator + 1;
 }
 
-/* 解析打印控制器 UDP 信标并匹配本机 PD LINE：
+/* 解析打印控制器 UDP 信标：
  * {"type":"beacon","line_id":"L01","ip":"192.168.1.20","port":5001}
- * 命中后把 ip/port 存入运行时发现目标，供 AT+CIPSTART 使用。 */
+ * 所有信标都存入发现列表（按 IP 去重）；仅当 line_id 与配置 PD LINE 一致时
+ * 返回 1（触发建连），其余信标仅登记，供设置页展示与多控制器选择。 */
 static uint8_t wifi_handle_discover_beacon(const char *payload)
 {
   const device_config_t *config = device_config_get();
@@ -934,6 +947,8 @@ static uint8_t wifi_handle_discover_beacon(const char *payload)
   char line_id[8];
   char ip[TESTER_WIFI_DISCOVER_HOST_MAX];
   uint32_t value;
+  uint8_t index;
+  uint8_t matched = 0U;
 
   if(config == 0 || payload == 0 || strstr(payload, "beacon") == 0) {
     return 0U;
@@ -949,9 +964,6 @@ static uint8_t wifi_handle_discover_beacon(const char *payload)
   }
   (void)memcpy(line_id, p, (uint16_t)(end - p));
   line_id[(uint16_t)(end - p)] = '\0';
-  if(strcmp(line_id, config->line_id) != 0) {
-    return 0U;  /* 其它 PD LINE 的控制器：忽略 */
-  }
   p = strstr(payload, "\"ip\":\"");
   if(p == 0) {
     return 0U;
@@ -976,9 +988,42 @@ static uint8_t wifi_handle_discover_beacon(const char *payload)
   if(value == 0U || value > 65535U) {
     return 0U;
   }
-  (void)snprintf(wifi_discovered_host, sizeof(wifi_discovered_host), "%s", ip);
-  wifi_discovered_port = (uint16_t)value;
-  return 1U;
+
+  /* 按 IP 去重登记（已存在则刷新 line_id） */
+  for(index = 0U; index < wifi_discovered_count; index++) {
+    if(strcmp(wifi_discovered_list[index].ip, ip) == 0) {
+      (void)snprintf(wifi_discovered_list[index].line_id,
+                     sizeof(wifi_discovered_list[index].line_id), "%s", line_id);
+      break;
+    }
+  }
+  if(index >= wifi_discovered_count) {
+    if(wifi_discovered_count < TESTER_WIFI_DISCOVER_MAX) {
+      index = wifi_discovered_count;
+      wifi_discovered_count++;
+      (void)snprintf(wifi_discovered_list[index].line_id,
+                     sizeof(wifi_discovered_list[index].line_id), "%s", line_id);
+      (void)snprintf(wifi_discovered_list[index].ip,
+                     sizeof(wifi_discovered_list[index].ip), "%s", ip);
+      wifi_discovered_list[index].port = (uint16_t)value;
+    }
+  }
+
+  if(strcmp(line_id, config->line_id) == 0) {
+    /* 匹配 PD LINE：作为当前连接目标（选中项优先，否则首个匹配项） */
+    if(wifi_discovered_selected < wifi_discovered_count &&
+       strcmp(wifi_discovered_list[wifi_discovered_selected].line_id,
+              config->line_id) == 0) {
+      (void)snprintf(wifi_discovered_host, sizeof(wifi_discovered_host), "%s",
+                     wifi_discovered_list[wifi_discovered_selected].ip);
+      wifi_discovered_port = wifi_discovered_list[wifi_discovered_selected].port;
+    } else {
+      (void)snprintf(wifi_discovered_host, sizeof(wifi_discovered_host), "%s", ip);
+      wifi_discovered_port = (uint16_t)value;
+    }
+    matched = 1U;
+  }
+  return matched;
 }
 
 static uint8_t wifi_handle_print_frame(const char *frame)
@@ -1800,7 +1845,7 @@ uint8_t tester_wifi_print_at_send_bytes(const uint8_t *data, uint16_t length)
   return 1U;
 }
 
-/* 设置页自动填充用：当前 UDP 信标发现的打印主机目标（未发现时 host 为空）。 */
+/* 设置页自动填充与多控制器选择用：当前 UDP 信标发现的打印控制器列表。 */
 uint8_t tester_wifi_print_discovered_valid(void)
 {
   return (wifi_discovered_host[0] != '\0') ? 1U : 0U;
@@ -1814,6 +1859,61 @@ const char *tester_wifi_print_discovered_host(void)
 uint16_t tester_wifi_print_discovered_port(void)
 {
   return wifi_discovered_port;
+}
+
+uint8_t tester_wifi_print_discovered_count(void)
+{
+  return wifi_discovered_count;
+}
+
+/* 返回 1 = 已发现与配置 PD LINE 一致的打印控制器 */
+uint8_t tester_wifi_print_discovered_line_matched(void)
+{
+  const device_config_t *config = device_config_get();
+  uint8_t index;
+
+  if(config == 0) {
+    return 0U;
+  }
+  for(index = 0U; index < wifi_discovered_count; index++) {
+    if(strcmp(wifi_discovered_list[index].line_id, config->line_id) == 0) {
+      return 1U;
+    }
+  }
+  return 0U;
+}
+
+uint8_t tester_wifi_print_discovered_selected(void)
+{
+  return wifi_discovered_selected;
+}
+
+/* 设置页 K1 选择打印控制器（index < count；0xFF 清除选择） */
+void tester_wifi_print_discovered_select(uint8_t index)
+{
+  if(index >= wifi_discovered_count) {
+    wifi_discovered_selected = 0xFFU;
+    wifi_discovered_host[0] = '\0';
+    wifi_discovered_port = 0U;
+    return;
+  }
+  wifi_discovered_selected = index;
+  (void)snprintf(wifi_discovered_host, sizeof(wifi_discovered_host), "%s",
+                 wifi_discovered_list[index].ip);
+  wifi_discovered_port = wifi_discovered_list[index].port;
+}
+
+uint8_t tester_wifi_print_discovered_entry(uint8_t index, char *line_id,
+                                           uint8_t line_size, char *ip,
+                                           uint8_t ip_size, uint16_t *port)
+{
+  if(index >= wifi_discovered_count || line_id == 0 || ip == 0 || port == 0) {
+    return 0U;
+  }
+  (void)snprintf(line_id, line_size, "%s", wifi_discovered_list[index].line_id);
+  (void)snprintf(ip, ip_size, "%s", wifi_discovered_list[index].ip);
+  *port = wifi_discovered_list[index].port;
+  return 1U;
 }
 
 uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size)
