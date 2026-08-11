@@ -39,6 +39,12 @@
 #define TESTER_WIFI_CONNECT_TIMEOUT_MS   7000UL
 #define TESTER_WIFI_SEND_TIMEOUT_MS      4000UL
 #define TESTER_WIFI_BACKOFF_MS           1000UL
+/* UDP 信标发现：打印侧控制器按 line_id 周期性广播自身 IP/端口，测试机在 READ_IP 后
+ * 用 UDP 通配监听(5002)匹配 PD LINE，自动取得打印主机地址，替代手动填写
+ * PRINT HOST/PORT（设置页不再需要单独自设）。 */
+#define TESTER_WIFI_DISCOVER_PORT         5002U
+#define TESTER_WIFI_DISCOVER_TIMEOUT_MS   12000UL
+#define TESTER_WIFI_DISCOVER_HOST_MAX     16U
 /* Post-+++ guard before the first AT of a session: ESP-AT requires roughly
  * one second of silence after the +++ escape sequence before accepting
  * commands again (the backoff wait provides the leading guard silence). */
@@ -80,7 +86,10 @@ typedef enum {
   WIFI_ENGINE_AP_ONLINE,
   WIFI_ENGINE_ONLINE,
   WIFI_ENGINE_SEND_PROMPT,
-  WIFI_ENGINE_SEND_RESULT
+  WIFI_ENGINE_SEND_RESULT,
+  WIFI_ENGINE_DISCOVER,        /* 17: 打开 UDP 通配监听，发现本 PD LINE 打印控制器 */
+  WIFI_ENGINE_DISCOVER_WAIT,   /* 18: 等待匹配信标（+IPD 由帧处理拦截） */
+  WIFI_ENGINE_DISCOVER_CLOSE   /* 19: 信标命中，关闭 UDP 后走标准 TCP 建连 */
 } wifi_engine_state_t;
 
 volatile uint32_t g_tester_wifi_print_tx_request_count;
@@ -130,6 +139,9 @@ static uint8_t wifi_auto_start_enabled;
 static uint8_t wifi_restart_after_raw;
 static uint8_t wifi_ap_ip_seen;
 static uint32_t wifi_state_deadline_ms;
+/* UDP 信标发现得到的打印主机目标（运行时，不落 Flash；每次会话重新发现） */
+static char wifi_discovered_host[TESTER_WIFI_DISCOVER_HOST_MAX];
+static uint16_t wifi_discovered_port;
 static uint8_t wifi_kick_term_pending;
 static uint8_t wifi_boot_grace_pending;
 static uint32_t wifi_boot_grace_deadline_ms;
@@ -473,9 +485,22 @@ static uint8_t wifi_build_join_command(char command[TESTER_WIFI_AT_COMMAND_MAX])
 static uint8_t wifi_build_connect_command(char command[TESTER_WIFI_AT_COMMAND_MAX])
 {
   const device_config_t *config = device_config_get();
+  const char *host;
+  uint16_t port;
   uint16_t length = 0U;
 
-  if(config == 0 || config->service_host[0] == '\0' || config->service_port == 0U) {
+  if(config == 0) {
+    return 0U;
+  }
+  /* UDP 信标发现的目标优先；无发现结果时回退到手动配置（旧部署兼容）。 */
+  if(wifi_discovered_host[0] != '\0') {
+    host = wifi_discovered_host;
+    port = wifi_discovered_port;
+  } else {
+    host = config->service_host;
+    port = config->service_port;
+  }
+  if(host == 0 || host[0] == '\0' || port == 0U) {
     return 0U;
   }
 
@@ -483,10 +508,10 @@ static uint8_t wifi_build_connect_command(char command[TESTER_WIFI_AT_COMMAND_MA
   return wifi_append_text(command, TESTER_WIFI_AT_COMMAND_MAX, &length,
                           "AT+CIPSTART=\"TCP\",\"") != 0U &&
          wifi_append_at_escaped(command, TESTER_WIFI_AT_COMMAND_MAX, &length,
-                                config->service_host) != 0U &&
+                                host) != 0U &&
          wifi_append_text(command, TESTER_WIFI_AT_COMMAND_MAX, &length, "\",") != 0U &&
          wifi_append_uint32(command, TESTER_WIFI_AT_COMMAND_MAX, &length,
-                            (uint32_t)config->service_port) != 0U;
+                            (uint32_t)port) != 0U;
 }
 
 static uint8_t wifi_ap_config_is_complete(void)
@@ -667,6 +692,16 @@ static uint8_t wifi_issue_engine_state(wifi_engine_state_t state)
   case WIFI_ENGINE_CLOSE_OLD:
     (void)snprintf(command, sizeof(command), "AT+CIPCLOSE");
     break;
+  case WIFI_ENGINE_DISCOVER:
+    /* UDP 通配监听：接收任意来源发往 5002 的信标（ESP-AT udp_mode=2）。 */
+    (void)snprintf(command, sizeof(command),
+                   "AT+CIPSTART=\"UDP\",\"0.0.0.0\",0,%u,2",
+                   (unsigned int)TESTER_WIFI_DISCOVER_PORT);
+    timeout_ms = TESTER_WIFI_DISCOVER_TIMEOUT_MS;
+    break;
+  case WIFI_ENGINE_DISCOVER_CLOSE:
+    (void)snprintf(command, sizeof(command), "AT+CIPCLOSE");
+    break;
   case WIFI_ENGINE_CONNECT_HOST:
     if(wifi_build_connect_command(command) == 0U) {
       return 0U;
@@ -708,20 +743,14 @@ static void wifi_begin_production_session(void)
    * +++ merely produces an ERROR that the kick window ignores.  Every backoff
    * re-enters this function, so a lost link or a wedged module recovers
    * automatically without operator or power-cycle intervention. */
+  wifi_discovered_host[0] = '\0';
+  wifi_discovered_port = 0U;
   wifi_rx_edge_tail = wifi_rx_edge_head;
   wifi_rx_line_len = 0U;
   wifi_kick_term_pending = 0U;
   wifi_publish_engine_state(WIFI_ENGINE_ESP_KICK);
   wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_KICK_HOLD_MS;
   wifi_write_text("+++");
-}
-
-static void wifi_set_ap_online(void)
-{
-  g_tester_wifi_print_ap_connected = 1U;
-  wifi_ap_ip_seen = 1U;
-  wifi_publish_engine_state(WIFI_ENGINE_AP_ONLINE);
-  wifi_state_deadline_ms = 0U;
 }
 
 static void wifi_set_online(void)
@@ -802,12 +831,29 @@ static void wifi_production_command_ok(void)
   case WIFI_ENGINE_READ_IP:
     if(wifi_ap_ip_seen == 0U) {
       wifi_schedule_reconnect(1U);
-    } else if(wifi_production_config_is_complete() != 0U) {
-      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+    } else {
+      /* 按 PD LINE 自动发现打印控制器：PRINT HOST/PORT 由信标自动填充，
+       * 不再依赖手动填写（手动值仅作最后回退）。 */
+      if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER) == 0U) {
         wifi_schedule_reconnect(1U);
       }
-    } else {
-      wifi_set_ap_online();
+    }
+    break;
+  case WIFI_ENGINE_DISCOVER:
+    /* UDP 通配监听已开：进入等待（无命令），窗口内等匹配信标。
+     * 超时由服务期通用 deadline 兜底 → 整个会话重试，直到发现为止。 */
+    wifi_publish_engine_state(WIFI_ENGINE_DISCOVER_WAIT);
+    wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_DISCOVER_TIMEOUT_MS;
+    break;
+  case WIFI_ENGINE_DISCOVER_WAIT:
+    /* 帧处理已命中匹配信标 → 关闭 UDP，再走标准 TCP 建连序列 */
+    if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE) == 0U) {
+      wifi_schedule_reconnect(1U);
+    }
+    break;
+  case WIFI_ENGINE_DISCOVER_CLOSE:
+    if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+      wifi_schedule_reconnect(1U);
     }
     break;
   case WIFI_ENGINE_SET_MUX:
@@ -841,10 +887,22 @@ static void wifi_production_command_ok(void)
 
 static void wifi_production_command_error(void)
 {
-  /* AT+CIPCLOSE returns ERROR when no previous socket exists.  That is the
-   * expected clean-start case, not a production failure. */
+  /* CLOSED/断开异步指示在 CONNECT_HOST/ONLINE 阶段触发重连；无套接字时
+   * CIPCLOSE 的 ERROR 是干净启动的正常情况。 */
   if(wifi_engine_state == WIFI_ENGINE_CLOSE_OLD) {
     if(wifi_issue_engine_state(WIFI_ENGINE_SET_STA_MODE) == 0U) {
+      wifi_schedule_reconnect(1U);
+    }
+    return;
+  }
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER) {
+    /* UDP 监听打不开（端口占用/参数错误）：整会话重试，直到发现成功。 */
+    wifi_schedule_reconnect(1U);
+    return;
+  }
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_CLOSE) {
+    /* 信标命中后关闭 UDP：无套接字 ERROR 属正常，继续 TCP 建连。 */
+    if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
       wifi_schedule_reconnect(1U);
     }
     return;
@@ -863,6 +921,64 @@ static const char *wifi_ipd_payload(const char *frame)
 
   separator = strchr(frame, ':');
   return (separator == 0) ? 0 : separator + 1;
+}
+
+/* 解析打印控制器 UDP 信标并匹配本机 PD LINE：
+ * {"type":"beacon","line_id":"L01","ip":"192.168.1.20","port":5001}
+ * 命中后把 ip/port 存入运行时发现目标，供 AT+CIPSTART 使用。 */
+static uint8_t wifi_handle_discover_beacon(const char *payload)
+{
+  const device_config_t *config = device_config_get();
+  const char *p;
+  const char *end;
+  char line_id[8];
+  char ip[TESTER_WIFI_DISCOVER_HOST_MAX];
+  uint32_t value;
+
+  if(config == 0 || payload == 0 || strstr(payload, "beacon") == 0) {
+    return 0U;
+  }
+  p = strstr(payload, "\"line_id\":\"");
+  if(p == 0) {
+    return 0U;
+  }
+  p += 11U;
+  end = strchr(p, '"');
+  if(end == 0 || (uint16_t)(end - p) >= sizeof(line_id)) {
+    return 0U;
+  }
+  (void)memcpy(line_id, p, (uint16_t)(end - p));
+  line_id[(uint16_t)(end - p)] = '\0';
+  if(strcmp(line_id, config->line_id) != 0) {
+    return 0U;  /* 其它 PD LINE 的控制器：忽略 */
+  }
+  p = strstr(payload, "\"ip\":\"");
+  if(p == 0) {
+    return 0U;
+  }
+  p += 6U;
+  end = strchr(p, '"');
+  if(end == 0 || (uint16_t)(end - p) >= sizeof(ip)) {
+    return 0U;
+  }
+  (void)memcpy(ip, p, (uint16_t)(end - p));
+  ip[(uint16_t)(end - p)] = '\0';
+  p = strstr(payload, "\"port\":");
+  if(p == 0) {
+    return 0U;
+  }
+  p += 7U;
+  value = 0U;
+  while(*p >= '0' && *p <= '9') {
+    value = value * 10U + (uint32_t)(*p - '0');
+    p++;
+  }
+  if(value == 0U || value > 65535U) {
+    return 0U;
+  }
+  (void)snprintf(wifi_discovered_host, sizeof(wifi_discovered_host), "%s", ip);
+  wifi_discovered_port = (uint16_t)value;
+  return 1U;
 }
 
 static uint8_t wifi_handle_print_frame(const char *frame)
@@ -1042,6 +1158,19 @@ static void wifi_handle_frame(const char *frame)
     g_tester_wifi_print_rx_frame_count++;
     wifi_queue_event(TESTER_WIFI_PRINT_EVENT_LINK_FLASH_INVALID,
                      wifi_link_test_sequence);
+    return;
+  }
+
+  /* 发现阶段：+IPD 即打印控制器信标，按 PD LINE 匹配后进入 TCP 建连 */
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_WAIT &&
+     strncmp(frame, "+IPD,", 5U) == 0) {
+    if(wifi_handle_discover_beacon(wifi_ipd_payload(frame)) != 0U) {
+      g_tester_wifi_print_rx_frame_count++;
+      if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
+    }
+    /* 不匹配的信标：继续监听（不消耗窗口，由 deadline 统一超时） */
     return;
   }
 
@@ -1669,6 +1798,22 @@ uint8_t tester_wifi_print_at_send_bytes(const uint8_t *data, uint16_t length)
 
   wifi_write_bytes(data, length);
   return 1U;
+}
+
+/* 设置页自动填充用：当前 UDP 信标发现的打印主机目标（未发现时 host 为空）。 */
+uint8_t tester_wifi_print_discovered_valid(void)
+{
+  return (wifi_discovered_host[0] != '\0') ? 1U : 0U;
+}
+
+const char *tester_wifi_print_discovered_host(void)
+{
+  return wifi_discovered_host;
+}
+
+uint16_t tester_wifi_print_discovered_port(void)
+{
+  return wifi_discovered_port;
 }
 
 uint8_t tester_wifi_print_at_poll_line(char *line, uint16_t line_size)

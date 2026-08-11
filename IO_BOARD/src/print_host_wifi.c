@@ -20,6 +20,11 @@
 #define HOST_WIFI_IP_RETRY_MS         300UL
 #define HOST_WIFI_SESSION_TIMEOUT   60000UL
 #define HOST_WIFI_BACKOFF_MS        1500UL
+/* UDP 信标广播：ONLINE 后每 3s 广播自身 line_id/IP/端口（尽力而为，链路忙则
+ * 下周期再试），测试机据此按 PD LINE 自动发现本控制器，无需手动填 HOST/PORT。 */
+#define HOST_WIFI_BEACON_PORT       5002U
+#define HOST_WIFI_BEACON_PERIOD_MS  3000UL
+#define HOST_WIFI_BEACON_LINK       4U
 /* Post-+++ guard before the first AT of a session (same ESP-AT escape
  * convention as the tester engine: leading silence from the backoff wait,
  * trailing silence from this hold window). */
@@ -45,7 +50,9 @@ typedef enum {
   HOST_CMD_IP,
   HOST_CMD_MUX,
   HOST_CMD_TRANS_MODE,
-  HOST_CMD_SERVER
+  HOST_CMD_SERVER,
+  HOST_CMD_BEACON_START,
+  HOST_CMD_BEACON_CLOSE
 } host_command_t;
 
 typedef struct {
@@ -83,6 +90,9 @@ static uint8_t host_kick_pending;
 static uint8_t host_kick_term_pending;
 static uint32_t host_kick_deadline_ms;
 static uint8_t host_first_start_pending;
+static uint8_t host_beacon_pending;
+static uint8_t host_beacon_tx_done;
+static uint32_t host_beacon_deadline_ms;
 static uint32_t host_first_start_deadline_ms;
 static uint8_t host_ip_retry_pending;
 static uint8_t host_got_ip;
@@ -558,6 +568,18 @@ static uint8_t host_issue_command(host_command_t command)
     (void)snprintf(text, sizeof(text), "AT+CIPSERVER=1,%u",
                    (unsigned int)config->wifi_listen_port);
     break;
+  case HOST_CMD_BEACON_START:
+    /* 向子网广播 255.255.255.255:5002 发 UDP 信标（发送方向，mode 0）。 */
+    (void)snprintf(text, sizeof(text),
+                   "AT+CIPSTART=%u,\"UDP\",\"255.255.255.255\",%u,%u,0",
+                   (unsigned int)HOST_WIFI_BEACON_LINK,
+                   (unsigned int)HOST_WIFI_BEACON_PORT,
+                   (unsigned int)HOST_WIFI_BEACON_PORT);
+    break;
+  case HOST_CMD_BEACON_CLOSE:
+    (void)snprintf(text, sizeof(text), "AT+CIPCLOSE=%u",
+                   (unsigned int)HOST_WIFI_BEACON_LINK);
+    break;
   default: return 0U;
   }
   if(tester_wifi_print_at_send(text) == 0U) {
@@ -689,6 +711,25 @@ static void host_process_ok(void)
     break;
   case HOST_CMD_SERVER:
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
+    /* ONLINE 后 3s 开始广播发现信标（测试机按 PD LINE 自动连接本控制器）。 */
+    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+    break;
+  case HOST_CMD_BEACON_START: {
+    /* 复用打印结果发送通道（CIPSEND=<link>,<len> → ">" → 载荷 → SEND OK），
+     * 载荷含本机 line_id/IP/监听端口，测试机按 PD LINE 匹配后自动建连。 */
+    char beacon[HOST_WIFI_COMMAND_MAX];
+    const print_terminal_store_config_t *store = print_terminal_store_get();
+    (void)snprintf(beacon, sizeof(beacon),
+                   "{\"type\":\"beacon\",\"line_id\":\"%s\",\"ip\":\"%s\",\"port\":%u}\n",
+                   (store != 0) ? store->line_id : "",
+                   (host_ip[0] != '\0') ? host_ip : "0.0.0.0",
+                   (store != 0) ? (unsigned int)store->wifi_listen_port : 0U);
+    (void)host_queue_tx(HOST_WIFI_BEACON_LINK, beacon);
+    break;
+  }
+  case HOST_CMD_BEACON_CLOSE:
+    host_beacon_pending = 0U;
+    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
     break;
   default:
     break;
@@ -741,6 +782,9 @@ static void host_process_line(const char *line)
      strcmp(line, "SEND OK") == 0) {
     host_tx_active = 0U;
     host_tx_waiting_result = 0U;
+    if(host_tx_current.link_id == HOST_WIFI_BEACON_LINK) {
+      host_beacon_tx_done = 1U;
+    }
     return;
   }
   if(host_tx_active != 0U &&
@@ -755,7 +799,13 @@ static void host_process_line(const char *line)
       }
     } else {
       host_tx_active = 0U;
-      g_print_host_wifi_error_count++;
+      if(host_tx_current.link_id == HOST_WIFI_BEACON_LINK) {
+        /* 信标发送失败：下个周期再试，不计入业务错误。 */
+        host_beacon_pending = 0U;
+        host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+      } else {
+        g_print_host_wifi_error_count++;
+      }
     }
     return;
   }
@@ -789,6 +839,12 @@ static void host_process_line(const char *line)
       strstr(line, "busy p...") != 0 || strstr(line, "link is not valid") != 0)) {
     if(host_waiting_command == HOST_CMD_IP) {
       host_schedule_ip_retry();
+    } else if(host_waiting_command == HOST_CMD_BEACON_START ||
+              host_waiting_command == HOST_CMD_BEACON_CLOSE) {
+      /* 信标链路忙/无套接字：下个周期再试，不影响 TCP 服务。 */
+      host_waiting_command = HOST_CMD_NONE;
+      host_beacon_pending = 0U;
+      host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
     } else {
       host_schedule_retry();
     }
@@ -878,6 +934,9 @@ void print_host_wifi_init(void)
   host_session_deadline_ms = 0U;
   host_kick_pending = 0U;
   host_kick_deadline_ms = 0U;
+  host_beacon_pending = 0U;
+  host_beacon_tx_done = 0U;
+  host_beacon_deadline_ms = 0U;
   host_first_start_pending = 1U;
   host_first_start_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_BOOT_GRACE_MS;
   host_ip_retry_pending = 0U;
@@ -999,8 +1058,34 @@ void print_host_wifi_service(void)
   if(host_waiting_command != HOST_CMD_NONE && host_time_reached(host_deadline_ms) != 0U) {
     if(host_waiting_command == HOST_CMD_IP) {
       host_schedule_ip_retry();
+    } else if(host_waiting_command == HOST_CMD_BEACON_START ||
+              host_waiting_command == HOST_CMD_BEACON_CLOSE) {
+      host_waiting_command = HOST_CMD_NONE;
+      host_beacon_pending = 0U;
+      host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
     } else {
       host_schedule_retry();
+    }
+  }
+
+  /* UDP 信标：ONLINE 后每 3s 广播自身 line_id/IP/端口（尽力而为）。 */
+  if(host_state == PRINT_HOST_WIFI_ONLINE) {
+    if(host_beacon_pending != 0U) {
+      if(host_beacon_tx_done != 0U && host_waiting_command == HOST_CMD_NONE) {
+        host_beacon_tx_done = 0U;
+        if(host_issue_command(HOST_CMD_BEACON_CLOSE) == 0U) {
+          host_beacon_pending = 0U;
+          host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+        }
+      }
+    } else if(host_beacon_deadline_ms != 0U &&
+              host_time_reached(host_beacon_deadline_ms) != 0U) {
+      host_beacon_pending = 1U;
+      host_beacon_tx_done = 0U;
+      if(host_issue_command(HOST_CMD_BEACON_START) == 0U) {
+        host_beacon_pending = 0U;
+        host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+      }
     }
   }
   host_tx_service();

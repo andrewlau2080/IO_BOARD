@@ -1005,9 +1005,19 @@ static const char *settings_field_value(settings_field_t field)
   case SETTINGS_FIELD_STATION: return settings_draft.station_id;
   case SETTINGS_FIELD_SSID: return settings_draft.wifi_ssid;
   case SETTINGS_FIELD_PASSWORD: return settings_draft.wifi_password;
-  case SETTINGS_FIELD_SERVICE_HOST: return settings_draft.service_host;
+  case SETTINGS_FIELD_SERVICE_HOST:
+    if(settings_draft.service_host[0] == '\0' &&
+       tester_wifi_print_discovered_valid() != 0U) {
+      return tester_wifi_print_discovered_host();  /* 自动发现填充 */
+    }
+    return settings_draft.service_host;
   case SETTINGS_FIELD_SERVICE_PORT:
     if(settings_draft.service_port == 0U) {
+      if(tester_wifi_print_discovered_valid() != 0U) {
+        (void)snprintf(settings_port_text, sizeof(settings_port_text), "%u",
+                       (unsigned int)tester_wifi_print_discovered_port());
+        return settings_port_text;
+      }
       return "";
     }
     (void)snprintf(settings_port_text,
@@ -1464,8 +1474,9 @@ static uint8_t settings_append_uint32(char *text,
 
 static uint8_t settings_has_print_host(void)
 {
-  return (settings_draft.service_host[0] != '\0' &&
-          settings_draft.service_port != 0U) ? 1U : 0U;
+  return ((settings_draft.service_host[0] != '\0' &&
+           settings_draft.service_port != 0U) ||
+          tester_wifi_print_discovered_valid() != 0U) ? 1U : 0U;
 }
 
 static void settings_load_saved_mac(void)
@@ -1871,7 +1882,7 @@ static void settings_save(void)
   }
   if(device_config_save(&settings_draft) == 0U) {
     g_tester_settings_save_error_count++;
-    settings_set_status("CHECK HOST/PORT THEN SAVE", SETTINGS_RED);
+    settings_set_status("SAVE FAILED", SETTINGS_RED);
     settings_draw();
     return;
   }

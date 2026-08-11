@@ -241,7 +241,7 @@ static const char *field_label(set_field_t field)
   case SET_FIELD_STATION: return "STATION";
   case SET_FIELD_RESULT: return "RESULT";
   case SET_FIELD_CONTROLLER: return "HOST NAME";
-  case SET_FIELD_LINE: return "LINE ID";
+  case SET_FIELD_LINE: return "PD LINE";
   case SET_FIELD_SSID: return "WIFI SSID";
   case SET_FIELD_PASSWORD: return "WIFI PWD";
   case SET_FIELD_PORT: return "LISTEN PORT";
