@@ -532,6 +532,21 @@ static uint8_t wifi_build_connect_command(char command[TESTER_WIFI_AT_COMMAND_MA
                             (uint32_t)port) != 0U;
 }
 
+/* 是否有已知 TCP 连接目标（UDP 信标发现结果优先，其次手动配置）。
+ * JOIN 级重连（ONLINE 期间 WIFI DISCONNECT）与手动配置环境下跳过
+ * DISCOVER 直接建连，避免卡在等信标（打印侧信标广播当前禁用，
+ * 等不到是常态）。 */
+static uint8_t wifi_connect_target_known(void)
+{
+  const device_config_t *config = device_config_get();
+
+  if(wifi_discovered_host[0] != '\0' && wifi_discovered_port != 0U) {
+    return 1U;
+  }
+  return (config != 0 && config->service_host[0] != '\0' &&
+          config->service_port != 0U) ? 1U : 0U;
+}
+
 static uint8_t wifi_ap_config_is_complete(void)
 {
   const device_config_t *config = device_config_get();
@@ -855,6 +870,13 @@ static void wifi_production_command_ok(void)
   case WIFI_ENGINE_READ_IP:
     if(wifi_ap_ip_seen == 0U) {
       wifi_schedule_reconnect(1U);
+    } else if(wifi_connect_target_known() != 0U) {
+      /* 目标已知（本会话信标发现过 / 手动配置完整）：跳过 DISCOVER 直接
+       * 重建 TCP。JOIN 级重连（ONLINE 期间 WIFI DISCONNECT）走此路径快速
+       * 恢复；打印侧信标当前禁用，等信标只会卡死。 */
+      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
     } else {
       /* 按 PD LINE 自动发现打印控制器：PRINT HOST/PORT 由信标自动填充，
        * 不再依赖手动填写（手动值仅作最后回退）。 */
@@ -1131,9 +1153,25 @@ static uint8_t wifi_handle_production_line(const char *line)
   }
 
   if(strcmp(line, "CLOSED") == 0) {
-    if(wifi_engine_state != WIFI_ENGINE_CLOSE_OLD) {
-      wifi_schedule_reconnect((wifi_job_active != 0U) ? 1U : 0U);
+    /* WiFi 掉线时 ESP 会伴随上报 CLOSED（TCP 连接随之结束）。JOIN 级
+     * 重连序列（JOIN_AP..CONNECT_HOST）中忽略它，由重连序列重建 TCP；
+     * ONLINE 期间的 CLOSED（如打印侧重启服务）只轻量重连 TCP，
+     * 不杀 WiFi 会话——与打印侧"CLOSED 不拆会话"同思路。 */
+    if(wifi_engine_state == WIFI_ENGINE_CLOSE_OLD ||
+       wifi_engine_state == WIFI_ENGINE_JOIN_AP ||
+       wifi_engine_state == WIFI_ENGINE_READ_IP ||
+       wifi_engine_state == WIFI_ENGINE_SET_MUX ||
+       wifi_engine_state == WIFI_ENGINE_SET_MODE ||
+       wifi_engine_state == WIFI_ENGINE_CONNECT_HOST) {
+      return 1U;
     }
+    if(wifi_engine_state == WIFI_ENGINE_ONLINE) {
+      if(wifi_issue_engine_state(WIFI_ENGINE_CONNECT_HOST) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
+      return 1U;
+    }
+    wifi_schedule_reconnect((wifi_job_active != 0U) ? 1U : 0U);
     return 1U;
   }
   if(strcmp(line, "WIFI DISCONNECT") == 0 ||
@@ -1150,6 +1188,16 @@ static uint8_t wifi_handle_production_line(const char *line)
     if(wifi_engine_state == WIFI_ENGINE_SET_STA_MODE ||
        wifi_engine_state == WIFI_ENGINE_JOIN_AP ||
        wifi_engine_state == WIFI_ENGINE_READ_IP) {
+      return 1U;
+    }
+    if(wifi_engine_state == WIFI_ENGINE_ONLINE ||
+       wifi_engine_state == WIFI_ENGINE_AP_ONLINE) {
+      /* ONLINE 期间断连：只做 JOIN 级重连（重发 CWJAP），不杀会话状态机。
+       * 与打印侧一致——ESP 会因路由器/PHY 原因合法掉线，会话级重启只会
+       * 造成"绿 5 秒又断、反复重连"；CWJAP 一轮即可恢复 ONLINE。 */
+      if(wifi_issue_engine_state(WIFI_ENGINE_JOIN_AP) == 0U) {
+        wifi_schedule_reconnect((wifi_job_active != 0U) ? 1U : 0U);
+      }
       return 1U;
     }
     wifi_schedule_reconnect((wifi_job_active != 0U) ? 1U : 0U);
