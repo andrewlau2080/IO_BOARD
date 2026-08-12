@@ -785,11 +785,13 @@ static void host_process_ok(void)
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
     wifi_esp_session_mark_ok();
     host_ever_online = 1U;  /* 自连完成：此后断连才允许报 NETWORK ERROR */
-    /* 打开 link4 UDP 监听(5002)等待测试机侧 PD LINE 查询，收到后按需
-     * 广播回复自身 HOST/PORT——不再周期广播（旧方案实测打 WiFi）。 */
+    /* 禁用 UDP 监听自动开：实测 UDP 链路(mode0/2)会触发 ESP 周期
+     * WIFI DISCONNECT(652f941 A/B 验证, 手动连接无 UDP 所以稳定)。
+     * ONLINE 后零 UDP 操作, 保持与手动连接一致的干净状态；
+     * HOST/PORT 同步作为第二件事另行设计, 不走 UDP 自动同步。 */
     host_beacon_link_open = 0U;
     host_query_reply_pending = 0U;
-    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+    host_beacon_deadline_ms = 0U;
     break;
   case HOST_CMD_BEACON_START:
     /* link4 UDP 监听已开（CIPSTART OK）：保持常开收查询。 */
