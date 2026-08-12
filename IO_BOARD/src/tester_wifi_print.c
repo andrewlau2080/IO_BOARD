@@ -539,6 +539,20 @@ static uint8_t wifi_build_connect_command(char command[TESTER_WIFI_AT_COMMAND_MA
                             (uint32_t)port) != 0U;
 }
 
+/* 是否有已知 TCP 连接目标（本会话 UDP 发现结果优先，其次手动配置）。
+ * 生产流程有目标时直接建 TCP（零 UDP），避免 UDP 发现打 WiFi 导致
+ * "连上几秒又退出"——手动连接(K2 无 UDP)稳定，生产流程对齐该行为。 */
+static uint8_t wifi_connect_target_known(void)
+{
+  const device_config_t *config = device_config_get();
+
+  if(wifi_discovered_host[0] != '\0' && wifi_discovered_port != 0U) {
+    return 1U;
+  }
+  return (config != 0 && config->service_host[0] != '\0' &&
+          config->service_port != 0U) ? 1U : 0U;
+}
+
 static uint8_t wifi_ap_config_is_complete(void)
 {
   const device_config_t *config = device_config_get();
@@ -872,10 +886,16 @@ static void wifi_production_command_ok(void)
   case WIFI_ENGINE_READ_IP:
     if(wifi_ap_ip_seen == 0U) {
       wifi_schedule_reconnect(1U);
+    } else if(wifi_connect_target_known() != 0U) {
+      /* 已配置 HOST/PORT（或本会话发现过）：直接建 TCP，不碰 UDP。
+       * UDP 发现（广播查询/监听）实测打 WiFi → "连上几秒又退出"；
+       * 手动连接(K2 无 UDP)稳定，生产流程对齐手动连接行为。 */
+      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
     } else {
-      /* 按 PD LINE 自动发现打印控制器：PRINT HOST/PORT 由信标自动填充。
-       * 信标窗口超时后（DISCOVER_WAIT 兜底）再用手动配置直接建 TCP——
-       * 建连与 HOST/PORT 更新解耦，不无限等信标。 */
+      /* 无连接目标（未发现、未手动配置）：UDP 查询发现打印控制器。
+       * 打 WiFi 的代价仅在无配置场景承受；查到即更新 HOST/PORT。 */
       if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER) == 0U) {
         wifi_schedule_reconnect(1U);
       }
@@ -1292,6 +1312,16 @@ static uint8_t wifi_handle_production_line(const char *line)
     if(strstr(line, "ALREADY CONNECTED") != 0) {
       wifi_set_online();
     }
+    return 1U;
+  }
+
+  if(strncmp(line, "+CWJAP:", 7U) == 0 &&
+     wifi_engine_state == WIFI_ENGINE_JOIN_AP && strchr(line, '"') == 0) {
+    /* 数字 +CWJAP:<err> 是终止性关联错误（1=超时 2=密码错 3=找不到AP
+     * 4=连接失败）。立即重连，避免干等 OK 直到 20s JOIN 超时。
+     * （与打印侧 842 行同款处理；测试机侧此前缺失，CWJAP 失败时
+     * 每次白等 20 秒才 BACKOFF。） */
+    wifi_schedule_reconnect(1U);
     return 1U;
   }
 
