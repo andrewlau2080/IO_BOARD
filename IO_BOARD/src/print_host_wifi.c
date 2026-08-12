@@ -92,6 +92,7 @@ static uint32_t host_kick_deadline_ms;
 static uint8_t host_first_start_pending;
 static uint8_t host_beacon_pending;
 static uint8_t host_beacon_tx_done;
+static uint8_t host_beacon_link_open;  /* link4 UDP 信标链路已常开（只 CIPSEND 不建拆） */
 static uint32_t host_beacon_deadline_ms;
 static uint32_t host_first_start_deadline_ms;
 static uint8_t host_ip_retry_pending;
@@ -683,10 +684,24 @@ static uint8_t host_copy_quoted(const char *line, char *out, uint16_t out_size)
   return 1U;
 }
 
+/* 构造当前 line_id/IP/监听端口的信标 JSON 并入队（link4 CIPSEND 发送）。
+ * 常开链路方案：链路已开时每周期只调本函数（CIPSEND），不再建拆 UDP。 */
+static void host_queue_beacon(void)
+{
+  char beacon[HOST_WIFI_COMMAND_MAX];
+  const print_terminal_store_config_t *store = print_terminal_store_get();
+
+  (void)snprintf(beacon, sizeof(beacon),
+                 "{\"type\":\"beacon\",\"line_id\":\"%s\",\"ip\":\"%s\",\"port\":%u}\n",
+                 (store != 0) ? store->line_id : "",
+                 (host_ip[0] != '\0') ? host_ip : "0.0.0.0",
+                 (store != 0) ? (unsigned int)store->wifi_listen_port : 0U);
+  (void)host_queue_tx(HOST_WIFI_BEACON_LINK, beacon);
+}
+
 static void host_process_ok(void)
 {
   host_command_t completed = host_waiting_command;
-
   host_waiting_command = HOST_CMD_NONE;
   switch(completed) {
   case HOST_CMD_AT:
@@ -719,22 +734,16 @@ static void host_process_ok(void)
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
     wifi_esp_session_mark_ok();
     host_ever_online = 1U;  /* 自连完成：此后断连才允许报 NETWORK ERROR */
-    /* 信标广播暂缓：实测 ESP-AT 的 UDP CIPSTART/CIPSEND 周期命令会反复
-     * 打掉 WiFi（开信标每 ~5s 断连、关信标稳定）。先保证 ONLINE 深绿稳定，
-     * 信标改方案后再恢复（不再用反复建链方式）。 */
-    host_beacon_deadline_ms = 0U;
+    /* 信标广播（常开链路方案）：link4 UDP 只在 ONLINE 首次开一次，
+     * 之后每周期只 CIPSEND——不再反复 CIPSTART/CIPCLOSE（旧方案实测
+     * 每 ~5s 打掉 ESP WiFi）。测试机侧据此自动更新 HOST/PORT。 */
+    host_beacon_link_open = 0U;
+    host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
     break;
   case HOST_CMD_BEACON_START: {
-    /* 复用打印结果发送通道（CIPSEND=<link>,<len> → ">" → 载荷 → SEND OK），
-     * 载荷含本机 line_id/IP/监听端口，测试机按 PD LINE 匹配后自动建连。 */
-    char beacon[HOST_WIFI_COMMAND_MAX];
-    const print_terminal_store_config_t *store = print_terminal_store_get();
-    (void)snprintf(beacon, sizeof(beacon),
-                   "{\"type\":\"beacon\",\"line_id\":\"%s\",\"ip\":\"%s\",\"port\":%u}\n",
-                   (store != 0) ? store->line_id : "",
-                   (host_ip[0] != '\0') ? host_ip : "0.0.0.0",
-                   (store != 0) ? (unsigned int)store->wifi_listen_port : 0U);
-    (void)host_queue_tx(HOST_WIFI_BEACON_LINK, beacon);
+    /* link4 UDP 已开（CIPSTART OK）：标记常开，随后只 CIPSEND。 */
+    host_beacon_link_open = 1U;
+    host_queue_beacon();
     break;
   }
   case HOST_CMD_BEACON_CLOSE:
@@ -822,7 +831,9 @@ static void host_process_line(const char *line)
     } else {
       host_tx_active = 0U;
       if(host_tx_current.link_id == HOST_WIFI_BEACON_LINK) {
-        /* 信标发送失败：下个周期再试，不计入业务错误。 */
+        /* 信标发送失败（含 link is not valid 链路丢失）：下个周期重开链路，
+         * 不计入业务错误。 */
+        host_beacon_link_open = 0U;
         host_beacon_pending = 0U;
         host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
       } else {
@@ -967,6 +978,7 @@ void print_host_wifi_init(void)
   host_kick_deadline_ms = 0U;
   host_beacon_pending = 0U;
   host_beacon_tx_done = 0U;
+  host_beacon_link_open = 0U;
   host_beacon_deadline_ms = 0U;
   host_first_start_pending = 1U;
   host_first_start_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_BOOT_GRACE_MS;
@@ -1101,15 +1113,15 @@ void print_host_wifi_service(void)
     }
   }
 
-  /* UDP 信标：ONLINE 后每 3s 广播自身 line_id/IP/端口（尽力而为）。 */
+  /* UDP 信标（常开链路）：ONLINE 后每 3s 广播自身 line_id/IP/端口（尽力而为）。
+   * link4 只在首次 BEACON_START 开一次，之后每周期只 CIPSEND，不再建拆。 */
   if(host_state == PRINT_HOST_WIFI_ONLINE) {
     if(host_beacon_pending != 0U) {
       if(host_beacon_tx_done != 0U && host_waiting_command == HOST_CMD_NONE) {
+        /* 本周期信标已发出：链路保持常开，只重置周期，不 CIPCLOSE。 */
         host_beacon_tx_done = 0U;
-        if(host_issue_command(HOST_CMD_BEACON_CLOSE) == 0U) {
-          host_beacon_pending = 0U;
-          host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
-        }
+        host_beacon_pending = 0U;
+        host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
       } else if(host_waiting_command == HOST_CMD_NONE && host_tx_active == 0U) {
         /* 死锁恢复：BEACON_START 的 CIPSTART 已完成但 CIPSEND 从未启动
          * （命令完成信号丢失）。重置周期，3s 后重新发起广播。 */
@@ -1120,9 +1132,17 @@ void print_host_wifi_service(void)
               host_time_reached(host_beacon_deadline_ms) != 0U) {
       host_beacon_pending = 1U;
       host_beacon_tx_done = 0U;
-      if(host_issue_command(HOST_CMD_BEACON_START) == 0U) {
+      if(host_beacon_link_open == 0U) {
+        /* 链路未开：先 CIPSTART（只这一次），OK 后置 link_open 并 CIPSEND。 */
+        if(host_issue_command(HOST_CMD_BEACON_START) == 0U) {
+          host_beacon_pending = 0U;
+          host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+        }
+      } else {
+        /* 链路已常开：直接 CIPSEND 信标，不再建拆 UDP。 */
         host_beacon_pending = 0U;
         host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+        host_queue_beacon();
       }
     }
   }

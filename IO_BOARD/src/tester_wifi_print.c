@@ -43,7 +43,7 @@
  * 用 UDP 通配监听(5002)匹配 PD LINE，自动取得打印主机地址，替代手动填写
  * PRINT HOST/PORT（设置页不再需要单独自设）。 */
 #define TESTER_WIFI_DISCOVER_PORT         5002U
-#define TESTER_WIFI_DISCOVER_TIMEOUT_MS   12000UL
+#define TESTER_WIFI_DISCOVER_TIMEOUT_MS   5000UL
 #define TESTER_WIFI_DISCOVER_HOST_MAX     16U
 /* Post-+++ guard before the first AT of a session: ESP-AT requires roughly
  * one second of silence after the +++ escape sequence before accepting
@@ -532,21 +532,6 @@ static uint8_t wifi_build_connect_command(char command[TESTER_WIFI_AT_COMMAND_MA
                             (uint32_t)port) != 0U;
 }
 
-/* 是否有已知 TCP 连接目标（UDP 信标发现结果优先，其次手动配置）。
- * JOIN 级重连（ONLINE 期间 WIFI DISCONNECT）与手动配置环境下跳过
- * DISCOVER 直接建连，避免卡在等信标（打印侧信标广播当前禁用，
- * 等不到是常态）。 */
-static uint8_t wifi_connect_target_known(void)
-{
-  const device_config_t *config = device_config_get();
-
-  if(wifi_discovered_host[0] != '\0' && wifi_discovered_port != 0U) {
-    return 1U;
-  }
-  return (config != 0 && config->service_host[0] != '\0' &&
-          config->service_port != 0U) ? 1U : 0U;
-}
-
 static uint8_t wifi_ap_config_is_complete(void)
 {
   const device_config_t *config = device_config_get();
@@ -870,16 +855,10 @@ static void wifi_production_command_ok(void)
   case WIFI_ENGINE_READ_IP:
     if(wifi_ap_ip_seen == 0U) {
       wifi_schedule_reconnect(1U);
-    } else if(wifi_connect_target_known() != 0U) {
-      /* 目标已知（本会话信标发现过 / 手动配置完整）：跳过 DISCOVER 直接
-       * 重建 TCP。JOIN 级重连（ONLINE 期间 WIFI DISCONNECT）走此路径快速
-       * 恢复；打印侧信标当前禁用，等信标只会卡死。 */
-      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
-        wifi_schedule_reconnect(1U);
-      }
     } else {
-      /* 按 PD LINE 自动发现打印控制器：PRINT HOST/PORT 由信标自动填充，
-       * 不再依赖手动填写（手动值仅作最后回退）。 */
+      /* 按 PD LINE 自动发现打印控制器：PRINT HOST/PORT 由信标自动填充。
+       * 信标窗口超时后（DISCOVER_WAIT 兜底）再用手动配置直接建 TCP——
+       * 建连与 HOST/PORT 更新解耦，不无限等信标。 */
       if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER) == 0U) {
         wifi_schedule_reconnect(1U);
       }
@@ -1501,12 +1480,11 @@ static void wifi_production_service(void)
   }
 
   if(wifi_engine_state == WIFI_ENGINE_DISCOVER_WAIT) {
-    /* 信标未到：保持 UDP 监听常开，只延长等待，绝不重开会话。
-     * 反复 CIPSTART/CIPCLOSE 建拆 UDP 会把 ESP WiFi 打掉（与打印侧
-     * 信标反复建拆同根因，实测 100% 复现）；且打印侧信标当前未广播，
-     * 等不到是常态，重试只会打掉刚连上的 WiFi。信标随时可到。 */
+    /* 信标窗口超时：关闭 UDP 监听，用现有配置（本会话发现结果优先、
+     * 否则手动 service_host/port）直接建 TCP——先建连，HOST/PORT 更新
+     * 由下次信标窗口负责，不无限等信标。 */
     if(wifi_time_reached(wifi_state_deadline_ms) != 0U) {
-      wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_DISCOVER_TIMEOUT_MS;
+      (void)wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE);
     }
     return;
   }
