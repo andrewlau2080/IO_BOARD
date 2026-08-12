@@ -1054,6 +1054,7 @@ void print_host_wifi_init(void)
   host_reset_seen();
   host_ip[0] = '\0';
   host_mac[0] = '\0';
+  host_ever_online = 0U;  /* 上电清零：首次 ONLINE 前不报 NETWORK ERROR */
   (void)snprintf(host_status, sizeof(host_status), "WAITING");
   g_print_host_wifi_rx_request_count = 0U;
   g_print_host_wifi_rx_duplicate_count = 0U;
