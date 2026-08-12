@@ -87,9 +87,12 @@ typedef enum {
   WIFI_ENGINE_ONLINE,
   WIFI_ENGINE_SEND_PROMPT,
   WIFI_ENGINE_SEND_RESULT,
-  WIFI_ENGINE_DISCOVER,        /* 17: 打开 UDP 通配监听，发现本 PD LINE 打印控制器 */
-  WIFI_ENGINE_DISCOVER_WAIT,   /* 18: 等待匹配信标（+IPD 由帧处理拦截） */
-  WIFI_ENGINE_DISCOVER_CLOSE   /* 19: 信标命中，关闭 UDP 后走标准 TCP 建连 */
+  WIFI_ENGINE_DISCOVER,            /* 17: 开 UDP 广播链路，发 PD LINE 查询 */
+  WIFI_ENGINE_DISCOVER_QUERY,      /* 18: 发查询帧(CIPSEND)，等 '>' 提示 */
+  WIFI_ENGINE_DISCOVER_QUERY_RESULT, /* 19: 等 SEND OK */
+  WIFI_ENGINE_DISCOVER_LISTEN,     /* 20: 重开 UDP 通配监听(5002)，等打印侧回复 */
+  WIFI_ENGINE_DISCOVER_WAIT,       /* 21: 等待匹配回复（+IPD 由帧处理拦截） */
+  WIFI_ENGINE_DISCOVER_CLOSE       /* 22: 关闭当前 UDP 链路（广播或监听） */
 } wifi_engine_state_t;
 
 volatile uint32_t g_tester_wifi_print_tx_request_count;
@@ -152,6 +155,10 @@ static uint8_t wifi_discovered_count;
 static uint8_t wifi_discovered_selected;
 static char wifi_discovered_host[TESTER_WIFI_DISCOVER_HOST_MAX];
 static uint16_t wifi_discovered_port;
+/* PD LINE 查询帧（DISCOVER 阶段 CIPSEND 载荷）与监听阶段标志。 */
+static char wifi_discover_query_frame[64];
+static uint8_t wifi_discover_query_len;
+static uint8_t wifi_discover_listening;  /* 1=当前 UDP 链路是通配监听，0=广播查询链路 */
 /* ---- ESP EN 硬复位（PA8）：WIFI 无响应时等效断电重启 ---- */
 #define TESTER_WIFI_ESP_NO_RESPONSE_MAX  3U
 #define TESTER_WIFI_ESP_EN_RESET_MS      100UL
@@ -714,7 +721,16 @@ static uint8_t wifi_issue_engine_state(wifi_engine_state_t state)
     (void)snprintf(command, sizeof(command), "AT+CIPCLOSE");
     break;
   case WIFI_ENGINE_DISCOVER:
-    /* UDP 通配监听：接收任意来源发往 5002 的信标（ESP-AT udp_mode=2）。 */
+    /* UDP 广播查询链路：向 255.255.255.255:5002 发 PD LINE 查询，
+     * 同线打印侧监听 5002 收到后广播回复自身 HOST/PORT。 */
+    (void)snprintf(command, sizeof(command),
+                   "AT+CIPSTART=\"UDP\",\"255.255.255.255\",%u,%u,0",
+                   (unsigned int)TESTER_WIFI_DISCOVER_PORT,
+                   (unsigned int)TESTER_WIFI_DISCOVER_PORT);
+    timeout_ms = TESTER_WIFI_DISCOVER_TIMEOUT_MS;
+    break;
+  case WIFI_ENGINE_DISCOVER_LISTEN:
+    /* UDP 通配监听：接收打印侧广播回复（ESP-AT udp_mode=2 纯接收）。 */
     (void)snprintf(command, sizeof(command),
                    "AT+CIPSTART=\"UDP\",\"0.0.0.0\",0,%u,2",
                    (unsigned int)TESTER_WIFI_DISCOVER_PORT);
@@ -768,6 +784,7 @@ static void wifi_begin_production_session(void)
   wifi_discovered_port = 0U;
   wifi_discovered_count = 0U;
   wifi_discovered_selected = 0xFFU;
+  wifi_discover_listening = 0U;
   wifi_esp_session_note_start();
   wifi_rx_edge_tail = wifi_rx_edge_head;
   wifi_rx_line_len = 0U;
@@ -865,20 +882,54 @@ static void wifi_production_command_ok(void)
     }
     break;
   case WIFI_ENGINE_DISCOVER:
-    /* UDP 通配监听已开：进入等待（无命令），窗口内等匹配信标。
-     * 超时由服务期通用 deadline 兜底 → 整个会话重试，直到发现为止。 */
+    /* 广播查询链路已开：构造 PD LINE 查询帧并 CIPSEND（等 '>' 提示）。 */
+    wifi_discover_listening = 0U;
+    {
+      const device_config_t *config = device_config_get();
+      int written = snprintf(wifi_discover_query_frame,
+                             sizeof(wifi_discover_query_frame),
+                             "{\"type\":\"query\",\"line_id\":\"%s\"}\n",
+                             (config != 0) ? config->line_id : "");
+      if(written <= 0 || (uint32_t)written >= sizeof(wifi_discover_query_frame)) {
+        wifi_schedule_reconnect(1U);
+        break;
+      }
+      wifi_discover_query_len = (uint8_t)written;
+    }
+    {
+      char command[32];
+      (void)snprintf(command, sizeof(command), "AT+CIPSEND=%u",
+                     (unsigned int)wifi_discover_query_len);
+      wifi_publish_engine_state(WIFI_ENGINE_DISCOVER_QUERY);
+      wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_SEND_TIMEOUT_MS;
+      wifi_write_text(command);
+      wifi_write_text("\r\n");
+    }
+    break;
+  case WIFI_ENGINE_DISCOVER_LISTEN:
+    /* 监听已开：进入等待，窗口内等打印侧广播回复（+IPD 由帧处理拦截）。 */
+    wifi_discover_listening = 1U;
     wifi_publish_engine_state(WIFI_ENGINE_DISCOVER_WAIT);
     wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_DISCOVER_TIMEOUT_MS;
     break;
   case WIFI_ENGINE_DISCOVER_WAIT:
-    /* 帧处理已命中匹配信标 → 关闭 UDP，再走标准 TCP 建连序列 */
+    /* 帧处理已命中匹配回复 → 关闭 UDP 监听，再走标准 TCP 建连序列 */
     if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE) == 0U) {
       wifi_schedule_reconnect(1U);
     }
     break;
   case WIFI_ENGINE_DISCOVER_CLOSE:
-    if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
-      wifi_schedule_reconnect(1U);
+    if(wifi_discover_listening != 0U) {
+      /* 关闭的是监听链路 → 走 TCP 建连（命中回复 / 超时兜底） */
+      wifi_discover_listening = 0U;
+      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
+    } else {
+      /* 关闭的是广播查询链路 → 重开监听收打印侧回复 */
+      if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_LISTEN) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
     }
     break;
   case WIFI_ENGINE_SET_MUX:
@@ -921,14 +972,34 @@ static void wifi_production_command_error(void)
     return;
   }
   if(wifi_engine_state == WIFI_ENGINE_DISCOVER) {
-    /* UDP 监听打不开（端口占用/参数错误）：整会话重试，直到发现成功。 */
+    /* UDP 广播链路打不开（端口占用/参数错误）：整会话重试。 */
     wifi_schedule_reconnect(1U);
     return;
   }
-  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_CLOSE) {
-    /* 信标命中后关闭 UDP：无套接字 ERROR 属正常，继续 TCP 建连。 */
-    if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_LISTEN) {
+    /* UDP 监听打不开：整会话重试。 */
+    wifi_schedule_reconnect(1U);
+    return;
+  }
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY ||
+     wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY_RESULT) {
+    /* CIPSEND 查询失败：跳过查询，直接切监听（等不到回复则超时兜底建 TCP）。 */
+    if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE) == 0U) {
       wifi_schedule_reconnect(1U);
+    }
+    return;
+  }
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_CLOSE) {
+    /* 关闭 UDP：无套接字 ERROR 属正常，继续流程（监听→建连 / 查询→监听）。 */
+    if(wifi_discover_listening != 0U) {
+      wifi_discover_listening = 0U;
+      if(wifi_issue_engine_state(WIFI_ENGINE_SET_MUX) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
+    } else {
+      if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_LISTEN) == 0U) {
+        wifi_schedule_reconnect(1U);
+      }
     }
     return;
   }
@@ -1183,6 +1254,23 @@ static uint8_t wifi_handle_production_line(const char *line)
     return 1U;
   }
 
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY &&
+     (strcmp(line, ">") == 0 || line[0] == '>')) {
+    /* CIPSEND 提示到达：发 PD LINE 查询帧。 */
+    wifi_write_bytes((const uint8_t *)wifi_discover_query_frame,
+                     wifi_discover_query_len);
+    wifi_publish_engine_state(WIFI_ENGINE_DISCOVER_QUERY_RESULT);
+    wifi_state_deadline_ms = wifi_time_ms + TESTER_WIFI_SEND_TIMEOUT_MS;
+    return 1U;
+  }
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY_RESULT &&
+     strcmp(line, "SEND OK") == 0) {
+    /* 查询已广播：关闭广播链路，重开监听收打印侧回复。 */
+    if(wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE) == 0U) {
+      wifi_schedule_reconnect(1U);
+    }
+    return 1U;
+  }
   if(wifi_engine_state == WIFI_ENGINE_SEND_PROMPT &&
      (strcmp(line, ">") == 0 || line[0] == '>')) {
     wifi_write_bytes((const uint8_t *)wifi_job_frame, wifi_job_frame_len);
@@ -1476,6 +1564,17 @@ static void wifi_production_service(void)
     /* Keep the AP association alive.  A print-host/station tuple can be
      * supplied later through LCDM; tester_wifi_print_restart() then runs the
      * full TCP sequence without disturbing the learned recipe. */
+    return;
+  }
+
+  if(wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY ||
+     wifi_engine_state == WIFI_ENGINE_DISCOVER_QUERY_RESULT) {
+    /* CIPSEND 查询无提示/无 SEND OK：跳过查询直接切监听，
+     * 等不到打印侧回复就由 DISCOVER_WAIT 超时兜底建 TCP。 */
+    if(wifi_state_deadline_ms != 0U &&
+       wifi_time_reached(wifi_state_deadline_ms) != 0U) {
+      (void)wifi_issue_engine_state(WIFI_ENGINE_DISCOVER_CLOSE);
+    }
     return;
   }
 

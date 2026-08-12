@@ -52,7 +52,8 @@ typedef enum {
   HOST_CMD_TRANS_MODE,
   HOST_CMD_SERVER,
   HOST_CMD_BEACON_START,
-  HOST_CMD_BEACON_CLOSE
+  HOST_CMD_BEACON_CLOSE,
+  HOST_CMD_BEACON_TX
 } host_command_t;
 
 typedef struct {
@@ -92,7 +93,8 @@ static uint32_t host_kick_deadline_ms;
 static uint8_t host_first_start_pending;
 static uint8_t host_beacon_pending;
 static uint8_t host_beacon_tx_done;
-static uint8_t host_beacon_link_open;  /* link4 UDP 信标链路已常开（只 CIPSEND 不建拆） */
+static uint8_t host_beacon_link_open;  /* link4 UDP 链路已开（监听或广播） */
+static uint8_t host_query_reply_pending;  /* 收到同线查询，待广播回复 HOST/PORT */
 static uint32_t host_beacon_deadline_ms;
 static uint32_t host_first_start_deadline_ms;
 static uint8_t host_ip_retry_pending;
@@ -427,6 +429,47 @@ static uint8_t host_parse_request(const char *payload,
   return (request->event_id != 0U) ? 1U : 0U;
 }
 
+/* link4 收到的 UDP 载荷：测试机侧 PD LINE 查询（{"type":"query","line_id":"L04"}）。
+ * 匹配本机 line_id 则广播回复自身 HOST/PORT；非本线查询忽略。 */
+static uint8_t host_issue_or_retry(host_command_t command);
+static uint8_t host_handle_query(const char *line)
+{
+  uint8_t link_id;
+  const char *payload;
+  uint16_t payload_length;
+  const char *p;
+  const char *end;
+  char query_line[8];
+  const print_terminal_store_config_t *store;
+
+  if(host_parse_ipd(line, &link_id, &payload, &payload_length) == 0U ||
+     link_id != HOST_WIFI_BEACON_LINK ||
+     strstr(payload, "\"type\":\"query\"") == 0) {
+    return 0U;
+  }
+  p = strstr(payload, "\"line_id\":\"");
+  if(p == 0) {
+    return 0U;
+  }
+  p += 11U;
+  end = strchr(p, '"');
+  if(end == 0 || (size_t)(end - p) >= sizeof(query_line)) {
+    return 0U;
+  }
+  (void)memcpy(query_line, p, (size_t)(end - p));
+  query_line[(size_t)(end - p)] = '\0';
+  store = print_terminal_store_get();
+  if(store == 0 || strcmp(query_line, store->line_id) != 0) {
+    return 0U;  /* 非本线查询：忽略 */
+  }
+  /* 匹配：标记待回复；空闲时立即关监听切广播链路回复。 */
+  host_query_reply_pending = 1U;
+  if(host_waiting_command == HOST_CMD_NONE && host_tx_active == 0U) {
+    (void)host_issue_or_retry(HOST_CMD_BEACON_CLOSE);
+  }
+  return 1U;
+}
+
 static void host_receive_request(const char *line)
 {
   const char *payload;
@@ -573,17 +616,25 @@ static uint8_t host_issue_command(host_command_t command)
                    (unsigned int)config->wifi_listen_port);
     break;
   case HOST_CMD_BEACON_START:
-    /* 向子网广播 255.255.255.255:5002 发 UDP 信标。
-     * mode 2 = ESP-AT 的 UDP 广播模式（0 固定目标会反复把 WiFi 打掉线）。 */
+    /* 打开 link4 UDP 通配监听(5002)：接收测试机侧 PD LINE 查询
+     * （udp_mode=2 纯接收，常开，不再周期广播——周期广播实测打 WiFi）。 */
     (void)snprintf(text, sizeof(text),
-                   "AT+CIPSTART=%u,\"UDP\",\"255.255.255.255\",%u,%u,2",
+                   "AT+CIPSTART=%u,\"UDP\",\"0.0.0.0\",0,%u,2",
                    (unsigned int)HOST_WIFI_BEACON_LINK,
-                   (unsigned int)HOST_WIFI_BEACON_PORT,
                    (unsigned int)HOST_WIFI_BEACON_PORT);
     break;
   case HOST_CMD_BEACON_CLOSE:
     (void)snprintf(text, sizeof(text), "AT+CIPCLOSE=%u",
                    (unsigned int)HOST_WIFI_BEACON_LINK);
+    break;
+  case HOST_CMD_BEACON_TX:
+    /* 收到同线查询后临时改广播链路(255.255.255.255:5002)回复自身 HOST/PORT，
+     * 回复完立即关闭并重开监听。 */
+    (void)snprintf(text, sizeof(text),
+                   "AT+CIPSTART=%u,\"UDP\",\"255.255.255.255\",%u,%u,0",
+                   (unsigned int)HOST_WIFI_BEACON_LINK,
+                   (unsigned int)HOST_WIFI_BEACON_PORT,
+                   (unsigned int)HOST_WIFI_BEACON_PORT);
     break;
   default: return 0U;
   }
@@ -734,21 +785,31 @@ static void host_process_ok(void)
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
     wifi_esp_session_mark_ok();
     host_ever_online = 1U;  /* 自连完成：此后断连才允许报 NETWORK ERROR */
-    /* 信标广播（常开链路方案）：link4 UDP 只在 ONLINE 首次开一次，
-     * 之后每周期只 CIPSEND——不再反复 CIPSTART/CIPCLOSE（旧方案实测
-     * 每 ~5s 打掉 ESP WiFi）。测试机侧据此自动更新 HOST/PORT。 */
+    /* 打开 link4 UDP 监听(5002)等待测试机侧 PD LINE 查询，收到后按需
+     * 广播回复自身 HOST/PORT——不再周期广播（旧方案实测打 WiFi）。 */
     host_beacon_link_open = 0U;
+    host_query_reply_pending = 0U;
     host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
     break;
-  case HOST_CMD_BEACON_START: {
-    /* link4 UDP 已开（CIPSTART OK）：标记常开，随后只 CIPSEND。 */
+  case HOST_CMD_BEACON_START:
+    /* link4 UDP 监听已开（CIPSTART OK）：保持常开收查询。 */
+    host_beacon_link_open = 1U;
+    break;
+  case HOST_CMD_BEACON_TX:
+    /* 广播链路已开：CIPSEND 回复自身 HOST/PORT（走 host_tx 队列）。 */
     host_beacon_link_open = 1U;
     host_queue_beacon();
     break;
-  }
   case HOST_CMD_BEACON_CLOSE:
-    host_beacon_pending = 0U;
+    host_beacon_link_open = 0U;
     host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
+    if(host_query_reply_pending != 0U) {
+      /* 刚关的是监听：切广播链路回复查询。 */
+      (void)host_issue_or_retry(HOST_CMD_BEACON_TX);
+    } else {
+      /* 刚关的是广播（回复已发出）：重开监听收后续查询。 */
+      (void)host_issue_or_retry(HOST_CMD_BEACON_START);
+    }
     break;
   default:
     break;
@@ -775,6 +836,9 @@ static void host_process_line(const char *line)
     return;
   }
   if(strncmp(line, "+IPD,", 5U) == 0) {
+    if(host_handle_query(line) != 0U) {
+      return;
+    }
     host_receive_request(line);
     return;
   }
@@ -979,6 +1043,7 @@ void print_host_wifi_init(void)
   host_beacon_pending = 0U;
   host_beacon_tx_done = 0U;
   host_beacon_link_open = 0U;
+  host_query_reply_pending = 0U;
   host_beacon_deadline_ms = 0U;
   host_first_start_pending = 1U;
   host_first_start_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_ESP_BOOT_GRACE_MS;
@@ -1113,36 +1178,26 @@ void print_host_wifi_service(void)
     }
   }
 
-  /* UDP 信标（常开链路）：ONLINE 后每 3s 广播自身 line_id/IP/端口（尽力而为）。
-   * link4 只在首次 BEACON_START 开一次，之后每周期只 CIPSEND，不再建拆。 */
+  /* link4 UDP 监听：接收测试机侧 PD LINE 查询，按需广播回复 HOST/PORT。
+   * 空闲时保证监听链路开着；回复流程由命令 OK/tx_done 驱动。 */
   if(host_state == PRINT_HOST_WIFI_ONLINE) {
-    if(host_beacon_pending != 0U) {
-      if(host_beacon_tx_done != 0U && host_waiting_command == HOST_CMD_NONE) {
-        /* 本周期信标已发出：链路保持常开，只重置周期，不 CIPCLOSE。 */
-        host_beacon_tx_done = 0U;
-        host_beacon_pending = 0U;
-        host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
-      } else if(host_waiting_command == HOST_CMD_NONE && host_tx_active == 0U) {
-        /* 死锁恢复：BEACON_START 的 CIPSTART 已完成但 CIPSEND 从未启动
-         * （命令完成信号丢失）。重置周期，3s 后重新发起广播。 */
-        host_beacon_pending = 0U;
+    if(host_query_reply_pending != 0U && host_waiting_command == HOST_CMD_NONE &&
+       host_tx_active == 0U) {
+      /* 查询待回复（链路忙时延迟）：关监听 → 切广播链路回复。 */
+      (void)host_issue_command(HOST_CMD_BEACON_CLOSE);
+    } else if(host_beacon_tx_done != 0U && host_waiting_command == HOST_CMD_NONE) {
+      /* 回复已发出（CIPSEND SEND OK）：关广播，随后重开监听。 */
+      host_beacon_tx_done = 0U;
+      host_query_reply_pending = 0U;
+      if(host_issue_command(HOST_CMD_BEACON_CLOSE) == 0U) {
+        host_beacon_link_open = 0U;
         host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
       }
-    } else if(host_beacon_deadline_ms != 0U &&
+    } else if(host_beacon_link_open == 0U && host_beacon_deadline_ms != 0U &&
               host_time_reached(host_beacon_deadline_ms) != 0U) {
-      host_beacon_pending = 1U;
-      host_beacon_tx_done = 0U;
-      if(host_beacon_link_open == 0U) {
-        /* 链路未开：先 CIPSTART（只这一次），OK 后置 link_open 并 CIPSEND。 */
-        if(host_issue_command(HOST_CMD_BEACON_START) == 0U) {
-          host_beacon_pending = 0U;
-          host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
-        }
-      } else {
-        /* 链路已常开：直接 CIPSEND 信标，不再建拆 UDP。 */
-        host_beacon_pending = 0U;
+      /* 开监听（ONLINE 后首次 / 回复流程后重开）。 */
+      if(host_issue_command(HOST_CMD_BEACON_START) == 0U) {
         host_beacon_deadline_ms = tester_wifi_print_now_ms() + HOST_WIFI_BEACON_PERIOD_MS;
-        host_queue_beacon();
       }
     }
   }
