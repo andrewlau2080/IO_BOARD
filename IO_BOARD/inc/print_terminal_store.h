@@ -19,6 +19,7 @@
 #define PRINT_TERMINAL_WIFI_SSID_MAX        33U
 #define PRINT_TERMINAL_WIFI_PASSWORD_MAX    64U
 #define PRINT_TERMINAL_WIFI_MAC_MAX         18U
+#define PRINT_TERMINAL_WIFI_STATIC_IP_MAX   16U
 
 typedef struct {
   char name[PRINT_TERMINAL_TEMPLATE_NAME_MAX];
@@ -33,6 +34,9 @@ typedef struct {
   /* Learned from ESP-AT +CIFSR:STAMAC. It is read-only on LCDM and stays
    * independent of tester-side MAC storage. */
   char wifi_mac[PRINT_TERMINAL_WIFI_MAC_MAX];
+  /* 打印侧静态 IP（空串 = DHCP）：固定打印侧 IP 防 DHCP 漂移导致
+   * 测试侧 HOST 失配 NETWORK ERROR（2026-08-15 实测 .100↔.101 互换）。 */
+  char wifi_static_ip[PRINT_TERMINAL_WIFI_STATIC_IP_MAX];
   uint16_t wifi_listen_port;
   uint8_t active_template;
   uint8_t ir_fallback_enabled;

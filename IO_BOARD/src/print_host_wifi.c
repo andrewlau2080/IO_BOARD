@@ -42,6 +42,7 @@ typedef enum {
   HOST_CMD_STOP_SERVER,
   HOST_CMD_MODE,
   HOST_CMD_JOIN,
+  HOST_CMD_STATIC_IP,   /* AT+CIPSTA="ip" 固定打印侧 IP 防 DHCP 漂移 */
   HOST_CMD_IP,
   HOST_CMD_MUX,
   HOST_CMD_TRANS_MODE,
@@ -548,6 +549,15 @@ static uint8_t host_issue_command(host_command_t command)
     if(host_build_join(text, sizeof(text)) == 0U) return 0U;
     timeout = HOST_WIFI_JOIN_TIMEOUT;
     break;
+  case HOST_CMD_STATIC_IP:
+    /* 只传 IP，网关/掩码省略（ESP-AT 保持 DHCP 获取的值）。
+     * 固定打印侧 IP 防 DHCP 漂移导致测试侧 HOST 失配 NETWORK ERROR。 */
+    if(config->wifi_static_ip[0] == '\0') {
+      return 0U;
+    }
+    (void)snprintf(text, sizeof(text), "AT+CIPSTA=\"%s\"",
+                   config->wifi_static_ip);
+    break;
   case HOST_CMD_IP:
     (void)snprintf(text, sizeof(text), "AT+CIFSR");
     timeout = HOST_WIFI_IP_TIMEOUT;
@@ -671,6 +681,16 @@ static void host_process_ok(void)
     (void)host_issue_or_retry(HOST_CMD_JOIN);
     break;
   case HOST_CMD_JOIN:
+    {
+      const print_terminal_store_config_t *cfg = print_terminal_store_get();
+      if(cfg != 0 && cfg->wifi_static_ip[0] != '\0') {
+        (void)host_issue_or_retry(HOST_CMD_STATIC_IP);
+      } else {
+        (void)host_issue_or_retry(HOST_CMD_IP);
+      }
+    }
+    break;
+  case HOST_CMD_STATIC_IP:
     (void)host_issue_or_retry(HOST_CMD_IP);
     break;
   case HOST_CMD_IP:
@@ -782,6 +802,14 @@ static void host_process_line(const char *line)
     /* No prior server is the normal fresh-boot case. */
     host_waiting_command = HOST_CMD_NONE;
     (void)host_issue_or_retry(HOST_CMD_MODE);
+    return;
+  }
+  if(host_waiting_command == HOST_CMD_STATIC_IP &&
+     (strcmp(line, "ERROR") == 0 || strcmp(line, "FAIL") == 0)) {
+    /* 静态 IP 设置失败（如 IP 与 AP 网段不符/被占用）：跳过静态 IP
+     * 走 DHCP，不让整个会话因 CIPSTA ERROR 反复重试。 */
+    host_waiting_command = HOST_CMD_NONE;
+    (void)host_issue_or_retry(HOST_CMD_IP);
     return;
   }
   if(host_waiting_command != HOST_CMD_NONE &&

@@ -19,7 +19,7 @@
 #define PRINT_TERMINAL_STORE_SLOT_A_ADDR  0x0807D800U
 #define PRINT_TERMINAL_STORE_SLOT_B_ADDR  0x0807E000U
 #define PRINT_TERMINAL_STORE_MAGIC        0x31545350U /* "PST1" */
-#define PRINT_TERMINAL_STORE_VERSION      2U
+#define PRINT_TERMINAL_STORE_VERSION      3U
 #define PRINT_TERMINAL_STORE_COMMIT       0x54494D43U /* "CMIT" */
 #define PRINT_TERMINAL_STORE_UID1_ADDR    0x1FFFF7E8U
 #define PRINT_TERMINAL_STORE_UID2_ADDR    0x1FFFF7ECU
@@ -180,6 +180,44 @@ static uint8_t store_job_valid(const print_job_t *job)
           store_text_valid(job->code, sizeof(job->code), 1U) != 0U) ? 1U : 0U;
 }
 
+static uint8_t store_static_ip_valid(const char *ip)
+{
+  uint16_t seg;
+  uint32_t value;
+  const char *p;
+
+  /* 空串 = DHCP，合法 */
+  if(ip == 0 || ip[0] == '\0') {
+    return 1U;
+  }
+  if(strlen(ip) >= PRINT_TERMINAL_WIFI_STATIC_IP_MAX) {
+    return 0U;
+  }
+  p = ip;
+  for(seg = 0U; seg < 4U; seg++) {
+    if(*p == '\0' || *p == '.') {
+      return 0U;
+    }
+    value = 0U;
+    while(*p >= '0' && *p <= '9') {
+      value = value * 10U + (uint32_t)(*p - '0');
+      if(value > 255U) {
+        return 0U;
+      }
+      p++;
+    }
+    if(seg < 3U) {
+      if(*p != '.') {
+        return 0U;
+      }
+      p++;
+    } else if(*p != '\0') {
+      return 0U;
+    }
+  }
+  return 1U;
+}
+
 static uint8_t store_sequence_is_newer(uint32_t candidate, uint32_t reference)
 {
   return ((int32_t)(candidate - reference) > 0) ? 1U : 0U;
@@ -200,6 +238,9 @@ uint8_t print_terminal_store_validate(const print_terminal_store_config_t *confi
      store_wifi_mac_valid(config->wifi_mac) == 0U ||
      store_printer_config_valid(&config->driver_config) == 0U ||
      store_serial_config_valid(&config->printer_config) == 0U) {
+    return 0U;
+  }
+  if(store_static_ip_valid(config->wifi_static_ip) == 0U) {
     return 0U;
   }
 

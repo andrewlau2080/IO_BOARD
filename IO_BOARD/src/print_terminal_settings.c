@@ -76,6 +76,7 @@ typedef enum {
   SET_FIELD_SSID,
   SET_FIELD_PASSWORD,
   SET_FIELD_PORT,
+  SET_FIELD_STATIC_IP,
   SET_FIELD_BAUD,
   SET_FIELD_IR
 } set_field_t;
@@ -245,6 +246,7 @@ static const char *field_label(set_field_t field)
   case SET_FIELD_SSID: return "WIFI SSID";
   case SET_FIELD_PASSWORD: return "WIFI PWD";
   case SET_FIELD_PORT: return "LISTEN PORT";
+  case SET_FIELD_STATIC_IP: return "STATIC IP";
   case SET_FIELD_BAUD: return "PRN BAUD";
   case SET_FIELD_IR: return "IR FALLBACK";
   default: return "";
@@ -300,6 +302,13 @@ static const char *field_value(set_field_t field, char *scratch, uint16_t scratc
   case SET_FIELD_SSID: return draft.wifi_ssid;
   case SET_FIELD_PASSWORD: return draft.wifi_password;
   case SET_FIELD_PORT: number_text(scratch, scratch_size, draft.wifi_listen_port); return scratch;
+  case SET_FIELD_STATIC_IP:
+    if(draft.wifi_static_ip[0] == '\0') {
+      (void)snprintf(scratch, scratch_size, "(DHCP)");
+    } else {
+      set_text(scratch, scratch_size, draft.wifi_static_ip);
+    }
+    return scratch;
   case SET_FIELD_BAUD:
     number_text(scratch, scratch_size, draft.printer_config.baudrate);
     return scratch;
@@ -340,7 +349,7 @@ static set_field_t field_at(uint16_t x, uint16_t y)
       {SET_FIELD_SSID, SET_FIELD_PASSWORD},
       {SET_FIELD_PORT, SET_FIELD_BAUD},
       {SET_FIELD_IR, SET_FIELD_NONE},
-      {SET_FIELD_NONE, SET_FIELD_NONE}
+      {SET_FIELD_STATIC_IP, SET_FIELD_NONE}
     };
     return map[row][column];
   }
@@ -719,6 +728,7 @@ static uint8_t field_capacity(set_field_t field)
   case SET_FIELD_LINE: return sizeof(draft.line_id);
   case SET_FIELD_SSID: return sizeof(draft.wifi_ssid);
   case SET_FIELD_PASSWORD: return sizeof(draft.wifi_password);
+  case SET_FIELD_STATIC_IP: return sizeof(draft.wifi_static_ip);
   default: return 8U;
   }
 }
@@ -776,6 +786,7 @@ static uint8_t apply_field(void)
   case SET_FIELD_LINE: destination = draft.line_id; capacity = sizeof(draft.line_id); break;
   case SET_FIELD_SSID: destination = draft.wifi_ssid; capacity = sizeof(draft.wifi_ssid); break;
   case SET_FIELD_PASSWORD: destination = draft.wifi_password; capacity = sizeof(draft.wifi_password); break;
+  case SET_FIELD_STATIC_IP: destination = draft.wifi_static_ip; capacity = sizeof(draft.wifi_static_ip); break;
   case SET_FIELD_QTY:
     if(parse_number(input_text, &number) == 0U || number == 0U) return 0U;
     job->quantity = (uint16_t)number; return 1U;
