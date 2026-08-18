@@ -1,4 +1,5 @@
 #include "print_host_wifi.h"
+#include "print_terminal.h"
 
 #include "print_terminal_store.h"
 #include "tester_wifi_print.h"
@@ -434,9 +435,19 @@ static void host_receive_request(const char *line)
     g_print_host_wifi_rx_error_count++;
     return;
   }
+  {
+    char log_text[56];
+    (void)snprintf(log_text, sizeof(log_text), "RX ev=%lu %s",
+                   (unsigned long)request.event_id, request.device_uid);
+    print_terminal_log(log_text);
+  }
 
   if(host_seen_find(request.event_id, request.device_uid, &duplicate_state) != 0U) {
     g_print_host_wifi_rx_duplicate_count++;
+    /* 重发到达 = 响应没到客户端 = ESP 假发送（at-net 坏）。
+     * 立即 EN 复位（PA8）清状态——T 侧仅在连续失败时才复位，
+     * 两侧不会互相打断成循环。 */
+    wifi_esp_en_reset();
     (void)snprintf(response, sizeof(response), "ACK,%lu,QUEUED\n",
                    (unsigned long)request.event_id);
     (void)host_queue_tx(request.link_id, response);
@@ -468,6 +479,8 @@ static void host_receive_request(const char *line)
   host_request_head = next;
   host_seen_add(request.event_id, request.device_uid, request.link_id);
   g_print_host_wifi_rx_request_count++;
+  /* 新请求正常处理 = 会话健康，重置 EN 复位累计 */
+  wifi_esp_session_mark_ok();
   (void)snprintf(response, sizeof(response), "ACK,%lu,QUEUED\n",
                  (unsigned long)request.event_id);
   if(host_queue_tx(request.link_id, response) != 0U) {
@@ -596,6 +609,13 @@ static uint8_t host_issue_command(host_command_t command)
 
 static void host_schedule_retry(void)
 {
+  /* 仅 WiFi 连不上（JOIN 连 AP / 取 IP 阶段失败）才累计 EN 复位：
+   * 死机场景=反复连不上 AP。短暂断线(WIFI DISCONNECT)与业务发送失败
+   * 不累计——否则 3 次短断线就 EN 复位 ESP，造成复位循环（8-14 实测教训）。 */
+  if(host_waiting_command == HOST_CMD_JOIN ||
+     host_waiting_command == HOST_CMD_IP) {
+    wifi_esp_session_note_end();
+  }
   host_waiting_command = HOST_CMD_NONE;
   host_ip_retry_pending = 0U;
   host_session_deadline_ms = 0U;
@@ -709,6 +729,7 @@ static void host_process_ok(void)
     break;
   case HOST_CMD_SERVER:
     host_set_state(PRINT_HOST_WIFI_ONLINE, "WIFI SERVER ONLINE");
+    wifi_esp_session_mark_ok();
     break;
   default:
     break;
@@ -761,6 +782,16 @@ static void host_process_line(const char *line)
      strcmp(line, "SEND OK") == 0) {
     host_tx_active = 0U;
     host_tx_waiting_result = 0U;
+    {
+      char log_text[56];
+      uint16_t clip = host_tx_current.length;
+      if(clip > 36U) {
+        clip = 36U;
+      }
+      (void)snprintf(log_text, sizeof(log_text), "TX: %.*s",
+                     (int)clip, host_tx_current.payload);
+      print_terminal_log(log_text);
+    }
     return;
   }
   if(host_tx_active != 0U &&
@@ -820,6 +851,19 @@ static void host_process_line(const char *line)
     } else {
       host_schedule_retry();
     }
+    return;
+  }
+  /* ESP-AT at-net 内部错误（客户端频繁重连导致连接跟踪错乱）：
+   * 打印侧 CIPSEND 假 SEND OK、数据到不了客户端。识别后全会话
+   * 重连（重开 CIPSERVER）清 ESP 状态。IR 已屏蔽（LINE_COMM
+   * TRANSPORT_NONE），不会再有 IR 中断干扰。 */
+  if(strstr(line, "at-net") != 0 &&
+     (strstr(line, "invalid link") != 0 || strstr(line, "errno") != 0 ||
+      strstr(line, "SEND Canceled") != 0)) {
+    g_print_host_wifi_error_count++;
+    /* EN 复位（PA8）清 ESP at-net 坏状态（8-14 实测验证）再全会话重连 */
+    wifi_esp_en_reset();
+    host_schedule_retry();
     return;
   }
   if(strcmp(line, "WIFI DISCONNECT") == 0 ||

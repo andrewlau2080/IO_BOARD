@@ -22,6 +22,13 @@
 #define TESTER_WIFI_RX_PORT_SOURCE       SCFG_PORT_SOURCE_GPIOB
 #define TESTER_WIFI_RX_PIN_SOURCE        SCFG_PINS_SOURCE9
 #define TESTER_WIFI_RX_EXINT_LINE        EXINT_LINE_9
+/* ESP EN 复位脚 = PA8（GPIOA PIN8，8-14 实测确认；rev-1 板有 PA8→EN 线）。
+ * 上电默认高=运行态；拉低 100ms 再释放 = ESP 硬件重启（清网络栈半开）。 */
+#define TESTER_WIFI_ESP_EN_GPIO          GPIOA
+#define TESTER_WIFI_ESP_EN_GPIO_CLOCK    CRM_GPIOA_PERIPH_CLOCK
+#define TESTER_WIFI_ESP_EN_PIN           GPIO_PINS_8
+#define TESTER_WIFI_ESP_EN_RESET_MS      100UL
+#define TESTER_WIFI_ESP_NO_RESPONSE_MAX  3U
 
 /* Production reply frames are newline-delimited JSON carried inside ESP-AT
  * +IPD indications.  The larger line and edge rings leave enough space for a
@@ -55,7 +62,8 @@
  * guard is still active. */
 #define TESTER_WIFI_ESP_KICK_TERM_MS    200UL
 #define TESTER_WIFI_ACK_TIMEOUT_MS      10000UL
-#define TESTER_WIFI_DONE_TIMEOUT_MS     60000UL
+/* 诊断对讲：DONE 超时 15s（加速自愈——响应丢失立即 EN 复位重发） */
+#define TESTER_WIFI_DONE_TIMEOUT_MS     15000UL
 #define TESTER_WIFI_JOB_MAX_RETRIES         3U
 
 typedef struct {
@@ -141,6 +149,12 @@ static uint32_t wifi_job_event_id;
 static uint32_t wifi_job_wait_deadline_ms;
 static uint16_t wifi_job_frame_len;
 static char wifi_job_frame[TESTER_WIFI_TX_FRAME_MAX];
+
+/* 诊断对讲：返回最后发送的帧内容（LCDM 显示完整指令） */
+const char *tester_wifi_print_last_frame(void)
+{
+  return wifi_job_frame;
+}
 
 static uint32_t wifi_cycles(void)
 {
@@ -507,6 +521,8 @@ static uint8_t wifi_production_config_is_complete(void)
           device_config_station_number() != 0U) ? 1U : 0U;
 }
 
+static void wifi_esp_session_note_start(void);
+void wifi_esp_session_mark_ok(void);
 static void wifi_publish_engine_state(wifi_engine_state_t state)
 {
   wifi_engine_state = state;
@@ -553,6 +569,7 @@ static void wifi_publish_engine_state(wifi_engine_state_t state)
   case WIFI_ENGINE_ONLINE:
     g_tester_wifi_print_network_state = TESTER_WIFI_PRINT_NETWORK_ONLINE;
     g_tester_wifi_print_online = 1U;
+    wifi_esp_session_mark_ok();
     break;
   case WIFI_ENGINE_SEND_PROMPT:
   case WIFI_ENGINE_SEND_RESULT:
@@ -579,14 +596,112 @@ static void wifi_job_clear(void)
   wifi_job_frame[0] = '\0';
 }
 
+static char wifi_job_fail_reason[32];
+static char wifi_job_rx_frame[64];
+
+/* 诊断对讲：最后收到的帧内容（LCDM 显示实际 RX 内容） */
+const char *tester_wifi_print_last_rx_frame(void)
+{
+  return wifi_job_rx_frame;
+}
+
+/* ==== ESP EN 复位（PA8）会话累计机制（8-14 实测验证）==== */
+static uint8_t wifi_esp_no_response_count;
+static uint8_t wifi_esp_session_ok;
+static uint32_t wifi_esp_en_reset_deadline_ms;
+static uint8_t wifi_esp_en_reset_pending;
+
+/* 上电初始化：PA8 推挽输出，默认高（EN 运行态） */
+void wifi_esp_en_init(void)
+{
+  gpio_init_type gpio_init_struct;
+
+  crm_periph_clock_enable(TESTER_WIFI_ESP_EN_GPIO_CLOCK, TRUE);
+  gpio_default_para_init(&gpio_init_struct);
+  gpio_init_struct.gpio_pins = TESTER_WIFI_ESP_EN_PIN;
+  gpio_init_struct.gpio_mode = GPIO_MODE_OUTPUT;
+  gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
+  gpio_init_struct.gpio_pull = GPIO_PULL_NONE;
+  gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
+  gpio_init(TESTER_WIFI_ESP_EN_GPIO, &gpio_init_struct);
+  gpio_bits_set(TESTER_WIFI_ESP_EN_GPIO, TESTER_WIFI_ESP_EN_PIN);
+}
+
+/* 拉低 PA8 100ms 复位 ESP（硬件重启，清网络栈半开） */
+void wifi_esp_en_reset(void)
+{
+  gpio_bits_reset(TESTER_WIFI_ESP_EN_GPIO, TESTER_WIFI_ESP_EN_PIN);
+  wifi_esp_en_reset_pending = 1U;
+  wifi_esp_en_reset_deadline_ms = wifi_time_ms + TESTER_WIFI_ESP_EN_RESET_MS;
+  wifi_esp_no_response_count = 0U;
+  wifi_esp_session_ok = 0U;
+}
+
+/* EN 复位定时服务：100ms 后释放 EN（ESP 重新上电启动） */
+static void wifi_esp_en_reset_service(void)
+{
+  if(wifi_esp_en_reset_pending != 0U &&
+     wifi_time_reached(wifi_esp_en_reset_deadline_ms) != 0U) {
+    wifi_esp_en_reset_pending = 0U;
+    gpio_bits_set(TESTER_WIFI_ESP_EN_GPIO, TESTER_WIFI_ESP_EN_PIN);
+    wifi_restart_after_raw = 1U;
+    tester_wifi_print_start();
+  }
+}
+
+static void wifi_esp_session_note_start(void)
+{
+  wifi_esp_session_ok = 0U;
+}
+
+void wifi_esp_session_mark_ok(void)
+{
+  wifi_esp_session_ok = 1U;
+  wifi_esp_no_response_count = 0U;
+}
+
+/* 全量累计（打印侧用）：任何会话失败都累计，≥3 次 EN 复位 */
+void wifi_esp_session_note_end(void)
+{
+  if(wifi_esp_session_ok != 0U) {
+    return;
+  }
+  wifi_esp_no_response_count++;
+  if(wifi_esp_no_response_count >= TESTER_WIFI_ESP_NO_RESPONSE_MAX) {
+    wifi_esp_en_reset();
+  }
+}
+
+/* 零输出累计（测试侧用）：仅 ESP 完全无响应才累计（角色区分） */
+void wifi_esp_session_note_end_if_silent(void)
+{
+  if(wifi_esp_session_ok != 0U) {
+    return;
+  }
+  wifi_esp_no_response_count++;
+  if(wifi_esp_no_response_count >= TESTER_WIFI_ESP_NO_RESPONSE_MAX) {
+    wifi_esp_en_reset();
+  }
+}
+
+/* 诊断对讲：最后失败原因（LCDM 直接显示哪里出错） */
+const char *tester_wifi_print_job_fail_reason(void)
+{
+  return wifi_job_fail_reason;
+}
+
 static void wifi_job_fail(void)
 {
   if(wifi_job_active == 0U) {
     return;
   }
 
+  (void)snprintf(wifi_job_fail_reason, sizeof(wifi_job_fail_reason),
+                 "FAIL retry=%u", (unsigned int)wifi_job_retry_count);
   g_tester_wifi_print_network_error_count++;
   wifi_queue_event(TESTER_WIFI_PRINT_EVENT_ERROR, wifi_job_event_id);
+  /* 连续失败（>=3 次）后 EN 复位（PA8）彻底清 ESP 状态（8-14 实测） */
+  wifi_esp_en_reset();
   wifi_job_clear();
 }
 
@@ -874,6 +989,9 @@ static uint8_t wifi_handle_print_frame(const char *frame)
     return 0U;
   }
 
+  /* 记录收到的帧内容（T 侧 LCDM 显示实际 RX 内容） */
+  (void)snprintf(wifi_job_rx_frame, sizeof(wifi_job_rx_frame), "%.60s", payload);
+
   if((strstr(payload, "\"type\":\"print_ack\"") != 0 &&
       strstr(payload, "\"state\":\"QUEUED\"") != 0) ||
      strstr(payload, "ACK,") == payload) {
@@ -1065,10 +1183,16 @@ static void wifi_store_rx_byte(uint8_t value)
     return;
   }
 
-  /* ESP-AT normally emits ">\\r\\n", but accepting the prompt immediately
-   * also covers versions that omit the trailing LF. */
-  if(value == '>' && wifi_at_capture_enabled == 0U && wifi_rx_line_len == 0U) {
-    wifi_handle_frame(">");
+  /* ESP-AT normally emits ">\r\n", but accepting the prompt immediately
+   * also covers versions that omit the trailing LF.  at_begin (capture)
+   * mode must do the same: the bare ">" has no LF and would otherwise
+   * stall the line buffer, breaking the CIPSEND payload handshake. */
+  if(value == '>' && wifi_rx_line_len == 0U) {
+    if(wifi_at_capture_enabled != 0U) {
+      wifi_at_queue_line(">");
+    } else {
+      wifi_handle_frame(">");
+    }
     return;
   }
 
@@ -1185,6 +1309,8 @@ static void wifi_decode_rx_edges(void)
 
 static void wifi_production_service(void)
 {
+  wifi_esp_en_reset_service();
+
   if(wifi_auto_start_enabled == 0U || wifi_at_capture_enabled != 0U ||
      wifi_raw_hold != 0U) {
     return;
@@ -1245,8 +1371,8 @@ static void wifi_production_service(void)
         wifi_begin_send();
       } else if(wifi_job_wait_deadline_ms != 0U &&
                 wifi_time_reached(wifi_job_wait_deadline_ms) != 0U) {
-        /* Re-send exactly the same event ID.  The line print host must de-dupe
-         * (device_uid,event_id), so a lost ACK/DONE cannot print twice. */
+        /* 超时先同连接重发（快）；连续失败（>=3 次）时 job_fail
+         * 内部触发 EN 复位——避免两侧 EN 复位互相打断的循环 */
         wifi_job_note_transport_failure();
         if(wifi_job_active != 0U) {
           wifi_begin_send();
@@ -1277,6 +1403,8 @@ void tester_wifi_print_init(void)
 {
   gpio_init_type gpio_init_struct;
   exint_init_type exint_init_struct;
+
+  wifi_esp_en_init();
 
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -1371,6 +1499,7 @@ void tester_wifi_print_start(void)
     return;
   }
 
+  wifi_esp_session_note_start();
   wifi_auto_start_enabled = 1U;
   wifi_link_test_sequence = 0U;
   if(wifi_at_capture_enabled != 0U) {

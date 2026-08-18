@@ -10,6 +10,7 @@
 #include "rpi_rs485_legacy.h"
 #include "tester_wifi_link_diag.h"
 #include "tester_wifi_net_diag.h"
+#include "wifi_reliability_test.h"
 #include "tm1637_demo.h"
 
 #define IO_APP_MODE_IR_PRINT_BRIDGE       1
@@ -25,6 +26,7 @@
 #define IO_APP_MODE_WIFI_LINK_DIAG         11
 #define IO_APP_MODE_ESP_AT_FLASH_ASSIST    12
 #define IO_APP_MODE_WIFI_NET_DIAG          13
+#define IO_APP_MODE_WIFI_RELIABILITY_TEST  14
 
 #define UNIFIED_PRODUCT_RPI_RS485_LEGACY     IO_APP_MODE_RPI_RS485_LEGACY
 #define UNIFIED_PRODUCT_FIRST_GEN_4051_LOCAL IO_APP_MODE_FIRST_GEN_4051_LOCAL
@@ -358,6 +360,15 @@ int main(void)
   while(1)
   {
     tester_wifi_net_diag_service();
+  }
+#elif IO_APP_MODE == IO_APP_MODE_WIFI_RELIABILITY_TEST
+  /* 双向通信可靠性验证（DeepSeek printer_network 方案适配）。
+   * P/T 角色由编译宏 WIFI_RELIABILITY_ROLE 决定；只占 PC3/PB9 + LCDM。 */
+  wifi_reliability_test_init();
+
+  while(1)
+  {
+    wifi_reliability_test_service();
   }
 #elif IO_APP_MODE == IO_APP_MODE_ESP_AT_FLASH_ASSIST
   /* Temporary ESP32-C3 ROM downloader entry.  It only owns PC3 (EN) and

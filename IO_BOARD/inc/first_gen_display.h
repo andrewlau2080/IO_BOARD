@@ -67,6 +67,9 @@ void first_gen_display_effect_step(void);
 void first_gen_display_write_raw6(const uint8_t segments[FIRST_GEN_DISPLAY_DIGITS]);
 void first_gen_display_write_text6(const char text[FIRST_GEN_DISPLAY_DIGITS]);
 void first_gen_display_write_learn_summary(uint16_t out_count, uint16_t in_count, uint32_t total);
+/* 诊断对讲日志页：布局与打印侧完全一致（WIFI + DIAG LOOP + 5 行日志） */
+void first_gen_display_diag_log_page(const char *wifi_text,
+                                     const char *const logs[5]);
 void first_gen_display_show_page(const char *top_right,
                                  const char *status_text,
                                  const char *main_text,

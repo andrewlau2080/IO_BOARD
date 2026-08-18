@@ -32,5 +32,9 @@ extern volatile uint8_t g_print_terminal_state;
 
 void print_terminal_init(void);
 void print_terminal_service(void);
+/* 诊断对讲：通信日志（打印侧收到/发送的帧摘要），LCDM 中间区显示 */
+void print_terminal_log(const char *text);
+const char *print_terminal_log_line(uint8_t index);
+uint8_t print_terminal_log_count(void);
 
 #endif

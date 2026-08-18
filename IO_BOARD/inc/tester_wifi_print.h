@@ -77,6 +77,18 @@ void tester_wifi_print_init(void);
 void tester_wifi_print_start(void);
 void tester_wifi_print_restart(void);
 uint8_t tester_wifi_print_is_online(void);
+/* 诊断对讲：最后发送的帧内容（LCDM 显示完整指令） */
+const char *tester_wifi_print_last_frame(void);
+/* 诊断对讲：最后收到的帧内容（LCDM 显示实际 RX 内容） */
+const char *tester_wifi_print_last_rx_frame(void);
+/* 诊断对讲：最后失败原因（LCDM 直接显示哪里出错） */
+const char *tester_wifi_print_job_fail_reason(void);
+/* ESP EN 复位（PA8）：上电 init、硬件复位、会话累计（8-14 实测验证） */
+void wifi_esp_en_init(void);
+void wifi_esp_en_reset(void);
+void wifi_esp_session_note_end(void);
+void wifi_esp_session_note_end_if_silent(void);
+void wifi_esp_session_mark_ok(void);
 uint8_t tester_wifi_print_is_ap_connected(void);
 uint8_t tester_wifi_print_is_configured(void);
 uint8_t tester_wifi_print_request(uint32_t event_id,

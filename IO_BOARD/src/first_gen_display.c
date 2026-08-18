@@ -466,6 +466,32 @@ static void lcdm_raw_xstr(uint16_t x,
   lcdm_raw_xstr_style(x, y, w, h, font, fg, bg, align, 1U, text);
 }
 
+/* 诊断对讲日志页：布局与打印侧完全一致
+ * （WIFI 状态 y=84 + DIAG LOOP y=102 + 5 行日志 y=122+i*16） */
+void first_gen_display_diag_log_page(const char *wifi_text,
+                                     const char *const logs[5])
+{
+  uint8_t i;
+
+  if(display_is_lcdm == 0U) {
+    return;
+  }
+  lcdm_raw_fill(16U, 82U, 448U, 124U, LCDM_WHITE);
+  if(wifi_text == 0) {
+    wifi_text = "WIFI LINK...";
+  }
+  lcdm_raw_xstr(24U, 84U, 432U, 20U, LCDM_FONT_SMALL,
+                LCDM_GREEN, LCDM_WHITE, 0U, wifi_text);
+  lcdm_raw_xstr(24U, 102U, 432U, 18U, LCDM_FONT_SMALL,
+                LCDM_NAVY, LCDM_WHITE, 0U, "DIAG LOOP");
+  for(i = 0U; i < 5U; i++) {
+    if(logs != 0 && logs[i] != 0 && logs[i][0] != '\0') {
+      lcdm_raw_xstr(24U, (uint16_t)(122U + i * 16U), 432U, 15U,
+                    LCDM_FONT_SMALL, LCDM_NAVY, LCDM_WHITE, 0U, logs[i]);
+    }
+  }
+}
+
 static void lcdm_raw_xstr_full(uint16_t x,
                                uint16_t y,
                                uint16_t w,
@@ -930,22 +956,13 @@ static void lcdm_raw_draw_idle_banner(void)
                      text);
 }
 
+static void lcdm_idle_banner_stop(void);
 static void lcdm_idle_banner_start(const char *text)
 {
-  if(text == 0 || text[0] == '\0') {
-    text = "WIRE TESTER";
-  }
-
-  if((lcdm_idle_banner_active != 0U) && (strcmp(lcdm_idle_banner_text, text) == 0)) {
-    return;
-  }
-
-  (void)snprintf(lcdm_idle_banner_text, sizeof(lcdm_idle_banner_text), "%s", text);
-  lcdm_idle_banner_active = 1U;
-  lcdm_idle_banner_pos = LCDM_IDLE_BANNER_POS_START;
-  lcdm_idle_scroll_reads = 0U;
-  lcdm_raw_result_cache[0] = '\0';
-  lcdm_raw_draw_idle_banner();
+  /* 诊断对讲版：屏蔽流动 WIRE TESTER banner（用户 2026-08-17 要求
+   * 只显示对话内容，流动文字刺眼） */
+  (void)text;
+  lcdm_idle_banner_stop();
 }
 
 static void lcdm_idle_banner_stop(void)

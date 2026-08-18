@@ -56,6 +56,12 @@ volatile uint8_t g_print_terminal_state;
 static print_job_t active_job;
 static char preview_text[PRINT_LABEL_TEXT_MAX];
 static char lcdm_status_text[32];
+/* 诊断对讲日志 ring：最近 8 条通信记录（打印侧收/发帧摘要） */
+#define PRINT_TERMINAL_LOG_DEPTH   8U
+#define PRINT_TERMINAL_LOG_LEN     44U
+static char print_log[PRINT_TERMINAL_LOG_DEPTH][PRINT_TERMINAL_LOG_LEN];
+static uint8_t print_log_head;
+static uint8_t print_log_count;
 static uint8_t refresh_requested;
 static uint8_t lcdm_frame_drawn;
 static uint8_t wifi_print_active;
@@ -266,6 +272,40 @@ static uint16_t lcdm_key_color(uint8_t index)
   return PRINT_LCDM_BLUE;
 }
 
+void print_terminal_log(const char *text)
+{
+  uint8_t index;
+
+  if(text == 0 || text[0] == '\0') {
+    return;
+  }
+  index = print_log_head;
+  (void)snprintf(print_log[index], PRINT_TERMINAL_LOG_LEN, "%s", text);
+  print_log_head = (uint8_t)((print_log_head + 1U) % PRINT_TERMINAL_LOG_DEPTH);
+  if(print_log_count < PRINT_TERMINAL_LOG_DEPTH) {
+    print_log_count++;
+  }
+  refresh_requested = 1U;
+}
+
+const char *print_terminal_log_line(uint8_t index)
+{
+  uint8_t offset;
+
+  if(index >= print_log_count) {
+    return "";
+  }
+  /* 最新在 head-1，最旧在 head-count */
+  offset = (uint8_t)((print_log_head + PRINT_TERMINAL_LOG_DEPTH - 1U - index) %
+                     PRINT_TERMINAL_LOG_DEPTH);
+  return print_log[offset];
+}
+
+uint8_t print_terminal_log_count(void)
+{
+  return print_log_count;
+}
+
 static void lcdm_draw_key(uint8_t index, const char *caption)
 {
   char key_name[8];
@@ -410,19 +450,34 @@ static void lcdm_draw_dynamic_content(void)
   lcdm_raw_fill(16U, 42U, 448U, 33U, status_bg);
   lcdm_raw_xstr(24U, 47U, 432U, 23U, PRINT_LCDM_FONT_STATUS,
                 status_fg, status_bg, 1U, status);
-  lcdm_raw_fill(16U, 82U, 448U, 124U, PRINT_LCDM_WHITE);
-  lcdm_raw_xstr(24U, 84U, 432U, 22U, PRINT_LCDM_FONT_STATUS,
-                PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 1U, template_text);
-  lcdm_raw_xstr(24U, 108U, 432U, 20U, PRINT_LCDM_FONT_SMALL,
-                PRINT_LCDM_BLUE, PRINT_LCDM_WHITE, 0U, active_job.title);
-  lcdm_raw_xstr(24U, 130U, 432U, 20U, PRINT_LCDM_FONT_SMALL,
-                PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 0U, active_job.item);
-  lcdm_raw_xstr(24U, 152U, 432U, 20U, PRINT_LCDM_FONT_SMALL,
-                PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 0U, result_text);
-  lcdm_raw_xstr(24U, 174U, 216U, 20U, PRINT_LCDM_FONT_SMALL,
-                PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 0U, station_text);
-  lcdm_raw_xstr(240U, 174U, 216U, 20U, PRINT_LCDM_FONT_SMALL,
-                link_fg, link_bg, 2U, link_text);
+  /* 诊断对讲：中间区域（82-206）显示 WiFi 状态 + 通信日志，上下栏不变。
+   * 与测试侧显示完全一致（WIFI 状态 + DIAG LOOP + 日志行）。 */
+  {
+    char wifi_text[56];
+    char log_text[PRINT_TERMINAL_LOG_LEN + 8U];
+    uint8_t i;
+    uint8_t n;
+
+    lcdm_raw_fill(16U, 82U, 448U, 124U, PRINT_LCDM_WHITE);
+    (void)snprintf(wifi_text, sizeof(wifi_text), "WIFI %s",
+                   print_host_wifi_is_online() ? "ONLINE" : "LINK...");
+    lcdm_raw_xstr(24U, 84U, 432U, 20U, PRINT_LCDM_FONT_SMALL,
+                  print_host_wifi_is_online() ? PRINT_LCDM_GREEN : PRINT_LCDM_RED,
+                  PRINT_LCDM_WHITE, 0U, wifi_text);
+    lcdm_raw_xstr(24U, 102U, 432U, 18U, PRINT_LCDM_FONT_SMALL,
+                  PRINT_LCDM_NAVY, PRINT_LCDM_WHITE, 0U, "DIAG LOOP");
+    n = print_terminal_log_count();
+    if(n > 5U) {
+      n = 5U;
+    }
+    for(i = 0U; i < n; i++) {
+      (void)snprintf(log_text, sizeof(log_text), "%s",
+                     print_terminal_log_line(i));
+      lcdm_raw_xstr(24U, (uint16_t)(122U + i * 16U), 432U, 15U,
+                    PRINT_LCDM_FONT_SMALL, PRINT_LCDM_NAVY, PRINT_LCDM_WHITE,
+                    0U, log_text);
+    }
+  }
 }
 
 static void send_job_to_lcdm(void)
@@ -891,7 +946,9 @@ void print_terminal_init(void)
                                                         &active_job) == 0U) {
     print_job_init_default(&active_job);
   }
-  line_comm_transport_init(LINE_COMM_TRANSPORT_IR);
+  /* IR fallback 屏蔽（2026-08-16 用户要求）：PB7 IR 接收悬空干扰会导致
+   * ir_capture 轮询卡死主循环（实测打印侧 t 恒定）。WiFi 为主链路。 */
+  line_comm_transport_init(LINE_COMM_TRANSPORT_NONE);
   print_terminal_settings_init();
   tester_wifi_print_init();
   print_host_wifi_init();
@@ -903,6 +960,9 @@ void print_terminal_init(void)
    * factory/default baud after a power cycle, whereas the shared tester TFT
    * is operated at LCDM_TJC_BAUDRATE. */
   lcdm_tjc_force_baudrate(LCDM_TJC_BAUDRATE);
+  /* 上电立即绘制（静态框架 + 动态日志区），否则屏空白（实测
+   * refresh 从未触发，WiFi 已连 host=5 但屏无显示、按键无响应）。 */
+  refresh_requested = 1U;
   lcdm_tjc_send_cmd("bkcmd=0");
   lcdm_tjc_send_cmd("dim=100");
   /* The print page is drawn directly over the shared TFT, so it has no

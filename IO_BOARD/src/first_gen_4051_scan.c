@@ -250,6 +250,82 @@ static void panel_arm_print_workflow(void);
 static void panel_hold_print_network_error(void);
 static void panel_hold_printer_error(void);
 static void panel_show_printing(void);
+/* 诊断对讲（2026-08-17）：自动每 3 秒发请求，LCDM 显示 WiFi 状态+通信日志 */
+#define DIAG_LOOP_PERIOD_MS  3000UL
+#define DIAG_LOG_DEPTH       6U
+#define DIAG_LOG_LEN         40U
+static char g_diag_log[DIAG_LOG_DEPTH][DIAG_LOG_LEN];
+static uint8_t g_diag_log_head;
+static uint8_t g_diag_log_count;
+static uint32_t g_diag_last_tx_ms;
+static uint32_t g_diag_event_id;
+static uint8_t g_diag_dirty = 1U;
+static uint8_t g_diag_page_drawn;
+
+static void diag_log(const char *text)
+{
+  uint8_t index;
+
+  if(text == 0 || text[0] == '\0') {
+    return;
+  }
+  index = g_diag_log_head;
+  (void)snprintf(g_diag_log[index], DIAG_LOG_LEN, "%s", text);
+  g_diag_log_head = (uint8_t)((g_diag_log_head + 1U) % DIAG_LOG_DEPTH);
+  if(g_diag_log_count < DIAG_LOG_DEPTH) {
+    g_diag_log_count++;
+  }
+  g_diag_dirty = 1U;
+}
+
+static const char *diag_log_line(uint8_t index)
+{
+  uint8_t offset;
+
+  if(index >= g_diag_log_count) {
+    return "";
+  }
+  offset = (uint8_t)((g_diag_log_head + DIAG_LOG_DEPTH - 1U - index) %
+                     DIAG_LOG_DEPTH);
+  return g_diag_log[offset];
+}
+
+/* 诊断对讲：LCDM 显示 WiFi 状态 + 最近通信日志（日志变化时才重绘防闪） */
+static void diag_show_page(void)
+{
+  char wifi_text[32];
+  char tx_text[40];
+  const char *logs[5];
+  uint8_t i;
+  uint8_t online;
+
+  if(first_gen_display_is_lcdm() == 0U) {
+    return;
+  }
+  if(g_diag_page_drawn != 0U && g_diag_dirty == 0U) {
+    return;
+  }
+  online = (uint8_t)(tester_wifi_print_is_online() != 0U);
+  (void)snprintf(wifi_text, sizeof(wifi_text), "WIFI %s",
+                 online ? "ONLINE" : "LINK...");
+  /* 第 1 行固定显示最新 TX 帧（用户必须能看到发送内容） */
+  {
+    const char *frame = tester_wifi_print_last_frame();
+    if(frame != 0 && frame[0] != '\0') {
+      (void)snprintf(tx_text, sizeof(tx_text), "TX: %.*s", 36, frame);
+    } else {
+      (void)snprintf(tx_text, sizeof(tx_text), "TX: --");
+    }
+  }
+  logs[0] = tx_text;
+  for(i = 1U; i < 5U; i++) {
+    logs[i] = diag_log_line(i - 1U);
+  }
+  /* 照搬打印侧布局：WIFI + DIAG LOOP + 5 行日志 */
+  first_gen_display_diag_log_page(wifi_text, logs);
+  g_diag_page_drawn = 1U;
+  g_diag_dirty = 0U;
+}
 static uint8_t panel_service_print_event(uint16_t elapsed_ms);
 static uint8_t panel_all_connections_open_for_out(uint16_t out_point);
 static uint8_t panel_printed_hold_service(void);
@@ -3467,7 +3543,8 @@ static void panel_hold_printer_error(void)
 static void panel_show_printing(void)
 {
   if(first_gen_display_is_lcdm() != 0U) {
-    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_PRINTING);
+    /* 诊断对讲：PRINTING 期间显示 WiFi 状态 + 通信日志页 */
+    diag_show_page();
   } else {
     display_printing();
   }
@@ -3499,11 +3576,56 @@ static void panel_arm_print_workflow(void)
   print_event_id = 0U;
 }
 
+/* 诊断对讲：每 3 秒自动发一帧请求（无需霍尔/recipe，IDLE 也可跑）。
+ * 返回 1 表示已发起请求并进入 WAIT_WIFI_ACK。 */
+static uint8_t diag_auto_tx(void)
+{
+  if(g_diag_last_tx_ms == 0U) {
+    g_diag_last_tx_ms = tester_wifi_print_now_ms();
+    return 0U;
+  }
+  if((tester_wifi_print_now_ms() - g_diag_last_tx_ms) < DIAG_LOOP_PERIOD_MS) {
+    return 0U;
+  }
+  g_diag_last_tx_ms = tester_wifi_print_now_ms();
+  if(tester_settings_wifi_is_busy() != 0U) {
+    return 0U;
+  }
+  g_diag_event_id++;
+  print_event_id = g_diag_event_id;
+  if(tester_wifi_print_request(g_diag_event_id,
+                               print_test_count,
+                               g_first_gen_learn_out_count,
+                               (uint16_t)g_first_gen_learn_connected_pairs) == 0U) {
+    return 0U;
+  }
+  {
+    char log_text[40];
+    const char *frame = tester_wifi_print_last_frame();
+    if(frame != 0 && frame[0] != '\0') {
+      (void)snprintf(log_text, sizeof(log_text), "TX: %.*s", 36, frame);
+    } else {
+      (void)snprintf(log_text, sizeof(log_text), "TX req %lu",
+                     (unsigned long)g_diag_event_id);
+    }
+    diag_log(log_text);
+  }
+  g_first_gen_print_request_counter++;
+  g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK;
+  g_first_gen_print_waiting_for_wifi = 1U;
+  return 1U;
+}
+
 static uint8_t panel_service_print_event(uint16_t elapsed_ms)
 {
   tester_wifi_print_event_t event;
 
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_IDLE) {
+    /* 诊断对讲：IDLE 也自动发（不依赖 recipe/霍尔） */
+    if(diag_auto_tx() != 0U) {
+      return 1U;
+    }
+    diag_show_page();
     return 0U;
   }
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_ERROR) {
@@ -3518,8 +3640,14 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
     if(tester_settings_wifi_is_busy() != 0U) {
       return 0U;
     }
+    /* 诊断对讲：每 3 秒自动发一帧请求（无需霍尔触发） */
+    if(diag_auto_tx() != 0U) {
+      return 1U;
+    }
     if(g_first_gen_hall_active == 0U) {
       print_hall_active_ms = 0U;
+      /* 诊断对讲：空闲时显示 WiFi 状态 + 最近通信日志 */
+      diag_show_page();
       return 0U;
     }
 
@@ -3562,17 +3690,38 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
   }
 
   if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_ACK) {
+    diag_show_page();
     event = tester_wifi_print_poll_event(print_event_id);
     if(event == TESTER_WIFI_PRINT_EVENT_ACK_QUEUED ||
        event == TESTER_WIFI_PRINT_EVENT_PRINTING) {
       g_first_gen_print_ack_counter++;
       g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE;
+      {
+        const char *rxf = tester_wifi_print_last_rx_frame();
+        char log_text[40];
+        if(rxf != 0 && rxf[0] != '\0') {
+          (void)snprintf(log_text, sizeof(log_text), "RX: %.*s", 36, rxf);
+        } else {
+          (void)snprintf(log_text, sizeof(log_text), "RX ACK");
+        }
+        diag_log(log_text);
+      }
       panel_show_printing();
       return 1U;
     }
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      panel_hold_print_network_error();
-      return 1U;
+      const char *reason = tester_wifi_print_job_fail_reason();
+      char log_text[40];
+      if(reason != 0 && reason[0] != '\0') {
+        (void)snprintf(log_text, sizeof(log_text), "ERR: %s", reason);
+      } else {
+        (void)snprintf(log_text, sizeof(log_text), "ERR: NETWORK");
+      }
+      diag_log(log_text);
+      /* job_fail 已 EN 复位 ESP：回 IDLE，会话恢复后自动继续对话 */
+      diag_log("ESP RESET");
+      g_first_gen_print_state = FIRST_GEN_PRINT_STATE_IDLE;
+      return 0U;
     }
     if(event == TESTER_WIFI_PRINT_EVENT_PRINT_ERROR) {
       panel_hold_printer_error();
@@ -3584,10 +3733,21 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
       return 1U;
     }
   } else if(g_first_gen_print_state == FIRST_GEN_PRINT_STATE_WAIT_WIFI_DONE) {
+    diag_show_page();
     event = tester_wifi_print_poll_event(print_event_id);
     if(event == TESTER_WIFI_PRINT_EVENT_ERROR) {
-      panel_hold_print_network_error();
-      return 1U;
+      const char *reason = tester_wifi_print_job_fail_reason();
+      char log_text[40];
+      if(reason != 0 && reason[0] != '\0') {
+        (void)snprintf(log_text, sizeof(log_text), "ERR: %s", reason);
+      } else {
+        (void)snprintf(log_text, sizeof(log_text), "ERR: NETWORK");
+      }
+      diag_log(log_text);
+      /* job_fail 已 EN 复位 ESP：回 IDLE，会话恢复后自动继续对话 */
+      diag_log("ESP RESET");
+      g_first_gen_print_state = FIRST_GEN_PRINT_STATE_IDLE;
+      return 0U;
     }
     if(event == TESTER_WIFI_PRINT_EVENT_PRINT_ERROR) {
       panel_hold_printer_error();
@@ -3607,11 +3767,22 @@ static uint8_t panel_service_print_event(uint16_t elapsed_ms)
   g_first_gen_print_waiting_for_wifi = 0U;
   g_first_gen_print_done_counter++;
   g_first_gen_print_done = 1U;
+  {
+    const char *rxf = tester_wifi_print_last_rx_frame();
+    char log_text[40];
+    if(rxf != 0 && rxf[0] != '\0') {
+      (void)snprintf(log_text, sizeof(log_text), "RX: %.*s", 36, rxf);
+    } else {
+      (void)snprintf(log_text, sizeof(log_text), "RX DONE");
+    }
+    diag_log(log_text);
+  }
   g_first_gen_print_state = FIRST_GEN_PRINT_STATE_WAIT_REMOVE;
   printed_hold_active = 1U;
   printed_hold_out = 1U;
   if(first_gen_display_is_lcdm() != 0U) {
-    first_gen_display_show_print_progress(FIRST_GEN_PRINT_DISPLAY_COMPLETE);
+    /* 诊断对讲：DONE 后也显示日志页（不显示 COMPLETE 大字） */
+    diag_show_page();
   } else {
     display_print_done();
   }
@@ -3650,6 +3821,22 @@ static uint8_t panel_printed_hold_service(void)
   if(printed_hold_active == 0U ||
      g_first_gen_print_state != FIRST_GEN_PRINT_STATE_WAIT_REMOVE) {
     return 0U;
+  }
+
+  /* 诊断对讲：无产品可移除，2 秒后直接回 IDLE 继续下一轮对话 */
+  if(g_diag_event_id != 0U) {
+    static uint32_t diag_hold_ms;
+    if(diag_hold_ms == 0U) {
+      diag_hold_ms = tester_wifi_print_now_ms();
+      return 1U;
+    }
+    if((tester_wifi_print_now_ms() - diag_hold_ms) >= 2000U) {
+      diag_hold_ms = 0U;
+      printed_hold_active = 0U;
+      g_first_gen_print_state = FIRST_GEN_PRINT_STATE_IDLE;
+      return 1U;
+    }
+    return 1U;
   }
 
   if(panel_all_connections_open_for_out(printed_hold_out) == 0U) {
@@ -3920,7 +4107,10 @@ void first_gen_4051_scan_service(void)
   panel_display_ng_service();
 
   if(panel_service_print_event(monitor_elapsed_ms) != 0U) {
-    return;
+    /* 诊断对讲模式不阻塞按键（K3 仍可长按进设置/短按复位） */
+    if(g_diag_event_id == 0U) {
+      return;
+    }
   }
 
   if(panel_printed_hold_service() != 0U) {
@@ -3967,9 +4157,12 @@ void first_gen_4051_scan_service(void)
         if(g_first_gen_recipe_valid != 0U && expected_harness_has_connection() != 0U) {
           panel_idle_ms = 0U;
         } else {
-          display_power_on_scroll();
+          /* 诊断对讲模式不显示 idle 滚动页（避免覆盖 DIAG LOOP 对话页） */
+          if(g_diag_event_id == 0U) {
+            display_power_on_scroll();
+            display_current_idle_state();
+          }
           panel_idle_ms = 0U;
-          display_current_idle_state();
         }
       }
     }
