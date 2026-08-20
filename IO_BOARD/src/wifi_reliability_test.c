@@ -68,9 +68,10 @@ typedef enum {
   REL_STATE_SRV_SEND,
 #else
   REL_STATE_CONNECT,
-  REL_STATE_ONLINE,
-  REL_STATE_SEND,
-  REL_STATE_WAIT_ACK,
+  REL_STATE_ONLINE,        /* T：发 PRINT RQ */
+  REL_STATE_SEND,          /* T：等 CIPSEND ">" */
+  REL_STATE_WAIT_PRINTING, /* T：等 P 的 PRINTING */
+  REL_STATE_WAIT_COMPLETE, /* T：等 P 的 PRINT COMPLETE */
 #endif
   REL_STATE_BACKOFF,
   REL_STATE_FAIL
@@ -108,6 +109,10 @@ static char rel_tx_frame[REL_LINE_MAX];
 static char rel_rx_payload[64];
 static char rel_srv_ack[REL_LINE_MAX];
 static uint8_t rel_srv_link;
+/* ---- 消息（用户指定闭环内容） ---- */
+static char rel_msg_tx[32];    /* T：当前发送消息（PRINT RQ） */
+static char rel_msg_rx[32];    /* T：当前收到消息（显示用） */
+
 /* ---- LCDM 显示：最后发送/最后解析的内容（用户核对） ---- */
 static char rel_last_tx_disp[44];
 static char rel_last_rx_disp[44];
@@ -244,18 +249,14 @@ static void rel_draw_stats(void)
   const char *tx_disp = (rel_last_tx_disp[0] != '\0') ? rel_last_tx_disp : "--";
   const char *rx_disp = (rel_last_rx_disp[0] != '\0') ? rel_last_rx_disp : "--";
 
-  /* 用户指定布局（两侧完全一致，紧凑无空格）：
-   *   第一行: TX<n>OK<n>NG<n>, RX<n>OK<n>NG<n>
+  /* 用户指定布局（两侧完全一致）：
+   *   第一行: Test Qty: <OK> OK; <NG> NG;
    *   第二行: TX <内容>
    *   第三行: RX <内容> */
   (void)snprintf(status, sizeof(status),
-                 "TX%luOK%luNG%lu, RX%luOK%luNG%lu",
-                 (unsigned long)rel_tx_count,
+                 "Test Qty: %lu OK; %lu NG;",
                  (unsigned long)rel_ok_count,
-                 (unsigned long)rel_ng_count,
-                 (unsigned long)rel_rx_count,
-                 (unsigned long)rel_rx_ok_count,
-                 (unsigned long)rel_rx_ng_count);
+                 (unsigned long)rel_ng_count);
   (void)snprintf(main_text, sizeof(main_text), "TX %s", tx_disp);
   (void)snprintf(result, sizeof(result), "RX %s", rx_disp);
   (void)snprintf(detail, sizeof(detail), "%s", "");
@@ -446,17 +447,13 @@ static void rel_command_ok(void)
   }
 }
 
-/* ---- 发送一帧（T 端 CIPSEND） ---- */
+/* ---- 发送消息（T 端 CIPSEND，文本消息） ---- */
 #if !WIFI_RELIABILITY_ROLE
 static void rel_tx_send_frame(void)
 {
   char command[REL_CMD_MAX];
-  uint16_t frame_len;
+  uint16_t frame_len = (uint16_t)strlen(rel_msg_tx);
 
-  frame_len = rel_build_frame(rel_tx_frame, sizeof(rel_tx_frame),
-                              (rel_heartbeat_due != 0U) ? REL_TYPE_HEARTBEAT :
-                              REL_TYPE_TEST_RESULT,
-                              1U, rel_seq, "");
   if(frame_len == 0U) {
     return;
   }
@@ -469,104 +466,73 @@ static void rel_tx_send_frame(void)
   rel_state_deadline_ms = tester_wifi_print_now_ms() + REL_AT_TIMEOUT_MS;
 }
 
-/* 发送 payload（CIPSEND prompt 后） */
+/* 发送 payload（CIPSEND prompt 后）→ 等 P 的 PRINTING */
 static void rel_tx_payload(void)
 {
-  if(tester_wifi_print_at_send_bytes((const uint8_t *)rel_tx_frame,
-                                     (uint16_t)strlen(rel_tx_frame)) == 0U) {
+  if(tester_wifi_print_at_send_bytes((const uint8_t *)rel_msg_tx,
+                                     (uint16_t)strlen(rel_msg_tx)) == 0U) {
     rel_state = REL_STATE_FAIL;
     return;
   }
   rel_tx_count++;
-  (void)snprintf(rel_last_tx_disp, sizeof(rel_last_tx_disp), "%s", rel_tx_frame);
-  rel_heartbeat_due = 0U;   /* 心跳已发，清标志（下次发测试帧） */
-  rel_state = REL_STATE_WAIT_ACK;
-  rel_state_deadline_ms = tester_wifi_print_now_ms() + REL_ACK_TIMEOUT_MS;
+  (void)snprintf(rel_last_tx_disp, sizeof(rel_last_tx_disp), "%s", rel_msg_tx);
+  rel_state = REL_STATE_WAIT_PRINTING;
+  rel_state_deadline_ms = tester_wifi_print_now_ms() + 10000U;  /* 等 PRINTING 10s */
 }
 #endif
 
-/* ---- +IPD 帧处理（P/T 通用） ---- */
+/* ---- +IPD 消息处理（P/T 按消息内容分派） ---- */
 static void rel_handle_ipd(const char *line)
 {
-  uint8_t type;
-  uint8_t device_id;
-  uint32_t seq;
-
-#if !WIFI_RELIABILITY_ROLE
-  /* T 端：先处理 ACK（P 回 A,seq,0）——必须在 F 帧解析之前，
-   * 否则 "A,1,0" 会被 rel_parse_frame 的 F 检查挡掉（NG 根源） */
-  if(line[0] == 'A') {
-    unsigned long ack_seq;
-    unsigned int err;
-    (void)snprintf(rel_last_rx_disp, sizeof(rel_last_rx_disp), "%s", line);
-    if(sscanf(line, "A,%lu,%u", &ack_seq, &err) == 2) {
-      rel_rx_ok_count++;   /* RX 解析成功 */
-      if((uint32_t)ack_seq == rel_seq) {
-        rel_ok_count++;
-        rel_retry_left = REL_MAX_RETRY;
-        rel_fail_count = 0U;   /* 连续成功：重置失败累计 */
-        /* 收到匹配 ACK → 离开 WAIT_ACK 回 ONLINE 发下一帧（seq 递增） */
-        rel_state = REL_STATE_ONLINE;
-        rel_state_deadline_ms = 0U;
-      } else {
-        rel_ng_count++;
-      }
-      rel_draw_stats();
-    }
-    return;
-  }
-#endif
-
-  if(rel_parse_frame(line, &type, &device_id, &seq,
-                     rel_rx_payload, sizeof(rel_rx_payload)) == 0U) {
-    rel_rx_ng_count++;   /* RX 解析失败 */
-    return;
-  }
-  rel_rx_count++;
-  rel_rx_ok_count++;   /* RX 解析成功 */
 #if WIFI_RELIABILITY_ROLE
+  /* P 端：收到 T 的 PRINT RQ → 显示 → 发 PRINTING → 3 秒后 PRINT COMPLETE */
   rel_last_rx_ms = tester_wifi_print_now_ms();
-  /* P 端：收到 T 帧——记录 RX 显示（用户核对） */
   (void)snprintf(rel_last_rx_disp, sizeof(rel_last_rx_disp), "%s", line);
-  /* P 端：回 ACK 走标准 CIPSEND（带 link）——与 T 侧规则一致
-   * HEARTBEAT 回 HEARTBEAT_ACK */
-  {
-    char cipsend_cmd[REL_CMD_MAX];
-    if(type == REL_TYPE_HEARTBEAT) {
-      rel_heartbeat_count++;
-      (void)snprintf(rel_srv_ack, sizeof(rel_srv_ack),
-                     "F,%u,%u,%lu,0,00,",
-                     REL_TYPE_HEARTBEAT_ACK, 1U, (unsigned long)seq);
-    } else {
-      rel_ok_count++;
-      (void)snprintf(rel_srv_ack, sizeof(rel_srv_ack),
-                     "A,%lu,0", (unsigned long)seq);
+  rel_rx_count++;
+  rel_rx_ok_count++;
+  if(strncmp(line, "PRINT RQ", 8U) == 0) {
+    /* 收到打印请求：回 PRINTING，3 秒后发 PRINT COMPLETE */
+    (void)snprintf(rel_srv_ack, sizeof(rel_srv_ack), "PRINTING");
+    rel_srv_timer_ms = tester_wifi_print_now_ms() + 3000U;  /* 3 秒后 COMPLETE */
+    /* 提取 +IPD,<link>,<len>: 的 link 供 CIPSEND 使用 */
+    if(strncmp(line, "PRINT RQ", 8U) == 0) {
+      /* link 由 service 的 +IPD 解析段传入（此处 line 是 payload） */
+      rel_srv_link = 0U;
     }
-    /* +IPD,<link>,<len>:... —— 提取 link 供 CIPSEND 使用 */
-    rel_srv_link = 0U;
-    if(strncmp(line, "+IPD,", 5U) == 0) {
-      unsigned int link_v;
-      if(sscanf(line + 5, "%u", &link_v) == 1) {
-        rel_srv_link = (uint8_t)link_v;
+    {
+      char cipsend_cmd[REL_CMD_MAX];
+      (void)snprintf(cipsend_cmd, sizeof(cipsend_cmd),
+                     "AT+CIPSEND=%u,%u",
+                     (unsigned int)rel_srv_link,
+                     (unsigned int)strlen(rel_srv_ack));
+      if(tester_wifi_print_at_send(cipsend_cmd) != 0U) {
+        rel_state = REL_STATE_SRV_SEND;
+        rel_state_deadline_ms = tester_wifi_print_now_ms() + REL_AT_TIMEOUT_MS;
       }
-    }
-    (void)snprintf(cipsend_cmd, sizeof(cipsend_cmd),
-                   "AT+CIPSEND=%u,%u",
-                   (unsigned int)rel_srv_link,
-                   (unsigned int)strlen(rel_srv_ack));
-    if(tester_wifi_print_at_send(cipsend_cmd) != 0U) {
-      rel_state = REL_STATE_SRV_SEND;
-      rel_state_deadline_ms = tester_wifi_print_now_ms() + REL_AT_TIMEOUT_MS;
     }
   }
   rel_draw_stats();
 #else
-  /* T 端：HEARTBEAT_ACK 帧（P 回 F,7,...）——ACK 已在函数开头处理 */
+  /* T 端：按消息内容分派 */
   (void)snprintf(rel_last_rx_disp, sizeof(rel_last_rx_disp), "%s", line);
-  if(type == REL_TYPE_HEARTBEAT_ACK) {
-    rel_heartbeat_count++;
-    rel_draw_stats();
+  (void)snprintf(rel_msg_rx, sizeof(rel_msg_rx), "%s", line);
+  rel_rx_count++;
+  rel_rx_ok_count++;
+  if(strncmp(line, "PRINTING", 8U) == 0) {
+    /* 收到 PRINTING → 等 PRINT COMPLETE（15 秒） */
+    rel_state = REL_STATE_WAIT_COMPLETE;
+    rel_state_deadline_ms = tester_wifi_print_now_ms() + 15000U;
+  } else if(strncmp(line, "PRINT COMPLETE", 14U) == 0) {
+    /* 收到 PRINT COMPLETE → 本次闭合完成 = OK 1 次 → 下一轮 */
+    rel_ok_count++;
+    rel_state = REL_STATE_ONLINE;
+    rel_state_deadline_ms = 0U;
+  } else {
+    rel_ng_count++;   /* 内容不对 → NG */
+    rel_state = REL_STATE_ONLINE;
+    rel_state_deadline_ms = 0U;
   }
+  rel_draw_stats();
 #endif
 }
 
@@ -727,18 +693,19 @@ void wifi_reliability_test_service(void)
       rel_draw("TX TIMEOUT", "FAIL", "CIPSEND HANG", "CHECK ESP",
                FIRST_GEN_DISPLAY_COLOR_RED);
       break;
-    case REL_STATE_WAIT_ACK:
-      if(rel_retry_left != 0U) {
-        rel_retry_left--;
-        rel_retry_count++;
-        rel_tx_send_frame();
-      } else {
-        rel_ng_count++;
-        rel_retry_left = REL_MAX_RETRY;
-        rel_fail_count = 0U;
-        rel_draw_stats();
-        rel_tx_send_frame();
-      }
+    case REL_STATE_WAIT_PRINTING:
+      /* 等 PRINTING 超时（10 秒）→ NG → 重发 PRINT RQ */
+      rel_ng_count++;
+      rel_draw_stats();
+      rel_state = REL_STATE_ONLINE;
+      rel_state_deadline_ms = 0U;
+      break;
+    case REL_STATE_WAIT_COMPLETE:
+      /* 等 PRINT COMPLETE 超时（15 秒）→ NG → 重发 PRINT RQ */
+      rel_ng_count++;
+      rel_draw_stats();
+      rel_state = REL_STATE_ONLINE;
+      rel_state_deadline_ms = 0U;
       break;
 #endif
     default:
@@ -767,23 +734,12 @@ void wifi_reliability_test_service(void)
     break;
 #if WIFI_RELIABILITY_ROLE
   case REL_STATE_LISTEN:
-    /* P 服务器保持稳定在线（ESP 上电一次不重启——用户原则）。
-     * 客户端（T）自愈重连来对接，P 不做 idle EN 复位。
-     * 换着收发：P 每 5 秒主动发一帧心跳（F,7,...）→ T 显示接收 */
-    if(rel_srv_timer_ms == 0U) {
-      rel_srv_timer_ms = tester_wifi_print_now_ms();
-    }
-    if(tester_wifi_print_now_ms() - rel_srv_timer_ms >= 5000U) {
-      rel_srv_timer_ms = tester_wifi_print_now_ms();
-      rel_srv_seq++;
-      if(rel_srv_seq == 0U) {
-        rel_srv_seq = 1U;
-      }
-      (void)snprintf(rel_srv_ack, sizeof(rel_srv_ack),
-                     "F,%u,%u,%lu,0,00,",
-                     REL_TYPE_HEARTBEAT, 1U, (unsigned long)rel_srv_seq);
-      (void)snprintf(rel_last_tx_disp, sizeof(rel_last_tx_disp), "%s",
-                     rel_srv_ack);
+    /* P 服务器稳定在线。收到 PRINT RQ → 已回 PRINTING（rel_handle_ipd），
+     * 3 秒定时到 → 发 PRINT COMPLETE（完成一次打印闭环） */
+    if(rel_srv_timer_ms != 0U &&
+       tester_wifi_print_now_ms() >= rel_srv_timer_ms) {
+      rel_srv_timer_ms = 0U;
+      (void)snprintf(rel_srv_ack, sizeof(rel_srv_ack), "PRINT COMPLETE");
       {
         char cipsend_cmd[REL_CMD_MAX];
         (void)snprintf(cipsend_cmd, sizeof(cipsend_cmd),
@@ -800,16 +756,8 @@ void wifi_reliability_test_service(void)
 #endif
 #if !WIFI_RELIABILITY_ROLE
   case REL_STATE_ONLINE:
-    /* 无限压力测试（用户要求：不设停止数，一直测看数据） */
-    if(now_ms - rel_last_heartbeat_ms >= REL_HEARTBEAT_PERIOD_MS) {
-      rel_last_heartbeat_ms = now_ms;
-      rel_heartbeat_due = 1U;
-    }
-    rel_seq++;
-    if(rel_seq == 0U) {
-      rel_seq = 1U;
-    }
-    rel_test_frames_sent++;
+    /* T：发 PRINT RQ（一轮闭合的开始），不停循环 */
+    (void)snprintf(rel_msg_tx, sizeof(rel_msg_tx), "PRINT RQ");
     rel_tx_send_frame();
     break;
 #endif
