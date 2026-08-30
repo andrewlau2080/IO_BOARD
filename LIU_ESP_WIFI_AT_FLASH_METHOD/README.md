@@ -43,6 +43,42 @@ ssh andrew@10.211.55.4 'lsusb; /home/andrew/ARTERY/.tools/pyocd-venv/bin/pyocd l
 
 Ubuntu 必须能看到 `2e3c:f000 Artery Technology CMSIS-DAP`；Mac 必须能打开 CH340 串口。
 
+## 一·补、AT32 产品固件烧录：一律走 Ubuntu（2026-08-27 实测铁律）
+
+**烧 AT32 MCU 固件（build-update-tester / build-update-print-host / 任何 pyocd 操作）一律在 Ubuntu 虚拟机执行，不在 macOS 上跑 pyocd 烧录。**
+
+根因：macOS 上 pyocd 对 Artery CMSIS-DAP 探针执行 `usb.util.claim_interface` 必报
+`Access denied (insufficient permissions)`（IOKit 系统驱动占用接口；pyusb_v2 后端无法
+绕开，hidapi 后端也枚举不到——AT-Link 探针不是 HID 接口）。Mac 上 pyocd 最多只能
+`sudo pyocd list` 看到探针，无法 open/flash。
+
+正确流程（三步）：
+
+```sh
+# 1) 把探针挂给 Ubuntu（prlsrvctl usb list 核对 System name；407/807 都要这样挂）
+prlsrvctl usb attach '121000|2e3c|f000|full|--|913575030040A0401D149407' Ubuntu Linux
+prlsrvctl usb list   # 确认 Used-By-Vm: Ubuntu Linux
+ssh andrew@10.211.55.4 'lsusb | grep -i 2e3c'   # Ubuntu 必须能看到探针
+
+# 2) 传固件
+scp IO_BOARD/build-update-tester/io_board_at32f455.hex andrew@10.211.55.4:/tmp/tester.hex
+
+# 3) Ubuntu 烧录（--erase sector 保留配方区；-f 50000：407 实测 50kHz 稳定，
+#    100kHz 报 DAP_TRANSFER response error；under-reset 复位 AT32）
+ssh andrew@10.211.55.4 '/home/andrew/ARTERY/.tools/pyocd-venv/bin/pyocd flash \
+  --pack /home/andrew/ARTERY/.tools/packs/ArteryTek.AT32F45x_DFP.2.0.1.pack \
+  --target at32f455vet7 --uid <探针UID> --erase sector --connect under-reset -f 50000 \
+  /tmp/tester.hex'
+
+# 4) 复位并确认运行（pyocd reset 有时不触发 MCU，若 PC 不动让用户按硬复位）
+ssh andrew@10.211.55.4 '/home/andrew/ARTERY/.tools/pyocd-venv/bin/pyocd commander \
+  --pack /home/andrew/ARTERY/.tools/packs/ArteryTek.AT32F45x_DFP.2.0.1.pack \
+  --target at32f455vet7 --uid <探针UID> -c "reset" -c "status"'
+# 期望输出：Core 0 (Cortex-M4): Running
+```
+
+探针 UID：T 侧 407=`913575030040A0401D149407`，P 侧 807=`08703D0500C0643C1014A807`。
+
 ## 二、烧入临时 AT32 下载辅助程序
 
 本仓库的 `ESP_AT_FLASH_ASSIST` 是专用临时模式。它仅配置开漏 GPIO：
